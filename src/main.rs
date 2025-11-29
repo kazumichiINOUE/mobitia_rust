@@ -418,11 +418,9 @@ impl eframe::App for MyApp {
                 ui.group(|ui| {
                     ui.set_height(ui.text_style_height(&egui::TextStyle::Monospace) * 10.0); // 10行分の高さを確保
                     egui::ScrollArea::vertical().show(ui, |ui| {
-                        ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
                             for line in &self.lidar_status_messages {
                                 ui.monospace(line);
                             }
-                        });
                     });
                 });
                 ui.separator(); // 固定領域とコマンド履歴の間に区切り線
@@ -430,11 +428,9 @@ impl eframe::App for MyApp {
                     .stick_to_bottom(true)
                     .max_height(ui.available_height() * 0.8)
                     .show(ui, |ui| {
-                        ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
                             for line in &self.command_history {
                                 ui.monospace(line);
                             }
-                        });
                     });
                 ui.horizontal(|ui| {
                     ui.monospace("> ");
