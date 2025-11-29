@@ -5,6 +5,7 @@ use std::io::{self, Write};
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
+use chrono::Local;
 
 #[derive(Debug, Clone)]
 pub struct LidarInfo {
@@ -106,11 +107,15 @@ struct MyApp {
 
             command_output_receiver: mpsc::Receiver<String>,
 
-            // コンソールコマンド出力送信用のセンダー
+                // コンソールコマンド出力送信用のセンダー
 
-            command_output_sender: mpsc::Sender<String>,
+                command_output_sender: mpsc::Sender<String>,
 
-        }
+                // LiDAR描画エリアのRect
+
+                lidar_draw_rect: Option<egui::Rect>,
+
+            }
 
 // Defaultを実装すると、`new`関数内で MyApp::default() が使え、コードが少しきれいになる
 impl Default for MyApp {
@@ -364,9 +369,10 @@ impl Default for MyApp {
                         receiver,                // 生成したレシーバーを格納
                         lidar_status_messages: Vec::new(),
                         status_receiver,
-                                    command_output_receiver,
-                                    command_output_sender,
-                                }    }
+                                                command_output_receiver,
+                                                command_output_sender,
+                                                lidar_draw_rect: None, // 初期値はNone
+                                            }    }
 }
 
 impl eframe::App for MyApp {
@@ -480,6 +486,7 @@ impl eframe::App for MyApp {
                                     self.command_history.push("  help      - Show this help message".to_string());
                                     self.command_history.push("  q         - Quit the application".to_string());
                                     self.command_history.push("  ls [path] - List directory contents (-l) of [path]".to_string());
+                                    self.command_history.push("  save      - Save current LiDAR visualization as image".to_string());
                                     self.command_history.push("  zi        - Zoom in (not yet implemented)".to_string());
                                     self.command_history.push("  zo        - Zoom out (not yet implemented)".to_string());
                                     self.command_history.push("  Ctrl+L/Cmd+L - Clear console history (anywhere)".to_string());
@@ -487,6 +494,72 @@ impl eframe::App for MyApp {
                                 "q" => {
                                     self.command_history.push("Exiting application...".to_string());
                                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                                }
+                                "save" => {
+                                    let sender_clone = self.command_output_sender.clone();
+                                    self.command_history.push("Saving LiDAR visualization...".to_string());
+
+                                    let lidar_rect = self.lidar_draw_rect; // Option<egui::Rect>
+                                    if lidar_rect.is_none() {
+                                        sender_clone.send("ERROR: LiDAR drawing area not available for saving.".to_string()).unwrap_or_default();
+                                        return;
+                                    }
+                                    let lidar_rect = lidar_rect.unwrap();
+                                    let width = lidar_rect.width() as u32;
+                                    let height = lidar_rect.height() as u32;
+
+                                    if width == 0 || height == 0 {
+                                        sender_clone.send(format!("ERROR: Invalid LiDAR drawing area size: {}x{}.", width, height)).unwrap_or_default();
+                                        return;
+                                    }
+
+                                    // 現在のLiDAR点群データを取得
+                                    let lidar_points_clone = self.lidar_points.clone();
+
+                                    thread::spawn(move || {
+                                        // egui::ColorImage は RGB を想定しているので、RGB8を直接操作
+                                        let mut img = image::RgbImage::new(width, height);
+
+                                        // 描画エリアの座標変換 (CentralPanel のコードから再利用)
+                                        let to_screen = egui::emath::RectTransform::from_to(
+                                            egui::Rect::from_center_size(egui::Pos2::ZERO, egui::vec2(16.0, 16.0)), // 元の描画範囲
+                                            egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width as f32, height as f32)), // Image の座標系
+                                        );
+
+                                        // 背景を黒で塗りつぶし
+                                        for x in 0..width {
+                                            for y in 0..height {
+                                                img.put_pixel(x, y, image::Rgb([20, 20, 20]));
+                                            }
+                                        }
+
+                                        // LiDAR点群を描画
+                                        for point in &lidar_points_clone {
+                                            let screen_pos = to_screen.transform_pos(egui::pos2(point.0, point.1));
+                                            let x = screen_pos.x.round() as u32;
+                                            let y = screen_pos.y.round() as u32;
+
+                                            // 画像範囲内であればピクセルをセット
+                                            if x < width && y < height {
+                                                img.put_pixel(x, y, image::Rgb([0, 255, 0])); // 緑色の点
+                                            }
+                                        }
+                                        
+                                        // ファイル名を生成 (例: lidar_capture_YYYYMMDD_HHMMSS.png)
+                                        let timestamp = Local::now().format("%Y%m%d_%H%M%S").to_string();
+                                        let filename = format!("lidar_capture_{}.png", timestamp);
+                                        let save_path = std::path::PathBuf::from(filename);
+
+                                        match img.save(&save_path) {
+                                            Ok(_) => {
+                                                sender_clone.send(format!("Image saved to: {}", save_path.display())).unwrap_or_default();
+                                            }
+                                            Err(e) => {
+                                                sender_clone.send(format!("ERROR: Failed to save image: {}", e)).unwrap_or_default();
+                                            }
+                                        }
+                                        sender_clone.send("Finished saving LiDAR visualization.".to_string()).unwrap_or_default();
+                                    });
                                 }
                                 "ls" => {
                                     let sender_clone = self.command_output_sender.clone();
@@ -549,6 +622,10 @@ impl eframe::App for MyApp {
             ui.heading("LiDAR Data Visualization");
             let (response, painter) =
             ui.allocate_painter(ui.available_size(), egui::Sense::hover());
+            
+            // ここで lidar_draw_rect を更新
+            self.lidar_draw_rect = Some(response.rect); 
+
             let side = response.rect.height();
             let square_rect = egui::Rect::from_center_size(response.rect.center(), egui::vec2(side, side));
             let to_screen = egui::emath::RectTransform::from_to(
