@@ -98,11 +98,19 @@ struct MyApp {
 
     lidar_status_messages: Vec<String>,
 
-    // LiDARの状態メッセージ受信用のレシーバー
+        // LiDARの状態メッセージ受信用のレシーバー
 
-    status_receiver: mpsc::Receiver<String>,
+        status_receiver: mpsc::Receiver<String>,
 
-}
+            // コンソールコマンド出力受信用のレシーバー
+
+            command_output_receiver: mpsc::Receiver<String>,
+
+            // コンソールコマンド出力送信用のセンダー
+
+            command_output_sender: mpsc::Sender<String>,
+
+        }
 
 // Defaultを実装すると、`new`関数内で MyApp::default() が使え、コードが少しきれいになる
 impl Default for MyApp {
@@ -110,6 +118,7 @@ impl Default for MyApp {
         // チャネルを作成し、データ生成スレッドを開始する
         let (sender, receiver) = mpsc::channel();
         let (status_sender, status_receiver) = mpsc::channel(); // LiDARステータス表示用
+        let (command_output_sender, command_output_receiver) = mpsc::channel(); // コマンド出力用
         thread::spawn(move || {
             // --- LiDAR初期接続ロジック ---
             let lidar_config = LidarInfo {
@@ -355,8 +364,9 @@ impl Default for MyApp {
                         receiver,                // 生成したレシーバーを格納
                         lidar_status_messages: Vec::new(),
                         status_receiver,
-                    }
-    }
+                                    command_output_receiver,
+                                    command_output_sender,
+                                }    }
 }
 
 impl eframe::App for MyApp {
@@ -387,6 +397,12 @@ impl eframe::App for MyApp {
             if self.lidar_status_messages.len() > 10 {
                 self.lidar_status_messages.remove(0);
             }
+            ctx.request_repaint();
+        }
+
+        // コマンド出力メッセージの受信と更新
+        while let Ok(msg) = self.command_output_receiver.try_recv() {
+            self.command_history.push(msg);
             ctx.request_repaint();
         }
 
@@ -450,13 +466,63 @@ impl eframe::App for MyApp {
                             .lock_focus(true),
                     );
                     if text_edit_response.lost_focus() && ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
-                        let command = self.input_string.trim();
-                        if !command.is_empty() {
-                            self.command_history.push(format!("> {}", command));
-                            match command {
+                        let full_command_line = self.input_string.trim();
+                        if !full_command_line.is_empty() {
+                            self.command_history.push(format!("> {}", full_command_line));
+
+                            let parts: Vec<&str> = full_command_line.split_whitespace().collect();
+                            let command_name = parts[0];
+                            let args = &parts[1..];
+
+                            match command_name {
+                                "help" => {
+                                    self.command_history.push("Available commands:".to_string());
+                                    self.command_history.push("  help      - Show this help message".to_string());
+                                    self.command_history.push("  q         - Quit the application".to_string());
+                                    self.command_history.push("  ls [path] - List directory contents (-l) of [path]".to_string());
+                                    self.command_history.push("  zi        - Zoom in (not yet implemented)".to_string());
+                                    self.command_history.push("  zo        - Zoom out (not yet implemented)".to_string());
+                                    self.command_history.push("  Ctrl+L/Cmd+L - Clear console history (anywhere)".to_string());
+                                }
                                 "q" => {
                                     self.command_history.push("Exiting application...".to_string());
                                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                                }
+                                "ls" => {
+                                    let sender_clone = self.command_output_sender.clone();
+                                    let path_arg = if args.is_empty() {
+                                        ".".to_string() // 引数がない場合はカレントディレクトリ
+                                    } else {
+                                        args[0].to_string() // 最初の引数をパスとみなす
+                                    };
+                                    self.command_history.push(format!("Executing 'sh -c \"ls -1 {}\"' in background...", path_arg));
+                                    thread::spawn(move || {
+                                        let output = std::process::Command::new("sh")
+                                            .arg("-c")
+                                            .arg(format!("ls -1 {}", path_arg)) // シェルを介して実行
+                                            .output();
+
+                                        match output {
+                                            Ok(output) => {
+                                                if !output.stdout.is_empty() {
+                                                    let stdout = String::from_utf8_lossy(&output.stdout);
+                                                    for line in stdout.lines() {
+                                                        sender_clone.send(line.to_string()).unwrap_or_default();
+                                                    }
+                                                }
+                                                if !output.stderr.is_empty() {
+                                                    let stderr = String::from_utf8_lossy(&output.stderr);
+                                                    for line in stderr.lines() {
+                                                        sender_clone.send(format!("ERROR: {}", line)).unwrap_or_default();
+                                                    }
+                                                }
+                                            },
+                                            Err(e) => {
+                                                sender_clone.send(format!("ERROR: Failed to execute 'ls': {}", e)).unwrap_or_default();
+                                            }
+                                        }
+                                        sender_clone.send(format!("Finished 'ls -1 {}.", path_arg)).unwrap_or_default();
+                                    });
                                 }
                                 "zi" => {
                                     self.command_history.push("Zoom in".to_string());
@@ -464,16 +530,11 @@ impl eframe::App for MyApp {
                                 "zo" => {
                                     self.command_history.push("Zoom out".to_string());
                                 }
-                                "help" => {
-                                    self.command_history.push("Available commands:".to_string());
-                                    self.command_history.push("  help      - Show this help message".to_string());
-                                    self.command_history.push("  q         - Quit the application".to_string());
-                                    self.command_history.push("  zi        - Zoom in (not yet implemented)".to_string());
-                                    self.command_history.push("  zo        - Zoom out (not yet implemented)".to_string());
-                                    self.command_history.push("  Ctrl+L/Cmd+L - Clear console history (anywhere)".to_string());
+                                _ => {
+                                    self.command_history.push(format!("Unknown command: '{}'", full_command_line));
                                 }
                                 _ => {
-                                    self.command_history.push(format!("Unknown command: '{}'", command));
+                                    self.command_history.push(format!("Unknown command: '{}'", full_command_line));
                                 }
                             }
                         }
