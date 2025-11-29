@@ -75,47 +75,36 @@ fn decode_scip_2_0_3char(encoded_val: &str) -> Result<u32, anyhow::Error> {
     Ok(decoded_u32)
 }
 
-    // アプリケーション全体の状態を管理する構造体
+// アプリケーション全体の状態を管理する構造体
 
 struct MyApp {
-
     // コンソールの入力文字列
-
     input_string: String,
 
     // コンソールのコマンド履歴
-
     command_history: Vec<String>,
 
     // 描画用のLiDAR点群データ (x, y)
-
     lidar_points: Vec<(f32, f32)>,
 
     // データ受信用のレシーバー
-
     receiver: mpsc::Receiver<Result<Vec<(f32, f32)>>>,
 
     // LiDARの状態表示用メッセージ
-
     lidar_status_messages: Vec<String>,
 
-        // LiDARの状態メッセージ受信用のレシーバー
+    // LiDARの状態メッセージ受信用のレシーバー
+    status_receiver: mpsc::Receiver<String>,
 
-        status_receiver: mpsc::Receiver<String>,
+    // コンソールコマンド出力受信用のレシーバー
+    command_output_receiver: mpsc::Receiver<String>,
 
-            // コンソールコマンド出力受信用のレシーバー
+    // コンソールコマンド出力送信用のセンダー
+    command_output_sender: mpsc::Sender<String>,
 
-            command_output_receiver: mpsc::Receiver<String>,
-
-                // コンソールコマンド出力送信用のセンダー
-
-                command_output_sender: mpsc::Sender<String>,
-
-                // LiDAR描画エリアのRect
-
-                lidar_draw_rect: Option<egui::Rect>,
-
-            }
+    // LiDAR描画エリアのRect
+    lidar_draw_rect: Option<egui::Rect>,
+}
 
 // Defaultを実装すると、`new`関数内で MyApp::default() が使え、コードが少しきれいになる
 impl Default for MyApp {
@@ -258,12 +247,12 @@ impl Default for MyApp {
                     let gd_params = &command[2..10]; // "00001080"
                     let start_step = u32::from_str_radix(&String::from_utf8_lossy(&gd_params[0..4]), 10).unwrap_or(0);
                     let end_step = u32::from_str_radix(&String::from_utf8_lossy(&gd_params[4..8]), 10).unwrap_or(0);
-                    
+
                     // Lidarの仕様から角度範囲を計算
                     // (ステップ番号 - 384) * 0.25
                     let min_angle = (start_step as f32 - 384.0) * 0.25_f32;
                     let max_angle = (end_step as f32 - 384.0) * 0.25_f32;
-                    
+
                     let angle_increment = 0.25_f32; // 0.25度 per step
 
                     let mut current_angle = -135.0_f32; // 最初の角度はmin_angleから開始
@@ -307,7 +296,7 @@ impl Default for MyApp {
 
                                 let xx = distance_m * angle_rad.cos();
                                 let yy = distance_m * angle_rad.sin();
-                                
+
                                 let x = -yy;
                                 let y = -xx;
 
@@ -344,7 +333,7 @@ impl Default for MyApp {
                     }
                     status_sender.send(format!("INFO: First point cloud saved to {}. Terminating.", filename))
                         .unwrap_or_default();
-                    
+
                     // 生データの出力はコメントアウト
                     // sender.send(Err(anyhow::anyhow!(format!("RAW GD RESPONSE: {}", response))))
                     //       .unwrap_or_default();
@@ -366,13 +355,14 @@ impl Default for MyApp {
             input_string: String::new(),
             command_history: vec!["Welcome to the interactive console!".to_string()],
             lidar_points: Vec::new(), // 最初は空
-                        receiver,                // 生成したレシーバーを格納
-                        lidar_status_messages: Vec::new(),
-                        status_receiver,
-                                                command_output_receiver,
-                                                command_output_sender,
-                                                lidar_draw_rect: None, // 初期値はNone
-                                            }    }
+            receiver,                // 生成したレシーバーを格納
+            lidar_status_messages: Vec::new(),
+            status_receiver,
+            command_output_receiver,
+            command_output_sender,
+            lidar_draw_rect: None, // 初期値はNone
+        }    
+    }
 }
 
 impl eframe::App for MyApp {
@@ -447,9 +437,9 @@ impl eframe::App for MyApp {
                     ui.set_width(ui.available_width()); // 利用可能な全幅を使う
                     ui.set_height(ui.text_style_height(&egui::TextStyle::Monospace) * 10.0); // 10行分の高さを確保
                     egui::ScrollArea::vertical().show(ui, |ui| {
-                            for line in &self.lidar_status_messages {
-                                ui.monospace(line);
-                            }
+                        for line in &self.lidar_status_messages {
+                            ui.monospace(line);
+                        }
                     });
                 });
                 ui.separator(); // 固定領域とコマンド履歴の間に区切り線
@@ -457,9 +447,9 @@ impl eframe::App for MyApp {
                     .stick_to_bottom(true)
                     .max_height(ui.available_height() * 0.8)
                     .show(ui, |ui| {
-                            for line in &self.command_history {
-                                ui.monospace(line);
-                            }
+                        for line in &self.command_history {
+                            ui.monospace(line);
+                        }
                     });
                 ui.horizontal(|ui| {
                     ui.monospace("> ");
@@ -544,7 +534,7 @@ impl eframe::App for MyApp {
                                                 img.put_pixel(x, y, image::Rgb([0, 255, 0])); // 緑色の点
                                             }
                                         }
-                                        
+
                                         // ファイル名を生成 (例: lidar_capture_YYYYMMDD_HHMMSS.png)
                                         let timestamp = Local::now().format("%Y%m%d_%H%M%S").to_string();
                                         let filename = format!("lidar_capture_{}.png", timestamp);
@@ -622,7 +612,7 @@ impl eframe::App for MyApp {
             ui.heading("LiDAR Data Visualization");
             let (response, painter) =
             ui.allocate_painter(ui.available_size(), egui::Sense::hover());
-            
+
             // ここで lidar_draw_rect を更新
             self.lidar_draw_rect = Some(response.rect); 
 
