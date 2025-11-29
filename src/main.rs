@@ -422,6 +422,7 @@ impl eframe::App for MyApp {
                 ui.heading("Console");
                 // LiDAR状態表示用の固定領域
                 ui.group(|ui| {
+                    ui.set_width(ui.available_width()); // 利用可能な全幅を使う
                     ui.set_height(ui.text_style_height(&egui::TextStyle::Monospace) * 10.0); // 10行分の高さを確保
                     egui::ScrollArea::vertical().show(ui, |ui| {
                             for line in &self.lidar_status_messages {
