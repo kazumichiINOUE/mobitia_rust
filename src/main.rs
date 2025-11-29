@@ -74,18 +74,34 @@ fn decode_scip_2_0_3char(encoded_val: &str) -> Result<u32, anyhow::Error> {
     Ok(decoded_u32)
 }
 
-/// アプリケーション全体の状態を管理する構造体
+    // アプリケーション全体の状態を管理する構造体
+
 struct MyApp {
+
     // コンソールの入力文字列
+
     input_string: String,
+
     // コンソールのコマンド履歴
+
     command_history: Vec<String>,
+
     // 描画用のLiDAR点群データ (x, y)
+
     lidar_points: Vec<(f32, f32)>,
+
     // データ受信用のレシーバー
+
     receiver: mpsc::Receiver<Result<Vec<(f32, f32)>>>,
-    // 初期サイズ設定を一度だけ行うためのフラグ
-    should_set_initial_size: bool,
+
+    // LiDARの状態表示用メッセージ
+
+    lidar_status_messages: Vec<String>,
+
+    // LiDARの状態メッセージ受信用のレシーバー
+
+    status_receiver: mpsc::Receiver<String>,
+
 }
 
 // Defaultを実装すると、`new`関数内で MyApp::default() が使え、コードが少しきれいになる
@@ -93,6 +109,7 @@ impl Default for MyApp {
     fn default() -> Self {
         // チャネルを作成し、データ生成スレッドを開始する
         let (sender, receiver) = mpsc::channel();
+        let (status_sender, status_receiver) = mpsc::channel(); // LiDARステータス表示用
         thread::spawn(move || {
             // --- LiDAR初期接続ロジック ---
             let lidar_config = LidarInfo {
@@ -100,22 +117,24 @@ impl Default for MyApp {
                 baud_rate: 115200,
             };
 
+            status_sender.send(format!("LiDAR Path: {}", lidar_config.lidar_path)).unwrap_or_default();
+            status_sender.send(format!("Baud Rate: {}", lidar_config.baud_rate)).unwrap_or_default();
+
             let mut port = match serialport::new(&lidar_config.lidar_path, lidar_config.baud_rate)
                 .timeout(Duration::from_millis(100)) // タイムアウトを短めに設定
                 .open()
             {
                 Ok(p) => {
-                    let msg = format!("INFO: Successfully opened port {}", lidar_config.lidar_path);
-                    sender.send(Err(anyhow::anyhow!(msg))).unwrap_or_default();
+                    status_sender.send(format!("INFO: Successfully opened port {}", lidar_config.lidar_path)).unwrap_or_default();
                     p
                 }
                 Err(e) => {
-                    sender
-                        .send(Err(anyhow::anyhow!(
+                    status_sender
+                        .send(format!(
                             "ERROR: Failed to open port '{}': {}",
                             lidar_config.lidar_path,
                             e
-                        )))
+                        ))
                         .unwrap_or_default();
                     // ポートが開けなかったらスレッド終了
                     return;
@@ -125,34 +144,34 @@ impl Default for MyApp {
             // 初期化コマンドを送信
             let init_commands: &[&[u8]] = &[b"VV\n", b"PP\n", b"II\n"];
             for cmd in init_commands {
-                sender.send(Err(anyhow::anyhow!(format!("INFO: Sending command: {}", String::from_utf8_lossy(*cmd).trim())))).unwrap_or_default();
+                status_sender.send(format!("INFO: Sending command: {}", String::from_utf8_lossy(*cmd).trim())).unwrap_or_default();
                 let response = match send_and_receive(&mut port, *cmd) {
                     Ok(resp) => resp,
                     Err(e) => {
-                        sender
-                            .send(Err(anyhow::anyhow!(format!("ERROR: Failed to send command {}: {}", String::from_utf8_lossy(*cmd).trim(), e))))
+                        status_sender
+                            .send(format!("ERROR: Failed to send command {}: {}", String::from_utf8_lossy(*cmd).trim(), e))
                             .unwrap_or_default();
                         return; // 初期化失敗時もスレッド終了
                     }
                 };
-                sender.send(Err(anyhow::anyhow!(format!("INFO: Response for {}: {}", String::from_utf8_lossy(*cmd).trim(), response.trim())))).unwrap_or_default();
+                status_sender.send(format!("INFO: Response for {}: {}", String::from_utf8_lossy(*cmd).trim(), response.trim())).unwrap_or_default();
                 thread::sleep(Duration::from_millis(50)); // コマンド間に少し待機
             }
 
             // BM コマンドを別に送信
-            sender.send(Err(anyhow::anyhow!(format!("INFO: Sending command: {}", String::from_utf8_lossy(b"BM\n").trim())))).unwrap_or_default();
+            status_sender.send(format!("INFO: Sending command: {}", String::from_utf8_lossy(b"BM\n").trim())).unwrap_or_default();
             let response_bm = match send_and_receive(&mut port, b"BM\n") {
                 Ok(resp) => resp,
                 Err(e) => {
-                    sender
-                        .send(Err(anyhow::anyhow!(format!("ERROR: Failed to send command BM: {}", e))))
+                    status_sender
+                        .send(format!("ERROR: Failed to send command BM: {}", e))
                         .unwrap_or_default();
                     return;
                 }
             };
-            sender.send(Err(anyhow::anyhow!(format!("INFO: Response for BM: {}", response_bm.trim())))).unwrap_or_default();
+            status_sender.send(format!("INFO: Response for BM: {}", response_bm.trim())).unwrap_or_default();
             thread::sleep(Duration::from_millis(50)); // コマンド間に少し待機
-            sender.send(Err(anyhow::anyhow!("INFO: LiDAR initialized. Laser is ON.")))
+            status_sender.send("INFO: LiDAR initialized. Laser is ON.".to_string())
                 .unwrap_or_default();
             // --- ここまでLiDAR初期接続ロジック ---
 
@@ -160,13 +179,13 @@ impl Default for MyApp {
             loop {
                 // GDコマンドを送信してLiDARデータを取得
                 let command = b"GD0000108001\n";
-                sender.send(Err(anyhow::anyhow!(format!("INFO: Sending command: {}", String::from_utf8_lossy(command).trim())))).unwrap_or_default();
+                status_sender.send(format!("INFO: Sending command: {}", String::from_utf8_lossy(command).trim())).unwrap_or_default();
 
                 let response = match send_and_receive(&mut port, command) {
                     Ok(resp) => resp,
                     Err(e) => {
-                        sender
-                            .send(Err(anyhow::anyhow!(format!("ERROR: Failed to send GD command or receive response: {}", e))))
+                        status_sender
+                            .send(format!("ERROR: Failed to send GD command or receive response: {}", e))
                             .unwrap_or_default();
                         break;
                     }
@@ -177,16 +196,16 @@ impl Default for MyApp {
                 // GDコマンドのエコー、ステータス行、タイムスタンプ行が最低限必要
                 if lines.len() >= 3 { 
                     // GDコマンドのエコーバック
-                    sender.send(Err(anyhow::anyhow!(format!("GD Echo: {}", lines[0]))))
+                    status_sender.send(format!("GD Echo: {}", lines[0]))
                         .unwrap_or_default();
 
                     // ステータス行 (2バイト)
                     let status_line = lines[1];
                     if status_line.len() >= 2 { // ステータスは2文字
-                        sender.send(Err(anyhow::anyhow!(format!("Status: {}", &status_line[0..2]))))
+                        status_sender.send(format!("Status: {}", &status_line[0..2]))
                             .unwrap_or_default();
                     } else {
-                        sender.send(Err(anyhow::anyhow!(format!("ERROR: Status line too short: '{}'", status_line))))
+                        status_sender.send(format!("ERROR: Status line too short: '{}'", status_line))
                             .unwrap_or_default();
                     }
 
@@ -197,16 +216,16 @@ impl Default for MyApp {
                         let encoded_timestamp = &timestamp_line[0..4];
                         match decode_scip_2_0_4char(encoded_timestamp) {
                             Ok(timestamp_value) => {
-                                sender.send(Err(anyhow::anyhow!(format!("Decoded Timestamp: {}", timestamp_value))))
+                                status_sender.send(format!("Decoded Timestamp: {}", timestamp_value))
                                     .unwrap_or_default();
                             }
                             Err(e) => {
-                                sender.send(Err(anyhow::anyhow!(format!("ERROR: Failed to decode timestamp: {}", e))))
+                                status_sender.send(format!("ERROR: Failed to decode timestamp: {}", e))
                                     .unwrap_or_default();
                             }
                         }
                     } else {
-                        sender.send(Err(anyhow::anyhow!(format!("ERROR: Timestamp line too short: '{}'", timestamp_line))))
+                        status_sender.send(format!("ERROR: Timestamp line too short: '{}'", timestamp_line))
                             .unwrap_or_default();
                         continue; // 次のループへ
                     }
@@ -248,7 +267,7 @@ impl Default for MyApp {
 
                         let encoded_distance = String::from_utf8_lossy(chunk);
                         if encoded_distance.len() != 3 {
-                            sender.send(Err(anyhow::anyhow!(format!("ERROR: Invalid 3-char encoded distance length: '{}' at chunk index {}", encoded_distance, i))))
+                            status_sender.send(format!("ERROR: Invalid 3-char encoded distance length: '{}' at chunk index {}", encoded_distance, i))
                                 .unwrap_or_default();
                             current_angle += angle_increment; // ここでも角度をインクリメントしないとずれる
                             continue;
@@ -281,7 +300,7 @@ impl Default for MyApp {
                                 lidar_points_current_scan.push((x, y));
                             }
                             Err(e) => {
-                                sender.send(Err(anyhow::anyhow!(format!("ERROR: Failed to decode distance '{}' at chunk index {}: {}", encoded_distance, i, e))))
+                                status_sender.send(format!("ERROR: Failed to decode distance '{}' at chunk index {}: {}", encoded_distance, i, e))
                                     .unwrap_or_default();
                             }
                         }
@@ -296,7 +315,7 @@ impl Default for MyApp {
                     let mut file = match std::fs::File::create(filename) {
                         Ok(f) => f,
                         Err(e) => {
-                            sender.send(Err(anyhow::anyhow!(format!("ERROR: Failed to create file {}: {}", filename, e))))
+                            status_sender.send(format!("ERROR: Failed to create file {}: {}", filename, e))
                                 .unwrap_or_default();
                             break; // エラーが発生した場合はループを抜ける
                         }
@@ -304,12 +323,12 @@ impl Default for MyApp {
 
                     for point in &lidar_points_current_scan {
                         if let Err(e) = writeln!(file, "{} {}", point.0, point.1) {
-                            sender.send(Err(anyhow::anyhow!(format!("ERROR: Failed to write to file {}: {}", filename, e))))
+                            status_sender.send(format!("ERROR: Failed to write to file {}: {}", filename, e))
                                 .unwrap_or_default();
                             break; // エラーが発生した場合はループを抜ける
                         }
                     }
-                    sender.send(Err(anyhow::anyhow!(format!("INFO: First point cloud saved to {}. Terminating.", filename))))
+                    status_sender.send(format!("INFO: First point cloud saved to {}. Terminating.", filename))
                         .unwrap_or_default();
                     
                     // 生データの出力はコメントアウト
@@ -317,7 +336,7 @@ impl Default for MyApp {
                     //       .unwrap_or_default();
 
                 } else {
-                    sender.send(Err(anyhow::anyhow!(format!("ERROR: Malformed GD response (expected at least 3 lines): {}", response))))
+                    status_sender.send(format!("ERROR: Malformed GD response (expected at least 3 lines): {}", response))
                         .unwrap_or_default();
                 }
                 thread::sleep(Duration::from_millis(100)); 
@@ -333,43 +352,17 @@ impl Default for MyApp {
             input_string: String::new(),
             command_history: vec!["Welcome to the interactive console!".to_string()],
             lidar_points: Vec::new(), // 最初は空
-            receiver,                // 生成したレシーバーを格納
-            should_set_initial_size: true,
-        }
+                        receiver,                // 生成したレシーバーを格納
+                        lidar_status_messages: Vec::new(),
+                        status_receiver,
+                    }
     }
 }
 
 impl eframe::App for MyApp {
     /// フレームごとに呼ばれ、UIを描画する
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // --- 初期サイズを一度だけ設定 ---
-        if self.should_set_initial_size {
-            // 先にコンソールパネルを描画して、その高さを取得する
-            let panel_response = egui::TopBottomPanel::bottom("terminal")
-                .resizable(true)
-                .min_height(200.0)
-                .show(ctx, |_ui| {
-                    // この時点では、サイズ計算のためにダミーで描画するだけ
-                });
 
-            let console_height = panel_response.response.rect.height();
-            let client_rect = ctx.input(|i| i.screen_rect());
-
-            // 理想的なウィンドウ幅を計算 (クライアント領域の高さ - コンソールの高さ)
-            let ideal_width = client_rect.height() - console_height;
-            let new_size = egui::vec2(ideal_width, client_rect.height());
-
-            // ウィンドウをリサイズするコマンドを送信
-            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(new_size));
-            // ウィンドウを画面中央に配置するコマンドを送信
-            if let Some(cmd) = egui::ViewportCommand::center_on_screen(ctx) {
-                ctx.send_viewport_cmd(cmd);
-            }
-
-            self.should_set_initial_size = false;
-            // リサイズが適用される次のフレームで正しく描画するため、このフレームの描画はスキップ
-            return;
-        }
 
         // --- データ更新 ---
         // バックグラウンドスレッドから新しいデータが届いていれば、描画データを更新
@@ -387,6 +380,16 @@ impl eframe::App for MyApp {
             ctx.request_repaint();
         }
 
+        // LiDARステータスメッセージの受信と更新
+        while let Ok(msg) = self.status_receiver.try_recv() {
+            self.lidar_status_messages.push(msg);
+            // 最大10行を保持するように調整
+            if self.lidar_status_messages.len() > 10 {
+                self.lidar_status_messages.remove(0);
+            }
+            ctx.request_repaint();
+        }
+
         // TextEditウィジェットに割り当てる一意のID
         let console_input_id = egui::Id::new("console_input");
 
@@ -395,9 +398,10 @@ impl eframe::App for MyApp {
         ctx.input(|i| i.key_pressed(egui::Key::Enter)) && !ctx.wants_keyboard_input();
 
         // 1. 下側のパネル（コンソール）
-        egui::TopBottomPanel::bottom("terminal")
+        egui::SidePanel::left("terminal")
+            .exact_width(ctx.input(|i| i.screen_rect()).width() / 4.0)
             .resizable(true)
-            .min_height(300.0)
+            .min_width(150.0) // 最小幅を設定
             .show(ctx, |ui| {
                 // パネル背景のクリックを検知するためのインタラクション領域
                 let background_response = ui.interact(
@@ -410,6 +414,18 @@ impl eframe::App for MyApp {
                     ctx.memory_mut(|m| m.request_focus(console_input_id));
                 }
                 ui.heading("Console");
+                // LiDAR状態表示用の固定領域
+                ui.group(|ui| {
+                    ui.set_height(ui.text_style_height(&egui::TextStyle::Monospace) * 10.0); // 10行分の高さを確保
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
+                            for line in &self.lidar_status_messages {
+                                ui.monospace(line);
+                            }
+                        });
+                    });
+                });
+                ui.separator(); // 固定領域とコマンド履歴の間に区切り線
                 egui::ScrollArea::vertical()
                     .stick_to_bottom(true)
                     .max_height(ui.available_height() * 0.8)
@@ -439,6 +455,12 @@ impl eframe::App for MyApp {
                                     self.command_history.push("Exiting application...".to_string());
                                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                                 }
+                                "zi" => {
+                                    self.command_history.push("Zoom in".to_string());
+                                }
+                                "zo" => {
+                                    self.command_history.push("Zoom out".to_string());
+                                }
                                 _ => {
                                     self.command_history.push(format!("Unknown command: '{}'", command));
                                 }
@@ -455,7 +477,7 @@ impl eframe::App for MyApp {
             ui.heading("LiDAR Data Visualization");
             let (response, painter) =
             ui.allocate_painter(ui.available_size(), egui::Sense::hover());
-            let side = response.rect.width().min(response.rect.height());
+            let side = response.rect.height();
             let square_rect = egui::Rect::from_center_size(response.rect.center(), egui::vec2(side, side));
             let to_screen = egui::emath::RectTransform::from_to(
                 egui::Rect::from_center_size(egui::Pos2::ZERO, egui::vec2(16.0, 16.0)),
