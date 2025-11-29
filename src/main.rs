@@ -397,6 +397,12 @@ impl eframe::App for MyApp {
         let enter_pressed_while_unfocused =
         ctx.input(|i| i.key_pressed(egui::Key::Enter)) && !ctx.wants_keyboard_input();
 
+        // Ctrl + L (または Cmd + L) でコンソールをクリア
+        if ctx.input(|i| (i.modifiers.ctrl || i.modifiers.command) && i.key_pressed(egui::Key::L)) {
+            self.command_history.clear();
+            ctx.request_repaint(); // 画面を再描画してクリアを反映
+        }
+
         // 1. 下側のパネル（コンソール）
         egui::SidePanel::left("terminal")
             .exact_width(ctx.input(|i| i.screen_rect()).width() / 4.0)
@@ -456,6 +462,14 @@ impl eframe::App for MyApp {
                                 }
                                 "zo" => {
                                     self.command_history.push("Zoom out".to_string());
+                                }
+                                "help" => {
+                                    self.command_history.push("Available commands:".to_string());
+                                    self.command_history.push("  help      - Show this help message".to_string());
+                                    self.command_history.push("  q         - Quit the application".to_string());
+                                    self.command_history.push("  zi        - Zoom in (not yet implemented)".to_string());
+                                    self.command_history.push("  zo        - Zoom out (not yet implemented)".to_string());
+                                    self.command_history.push("  Ctrl+L/Cmd+L - Clear console history (anywhere)".to_string());
                                 }
                                 _ => {
                                     self.command_history.push(format!("Unknown command: '{}'", command));
