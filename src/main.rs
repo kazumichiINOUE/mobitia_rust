@@ -23,7 +23,7 @@ fn send_and_receive(port: &mut Box<dyn serialport::SerialPort>, command: &[u8]) 
             Ok(bytes) => {
                 if bytes > 0 {
                     buf.extend_from_slice(&serial_buf[..bytes]);
-                    // 応答の終わりを判定する簡易的な方法。実際のプロトコルに合わせて調整が必要。
+                    // 応答の終わりを判定する．SCIP2.0では，すべての応答の終端はこの形式．
                     if buf.ends_with(b"\n\n") {
                         break;
                     }
@@ -39,7 +39,6 @@ fn send_and_receive(port: &mut Box<dyn serialport::SerialPort>, command: &[u8]) 
             Err(e) => return Err(e.into()),
         }
     }
-    // ★ここから追加
     Ok(String::from_utf8_lossy(&buf).to_string())
 }
 
@@ -59,7 +58,7 @@ fn decode_scip_2_0_4char(encoded_val: &str) -> Result<u32, anyhow::Error> {
     Ok(decoded_u32)
 }
 
-// Helper function to decode a 3-character SCIP2.0 encoded value (18-bit)
+// Helper function to decode a 3-character SCIP2.0 encoded value
 fn decode_scip_2_0_3char(encoded_val: &str) -> Result<u32, anyhow::Error> {
     if encoded_val.len() != 3 {
         return Err(anyhow::anyhow!("Invalid 3-character encoded value length: {}", encoded_val.len()));
@@ -76,34 +75,19 @@ fn decode_scip_2_0_3char(encoded_val: &str) -> Result<u32, anyhow::Error> {
 }
 
 // アプリケーション全体の状態を管理する構造体
-
 struct MyApp {
-    // コンソールの入力文字列
-    input_string: String,
-
-    // コンソールのコマンド履歴
-    command_history: Vec<String>,
-
-    // 描画用のLiDAR点群データ (x, y)
-    lidar_points: Vec<(f32, f32)>,
-
-    // データ受信用のレシーバー
-    receiver: mpsc::Receiver<Result<Vec<(f32, f32)>>>,
-
-    // LiDARの状態表示用メッセージ
-    lidar_status_messages: Vec<String>,
-
-    // LiDARの状態メッセージ受信用のレシーバー
-    status_receiver: mpsc::Receiver<String>,
-
-    // コンソールコマンド出力受信用のレシーバー
-    command_output_receiver: mpsc::Receiver<String>,
-
-    // コンソールコマンド出力送信用のセンダー
-    command_output_sender: mpsc::Sender<String>,
-
-    // LiDAR描画エリアのRect
-    lidar_draw_rect: Option<egui::Rect>,
+    input_string: String,                              // コンソールの入力文字列
+    command_history: Vec<String>,                      // コンソールのコマンド履歴
+    lidar_points: Vec<(f32, f32)>,                     // 描画用のLiDAR点群データ (x, y)
+    receiver: mpsc::Receiver<Result<Vec<(f32, f32)>>>, // データ受信用のレシーバー
+    lidar_status_messages: Vec<String>,                // LiDARの状態表示用メッセージ
+    status_receiver: mpsc::Receiver<String>,           // LiDARの状態メッセージ受信用のレシーバー
+    command_output_receiver: mpsc::Receiver<String>,   // コンソールコマンド出力受信用のレシーバー
+    command_output_sender: mpsc::Sender<String>,       // コンソールコマンド出力送信用のセンダー
+    lidar_draw_rect: Option<egui::Rect>,               // LiDAR描画エリアのRect
+    lidar_path: String,
+    lidar_baud_rate: u32,
+    lidar_connection_status: String,
 }
 
 // Defaultを実装すると、`new`関数内で MyApp::default() が使え、コードが少しきれいになる
@@ -113,13 +97,17 @@ impl Default for MyApp {
         let (sender, receiver) = mpsc::channel();
         let (status_sender, status_receiver) = mpsc::channel(); // LiDARステータス表示用
         let (command_output_sender, command_output_receiver) = mpsc::channel(); // コマンド出力用
-        thread::spawn(move || {
-            // --- LiDAR初期接続ロジック ---
-            let lidar_config = LidarInfo {
-                lidar_path: "/dev/cu.usbmodem2101".to_string(), // 注意: 環境に合わせて変更が必要
-                baud_rate: 115200,
-            };
 
+        let lidar_config = LidarInfo {
+            lidar_path: "/dev/cu.usbmodem2101".to_string(),
+            baud_rate: 115200,
+        };
+        let lidar_config_clone = lidar_config.clone(); // スレッド用にクローン
+
+        thread::spawn(move || {
+            let lidar_config = lidar_config_clone;
+            // --- LiDAR初期接続ロジック ---
+            
             status_sender.send(format!("LiDAR Path: {}", lidar_config.lidar_path)).unwrap_or_default();
             status_sender.send(format!("Baud Rate: {}", lidar_config.baud_rate)).unwrap_or_default();
 
@@ -286,6 +274,7 @@ impl Default for MyApp {
                                     continue;
                                 }
 
+                                // 距離30m以上は測定不能または無効なデータと判断
                                 if distance_mm > 300000 {
                                     current_angle += angle_increment;
                                     continue;
@@ -313,7 +302,8 @@ impl Default for MyApp {
                     sender.send(Ok(lidar_points_current_scan.clone()))
                         .unwrap_or_default();
 
-                    // ★ここから追加: 初回の点群データをファイルに保存し、終了する一時的なコード
+                    /*
+                    // 点群データをファイルに保存するテストコード（不使用）
                     let filename = "/Users/kaz/src/mobitia/lidar_points_capture.txt"; // プロジェクトルートディレクトリに保存
                     let mut file = match std::fs::File::create(filename) {
                         Ok(f) => f,
@@ -333,6 +323,7 @@ impl Default for MyApp {
                     }
                     status_sender.send(format!("INFO: First point cloud saved to {}. Terminating.", filename))
                         .unwrap_or_default();
+                    */
 
                     // 生データの出力はコメントアウト
                     // sender.send(Err(anyhow::anyhow!(format!("RAW GD RESPONSE: {}", response))))
@@ -361,6 +352,9 @@ impl Default for MyApp {
             command_output_receiver,
             command_output_sender,
             lidar_draw_rect: None, // 初期値はNone
+            lidar_path: lidar_config.lidar_path,
+            lidar_baud_rate: lidar_config.baud_rate,
+            lidar_connection_status: "Connecting...".to_string(),
         }    
     }
 }
@@ -368,8 +362,6 @@ impl Default for MyApp {
 impl eframe::App for MyApp {
     /// フレームごとに呼ばれ、UIを描画する
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-
-
         // --- データ更新 ---
         // バックグラウンドスレッドから新しいデータが届いていれば、描画データを更新
         if let Ok(result) = self.receiver.try_recv() {
@@ -388,10 +380,29 @@ impl eframe::App for MyApp {
 
         // LiDARステータスメッセージの受信と更新
         while let Ok(msg) = self.status_receiver.try_recv() {
-            self.lidar_status_messages.push(msg);
-            // 最大10行を保持するように調整
-            if self.lidar_status_messages.len() > 10 {
-                self.lidar_status_messages.remove(0);
+            let mut handled_as_status = false;
+
+            // 特定のメッセージを解析して固定ステータスを更新
+            if msg.starts_with("ERROR: Failed to open port") {
+                self.lidar_connection_status = msg.clone();
+                handled_as_status = true;
+            } else if msg.contains("Successfully opened port") {
+                self.lidar_connection_status = "Connected".to_string();
+                handled_as_status = true;
+            } else if msg.contains("INFO: LiDAR initialized. Laser is ON.") {
+                self.lidar_connection_status = "Connected (Laser ON)".to_string();
+                handled_as_status = true;
+            }
+
+            // 固定ステータスとして扱われなかったメッセージ、かつログから除外したい情報を除く
+            if !handled_as_status
+                && !msg.starts_with("LiDAR Path:")
+                && !msg.starts_with("Baud Rate:")
+            {
+                self.lidar_status_messages.push(msg);
+                if self.lidar_status_messages.len() > 10 {
+                    self.lidar_status_messages.remove(0);
+                }
             }
             ctx.request_repaint();
         }
@@ -415,7 +426,7 @@ impl eframe::App for MyApp {
             ctx.request_repaint(); // 画面を再描画してクリアを反映
         }
 
-        // 1. 下側のパネル（コンソール）
+        // 1. 左側のパネル（コンソール）
         egui::SidePanel::left("terminal")
             .exact_width(ctx.input(|i| i.screen_rect()).width() / 4.0)
             .resizable(true)
@@ -432,6 +443,27 @@ impl eframe::App for MyApp {
                     ctx.memory_mut(|m| m.request_focus(console_input_id));
                 }
                 ui.heading("Console");
+
+                egui::Frame::group(ui.style()).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label(format!("Device Path: {}", self.lidar_path));
+                    ui.label(format!("Baud Rate: {}", self.lidar_baud_rate));
+
+                    // ステータスの内容に応じて色を決定
+                    let status_text = format!("Status: {}", self.lidar_connection_status);
+                    let status_color = if self.lidar_connection_status.starts_with("Connected") {
+                        egui::Color32::GREEN // 接続成功時は緑
+                    } else if self.lidar_connection_status.starts_with("Connecting") {
+                        egui::Color32::YELLOW // 接続中は黄色
+                    } else {
+                        egui::Color32::RED // それ以外（エラーなど）は赤
+                    };
+                    
+                    // RichTextを使って色付きのラベルを表示
+                    ui.label(egui::RichText::new(status_text).color(status_color));
+                });
+                ui.separator();
+
                 // LiDAR状態表示用の固定領域
                 ui.group(|ui| {
                     ui.set_width(ui.available_width()); // 利用可能な全幅を使う
@@ -596,9 +628,6 @@ impl eframe::App for MyApp {
                                 _ => {
                                     self.command_history.push(format!("Unknown command: '{}'", full_command_line));
                                 }
-                                _ => {
-                                    self.command_history.push(format!("Unknown command: '{}'", full_command_line));
-                                }
                             }
                         }
                         self.input_string.clear();
@@ -607,7 +636,7 @@ impl eframe::App for MyApp {
                 });
             });
 
-        // 2. 上側のパネル（グラフィック表示）
+        // 2. 右側のパネル（グラフィック表示）
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("LiDAR Data Visualization");
             let (response, painter) =
@@ -653,6 +682,7 @@ fn main() -> Result<(), eframe::Error> {
         "Mobitia 2-Pane Prototype",
         native_options,
         Box::new(|cc| {
+            cc.egui_ctx.set_visuals(egui::Visuals::dark());
             let mut style = (*cc.egui_ctx.style()).clone();
             style.text_styles.insert(
                 egui::TextStyle::Monospace,
