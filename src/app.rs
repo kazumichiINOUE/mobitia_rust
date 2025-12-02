@@ -74,8 +74,6 @@ impl MyApp {
                 // 4秒で1周する角度
                 let angle = time as f32 * std::f32::consts::TAU / 4.0; 
     
-
-    
                 // 2. グラデーション付きのドーナツ状扇形（スキャン軌跡）
                 let scan_angle_width = std::f32::consts::FRAC_PI_3; // 60度
                 let num_segments = 60; // 滑らかさのためのセグメント数
