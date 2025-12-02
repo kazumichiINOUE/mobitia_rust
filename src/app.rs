@@ -20,16 +20,22 @@ pub struct MyApp {
     pub(crate) lidar_connection_status: String,
 }
 
-// Defaultを実装すると、`new`関数内で MyApp::default() が使え、コードが少しきれいになる
-impl Default for MyApp {
-    fn default() -> Self {
+impl MyApp {
+    /// Creates a new instance of the application.
+    pub fn new(cc: &eframe::CreationContext) -> Self {
+        // eframe::Storageからlidar_pathを読み込む
+        let lidar_path: String = cc
+            .storage
+            .and_then(|storage| storage.get_string("lidar_path"))
+            .unwrap_or_else(|| "/dev/cu.usbmodem2101".to_string());
+
         // チャネルを作成し、データ生成スレッドを開始する
         let (sender, receiver) = mpsc::channel();
-        let (status_sender, status_receiver) = mpsc::channel(); // LiDARステータス表示用
-        let (command_output_sender, command_output_receiver) = mpsc::channel(); // コマンド出力用
+        let (status_sender, status_receiver) = mpsc::channel();
+        let (command_output_sender, command_output_receiver) = mpsc::channel();
 
         let lidar_config = LidarInfo {
-            lidar_path: "/dev/cu.usbmodem2101".to_string(),
+            lidar_path: lidar_path.clone(), // 読み込んだパスを使用
             baud_rate: 115200,
         };
         
@@ -38,21 +44,26 @@ impl Default for MyApp {
         Self {
             input_string: String::new(),
             command_history: vec!["Welcome to the interactive console!".to_string()],
-            lidar_points: Vec::new(), // 最初は空
-            receiver,                // 生成したレシーバーを格納
+            lidar_points: Vec::new(),
+            receiver,
             lidar_status_messages: Vec::new(),
             status_receiver,
             command_output_receiver,
             command_output_sender,
-            lidar_draw_rect: None, // 初期値はNone
+            lidar_draw_rect: None,
             lidar_path: lidar_config.lidar_path,
             lidar_baud_rate: lidar_config.baud_rate,
             lidar_connection_status: "Connecting...".to_string(),
-        }    
+        }
     }
 }
 
 impl eframe::App for MyApp {
+    /// Called to save state before shutdown.
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        storage.set_string("lidar_path", self.lidar_path.clone());
+    }
+
     /// フレームごとに呼ばれ、UIを描画する
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // --- データ更新 ---
@@ -105,7 +116,7 @@ impl eframe::App for MyApp {
 
         // 1. 左側のパネル（コンソール）
         egui::SidePanel::left("terminal")
-            .exact_width(ctx.input(|i| i.screen_rect()).width() / 4.0)
+            .exact_width(ctx.input(|i| i.screen_rect()).width() / 3.0)
             .resizable(true)
             .min_width(150.0)
             .show(ctx, |ui| {

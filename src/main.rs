@@ -26,7 +26,7 @@ fn main() -> Result<(), eframe::Error> {
                 egui::FontId::proportional(18.0), // Adjust font size here
             );
             cc.egui_ctx.set_style(style);
-            Box::new(MyApp::default())
+            Box::new(MyApp::new(cc))
         }),
     )
 }

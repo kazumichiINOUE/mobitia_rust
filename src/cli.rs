@@ -11,12 +11,14 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, full_command_line: &
     match command_name {
         "help" => {
             app.command_history.push("Available commands:".to_string());
-            app.command_history.push("  help      - Show this help message".to_string());
-            app.command_history.push("  q         - Quit the application".to_string());
-            app.command_history.push("  ls [path] - List directory contents of [path]".to_string());
-            app.command_history.push("  save      - Save current LiDAR visualization as image".to_string());
-            app.command_history.push("  clear     - Clear console history".to_string());
-            app.command_history.push("  Ctrl+L/Cmd+L - Also clear console history".to_string());
+            app.command_history.push("  help          - Show this help message".to_string());
+            app.command_history.push("  setpath <path>  - Set the LiDAR device path".to_string());
+            app.command_history.push("  debug_storage - Show the path of the storage file".to_string());
+            app.command_history.push("  q             - Quit the application".to_string());
+            app.command_history.push("  ls [path]     - List directory contents of [path]".to_string());
+            app.command_history.push("  save          - Save current LiDAR visualization as image".to_string());
+            app.command_history.push("  clear         - Clear console history".to_string());
+            app.command_history.push("  Ctrl+L/Cmd+L  - Also clear console history".to_string());
         }
         "q" => {
             app.command_history.push("Exiting application...".to_string());
@@ -24,6 +26,23 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, full_command_line: &
         }
         "clear" => {
             app.command_history.clear();
+        }
+        "debug_storage" => {
+            let app_name = "Mobitia 2-Pane Prototype";
+            if let Some(dir) = eframe::storage_dir(app_name) {
+                app.command_history.push(format!("Storage directory: {}", dir.display()));
+            } else {
+                app.command_history.push("Could not determine storage directory.".to_string());
+            }
+        }
+        "setpath" => {
+            if let Some(new_path) = args.get(0) {
+                app.lidar_path = new_path.to_string();
+                app.command_history.push(format!("LiDAR path set to: {}", new_path));
+                app.command_history.push("NOTE: Restart the application to apply the new path.".to_string());
+            } else {
+                app.command_history.push("Usage: setpath <new_device_path>".to_string());
+            }
         }
         "save" => {
             let sender_clone = app.command_output_sender.clone();
