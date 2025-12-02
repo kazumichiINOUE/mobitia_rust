@@ -1,33 +1,79 @@
-use crate::app::MyApp;
+use crate::app::{MyApp, DemoMode};
 use chrono::Local;
 use eframe::egui;
 use std::thread;
+use clap::{Parser, Subcommand}; // clapをインポート
 
-pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, full_command_line: &str) {
-    let parts: Vec<&str> = full_command_line.split_whitespace().collect();
-    let command_name = parts[0];
-    let args = &parts[1..];
+/// CLI Commands for Mobitia application
+#[derive(Parser, Debug)]
+#[command(name = "mobitia", no_binary_name(true), version, about, long_about = None, disable_help_flag = true, disable_help_subcommand = true)]
+pub struct Cli {
+    #[command(subcommand)]
+    pub command: Commands,
+}
 
-    match command_name {
-        "help" => {
+#[derive(Subcommand, Debug)]
+pub enum Commands {
+    /// Show help for commands.
+    #[command(alias = "h")]
+    Help,
+    /// Set a configuration value.
+    Set {
+        #[command(subcommand)]
+        command: SetCommands,
+    },
+    /// Set the LiDAR device path.
+    Setpath {
+        /// New LiDAR device path.
+        path: String,
+    },
+    /// Show the path of the storage file.
+    #[command(name = "debug-storage")] // Explicitly set name for hyphenated command
+    DebugStorage,
+    /// Quit the application.
+    #[command(alias = "q")]
+    Quit,
+    /// Clear console history.
+    Clear,
+    /// List directory contents.
+    Ls {
+        /// Path to list (defaults to current directory).
+        path: Option<String>,
+    },
+    /// Save current LiDAR visualization as image.
+    Save,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum SetCommands {
+    /// Set the demo mode.
+    Demo {
+        /// Demo mode to set ("scan" or "ripple").
+        mode: String,
+    },
+}
+
+pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
+    match cli.command {
+        Commands::Help => {
             app.command_history.push("Available commands:".to_string());
-            app.command_history.push("  help          - Show this help message".to_string());
-            app.command_history.push("  setpath <path>  - Set the LiDAR device path".to_string());
-            app.command_history.push("  debug_storage - Show the path of the storage file".to_string());
-            app.command_history.push("  q             - Quit the application".to_string());
-            app.command_history.push("  ls [path]     - List directory contents of [path]".to_string());
-            app.command_history.push("  save          - Save current LiDAR visualization as image".to_string());
-            app.command_history.push("  clear         - Clear console history".to_string());
-            app.command_history.push("  Ctrl+L/Cmd+L  - Also clear console history".to_string());
+            app.command_history.push("  help                         - Show this help message".to_string());
+            app.command_history.push("  set demo <scan|ripple>       - Set the demo mode".to_string());
+            app.command_history.push("  setpath <path>               - Set the LiDAR device path".to_string());
+            app.command_history.push("  debug-storage                - Show the path of the storage file".to_string());
+            app.command_history.push("  quit (or q)                  - Quit the application".to_string());
+            app.command_history.push("  clear                        - Clear console history (or Ctrl+L/Cmd+L)".to_string());
+            app.command_history.push("  ls [path]                    - List directory contents".to_string());
+            app.command_history.push("  save                         - Save current LiDAR visualization as image".to_string());
         }
-        "q" => {
+        Commands::Quit => {
             app.command_history.push("Exiting application...".to_string());
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
-        "clear" => {
+        Commands::Clear => {
             app.command_history.clear();
         }
-        "debug_storage" => {
+        Commands::DebugStorage => {
             let app_name = "Mobitia 2-Pane Prototype";
             if let Some(dir) = eframe::storage_dir(app_name) {
                 app.command_history.push(format!("Storage directory: {}", dir.display()));
@@ -35,16 +81,29 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, full_command_line: &
                 app.command_history.push("Could not determine storage directory.".to_string());
             }
         }
-        "setpath" => {
-            if let Some(new_path) = args.get(0) {
-                app.lidar_path = new_path.to_string();
-                app.command_history.push(format!("LiDAR path set to: {}", new_path));
-                app.command_history.push("NOTE: Restart the application to apply the new path.".to_string());
-            } else {
-                app.command_history.push("Usage: setpath <new_device_path>".to_string());
-            }
+        Commands::Setpath { path } => {
+            app.lidar_path = path.clone();
+            app.command_history.push(format!("LiDAR path set to: {}", path));
+            app.command_history.push("NOTE: Restart the application to apply the new path.".to_string());
         }
-        "save" => {
+        Commands::Set { command } => match command {
+            SetCommands::Demo { mode } => {
+                match mode.as_str() {
+                    "scan" => {
+                        app.demo_mode = DemoMode::RotatingScan;
+                        app.command_history.push("Demo mode set to Rotating Scan.".to_string());
+                    }
+                    "ripple" => {
+                        app.demo_mode = DemoMode::ExpandingRipple;
+                        app.command_history.push("Demo mode set to Expanding Ripple.".to_string());
+                    }
+                    _ => {
+                        app.command_history.push(format!("ERROR: Unknown demo mode: '{}'. Use 'scan' or 'ripple'.", mode));
+                    }
+                }
+            }
+        },
+        Commands::Save => {
             let sender_clone = app.command_output_sender.clone();
             app.command_history.push("Saving LiDAR visualization...".to_string());
 
@@ -98,9 +157,9 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, full_command_line: &
                 }
             });
         }
-        "ls" => {
+        Commands::Ls { path } => {
             let sender_clone = app.command_output_sender.clone();
-            let path_arg = if args.is_empty() { ".".to_string() } else { args[0].to_string() };
+            let path_arg = path.unwrap_or_else(|| ".".to_string());
             app.command_history.push(format!("Executing 'ls -1 {}'...", path_arg));
             thread::spawn(move || {
                 match std::process::Command::new("ls").arg("-1").arg(&path_arg).output() {
@@ -121,9 +180,6 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, full_command_line: &
                     }
                 }
             });
-        }
-        _ => {
-            app.command_history.push(format!("Unknown command: '{}'", full_command_line));
         }
     }
 }

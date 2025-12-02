@@ -7,8 +7,8 @@ edition = "2021"
 anyhow = "1.0.100"
 clap = { version = "4.5.4", features = ["derive"] }
 eframe = { version = "0.27.2", features = ["persistence"] }
-pretty_assertions = "1.4.1"
 rand = "0.8"
+pretty_assertions = "1.4.1"
 regex = "0.1"
 serialport = "4.3.0"
 shlex = "1.3.0"

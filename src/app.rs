@@ -2,12 +2,24 @@ use anyhow::Result;
 use eframe::egui;
 use eframe::egui::ecolor::Hsva;
 use std::sync::mpsc;
+use rand::Rng;
+use clap::Parser; // Add this line
+
+use crate::cli::Cli; // Modify this line from {handle_command, Cli}
 
 use crate::lidar::{LidarInfo, start_lidar_thread};
 
 // アプリケーション全体の状態を管理する構造体
 pub enum DemoMode {
     RotatingScan,
+    ExpandingRipple,
+}
+
+pub struct Ripple {
+    center: egui::Pos2,
+    spawn_time: f64,
+    max_radius: f32,
+    duration: f32, // 波紋の寿命
 }
 
 pub struct MyApp {
@@ -23,7 +35,9 @@ pub struct MyApp {
     pub(crate) lidar_path: String,
     pub(crate) lidar_baud_rate: u32,
     pub(crate) lidar_connection_status: String,
-    demo_mode: DemoMode,
+    pub(crate) demo_mode: DemoMode,
+    ripples: Vec<Ripple>,
+    last_ripple_spawn_time: f64,
 }
 
 impl MyApp {
@@ -60,11 +74,14 @@ impl MyApp {
             lidar_path: lidar_config.lidar_path,
             lidar_baud_rate: lidar_config.baud_rate,
             lidar_connection_status: "Connecting...".to_string(),
+            //demo_mode: DemoMode::RotatingScan,
             demo_mode: DemoMode::RotatingScan,
+            ripples: Vec::new(),
+            last_ripple_spawn_time: 0.0,
         }
     }
 
-    fn draw_demo_mode(&self, ui: &mut egui::Ui, painter: &egui::Painter, rect: egui::Rect) {
+    fn draw_demo_mode(&mut self, ui: &mut egui::Ui, painter: &egui::Painter, rect: egui::Rect) {
         match self.demo_mode {
             DemoMode::RotatingScan => {
                 let time = ui.input(|i| i.time);
@@ -119,6 +136,65 @@ impl MyApp {
                     center,
                     egui::Align2::CENTER_CENTER,
                     "Signal Lost",
+                    egui::FontId::proportional(40.0),
+                    egui::Color32::WHITE,
+                );
+            }
+            DemoMode::ExpandingRipple => {
+                let time = ui.input(|i| i.time);
+                let mut rng = rand::thread_rng();
+
+                // 新しい波紋の生成 (0.5秒ごとに1回)
+                if time - self.last_ripple_spawn_time > 0.5 {
+                    self.last_ripple_spawn_time = time;
+                    let center_x = rng.gen_range(rect.left()..=rect.right());
+                    let center_y = rng.gen_range(rect.top()..=rect.bottom());
+                    let center = egui::pos2(center_x, center_y);
+
+                    self.ripples.push(Ripple {
+                        center,
+                        spawn_time: time,
+                        max_radius: rng.gen_range(50.0..=200.0),
+                        duration: rng.gen_range(2.0..=4.0),
+                    });
+                }
+
+                // 波紋の更新と描画
+                // retain_mut を使うために self の借用が可変である必要があるため、draw_demo_mode のシグネチャを &mut self に変更する必要がある
+                let current_ripples = std::mem::take(&mut self.ripples); // 一時的に所有権を移動
+                self.ripples = current_ripples.into_iter().filter_map(|ripple| {
+                    let elapsed_time = (time - ripple.spawn_time) as f32;
+                    if elapsed_time > ripple.duration {
+                        return None; // 寿命が尽きた波紋は削除
+                    }
+
+                    let progress = elapsed_time / ripple.duration; // 0.0 -> 1.0
+                    let current_radius = ripple.max_radius * progress;
+
+                    // 透明度も進行度に応じて変化させる (0.8 -> 0.0)
+                    let alpha = (1.0 - progress).powf(2.0) * 0.8; // powfで減衰を滑らかに
+                    let stroke_alpha = (alpha * 255.0) as u8;
+                    
+                    let color = egui::Color32::from_rgba_unmultiplied(0, 200, 255, stroke_alpha); // 青っぽい色
+
+                    // 線の太さも進行度に応じて変化させる (3.0 -> 0.5)
+                    let stroke_width = (1.0 - progress) * 2.5 + 0.5;
+
+                    painter.circle_stroke(
+                        ripple.center,
+                        current_radius,
+                        egui::Stroke::new(stroke_width, color),
+                    );
+                    ui.ctx().request_repaint(); // アニメーションのために再描画を要求
+
+                    Some(ripple) // 残す波紋
+                }).collect();
+
+                // 中央のテキスト
+                painter.text(
+                    rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    "Expanding Ripple Demo",
                     egui::FontId::proportional(40.0),
                     egui::Color32::WHITE,
                 );
@@ -247,7 +323,25 @@ impl eframe::App for MyApp {
                         let full_command_line_owned = self.input_string.trim().to_owned(); // Fix: Clone to String
                         if !full_command_line_owned.is_empty() {
                             self.command_history.push(format!("> {}", full_command_line_owned));
-                            crate::cli::handle_command(self, ctx, &full_command_line_owned); // Fix: Pass reference
+                            // clapでコマンドをパース
+                            match shlex::split(&full_command_line_owned) {
+                                Some(args) => {
+                                    match Cli::try_parse_from(args.into_iter()) {
+                                        Ok(cli_command) => {
+                                            crate::cli::handle_command(self, ctx, cli_command);
+                                        }
+                                        Err(e) => {
+                                            // clapのエラーメッセージは複数行になることがあるため、行ごとに履歴に追加する
+                                            for line in e.to_string().lines() {
+                                                self.command_history.push(line.to_string());
+                                            }
+                                        }
+                                    }
+                                }
+                                None => {
+                                    self.command_history.push("ERROR: Failed to parse command line.".to_string());
+                                }
+                            }
                         }
                         self.input_string.clear();
                         text_edit_response.request_focus();
