@@ -210,6 +210,8 @@ impl MyApp {
             }
         }
     }
+
+
 }
 
 impl eframe::App for MyApp {
@@ -405,16 +407,16 @@ impl eframe::App for MyApp {
                         let ctrl_n_pressed = ctx.input(|i| i.key_pressed(egui::Key::N) && (i.modifiers.ctrl || i.modifiers.command));
                         let down_pressed = ctx.input(|i| i.key_pressed(egui::Key::ArrowDown));
 
-                        if ctrl_n_pressed || down_pressed {
-                            if self.history_index < self.user_command_history.len() {
-                                self.history_index += 1;
-                                if self.history_index == self.user_command_history.len() {
-                                    self.input_string.clear();
-                                } else {
-                                    self.input_string = self.user_command_history.get(self.history_index).cloned().unwrap_or_default();
-                                }
+                        if (ctrl_n_pressed || down_pressed) && self.history_index < self.user_command_history.len() {
+                            self.history_index += 1;
+                            if self.history_index == self.user_command_history.len() {
+                                self.input_string.clear();
+                            } else {
+                                self.input_string = self.user_command_history.get(self.history_index).cloned().unwrap_or_default();
                             }
                         }
+
+
                     }
 
                     // --- コマンド実行 ---
