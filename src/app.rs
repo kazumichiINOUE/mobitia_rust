@@ -24,7 +24,10 @@ pub struct Ripple {
 
 pub struct MyApp {
     pub(crate) input_string: String,                              // コンソールの入力文字列
-    pub(crate) command_history: Vec<String>,                      // コンソールのコマンド履歴
+    pub(crate) command_history: Vec<String>,                      // コンソールの表示履歴
+    pub(crate) user_command_history: Vec<String>,                 // ユーザーのコマンド入力履歴
+    pub(crate) history_index: usize,                              // コマンド履歴のインデックス
+    pub(crate) current_suggestions: Vec<String>,                  // 現在のサジェスト候補
     pub(crate) lidar_points: Vec<(f32, f32)>,                     // 描画用のLiDAR点群データ (x, y)
     pub(crate) receiver: mpsc::Receiver<Result<Vec<(f32, f32)>>>, // データ受信用のレシーバー
     pub(crate) lidar_status_messages: Vec<String>,                // LiDARの状態表示用メッセージ
@@ -61,9 +64,16 @@ impl MyApp {
         
         start_lidar_thread(lidar_config.clone(), sender.clone(), status_sender.clone());
 
+        let command_history = vec!["Welcome to the interactive console!".to_string()];
+        let user_command_history = Vec::new();
+        let history_index = user_command_history.len();
+
         Self {
             input_string: String::new(),
-            command_history: vec!["Welcome to the interactive console!".to_string()],
+            command_history,
+            user_command_history,
+            history_index,
+            current_suggestions: Vec::new(), // 初期化
             lidar_points: Vec::new(),
             receiver,
             lidar_status_messages: Vec::new(),
@@ -74,7 +84,6 @@ impl MyApp {
             lidar_path: lidar_config.lidar_path,
             lidar_baud_rate: lidar_config.baud_rate,
             lidar_connection_status: "Connecting...".to_string(),
-            //demo_mode: DemoMode::RotatingScan,
             demo_mode: DemoMode::RotatingScan,
             ripples: Vec::new(),
             last_ripple_spawn_time: 0.0,
@@ -319,10 +328,104 @@ impl eframe::App for MyApp {
                             .font(egui::TextStyle::Monospace)
                             .lock_focus(true),
                     );
+
+                    // --- サジェスト候補の生成 ---
+                    if text_edit_response.changed() || self.input_string.is_empty() {
+                        let input = self.input_string.trim_start();
+                        self.current_suggestions.clear(); // 毎回クリアしてから再計算
+
+                        if !input.is_empty() {
+                            let parts: Vec<&str> = input.split_whitespace().collect();
+                            let ends_with_space = input.ends_with(' ');
+
+                            match parts.as_slice() {
+                                // "set demo " の後 -> 引数の候補
+                                ["set", "demo"] if ends_with_space => {
+                                    self.current_suggestions = vec!["scan".to_string(), "ripple".to_string()];
+                                }
+                                // "set demo r" のような入力中 -> 引数のフィルタリング
+                                ["set", "demo", partial_arg] => {
+                                    let options = vec!["scan", "ripple"];
+                                    self.current_suggestions = options.into_iter()
+                                        .filter(|opt| opt.starts_with(partial_arg))
+                                        .map(|s| s.to_string())
+                                        .collect();
+                                }
+                                // "set " の後 -> サブコマンドの候補
+                                ["set"] if ends_with_space => {
+                                    self.current_suggestions = vec!["path".to_string(), "demo".to_string()];
+                                }
+                                // "set p" のような入力中 -> サブコマンドのフィルタリング
+                                ["set", partial_subcommand] => {
+                                    let options = vec!["path", "demo"];
+                                    self.current_suggestions = options.into_iter()
+                                        .filter(|opt| opt.starts_with(partial_subcommand))
+                                        .map(|s| s.to_string())
+                                        .collect();
+                                }
+                                // トップレベルのコマンド入力中
+                                [partial_command] => {
+                                    let all_commands = vec![
+                                        "help", "set", "setpath", "debug-storage", "quit", "q", "clear", "ls", "save"
+                                    ];
+                                    self.current_suggestions = all_commands.into_iter()
+                                        .filter(|cmd| cmd.starts_with(partial_command))
+                                        .map(|s| s.to_string())
+                                        .collect();
+                                }
+                                // それ以外のケース（例: "set path /dev" など）ではサジェストしない
+                                _ => {}
+                            }
+                        }
+                    }
+
+                    // --- サジェスト候補の表示 ---
+                    if !self.current_suggestions.is_empty() {
+                        let suggestion_text = format!("Suggestions: {}", self.current_suggestions.join(", "));
+                        
+                        egui::Frame::none() // デフォルトのフレームはなし
+                            .fill(egui::Color32::from_rgb(40, 40, 40)) // 好きな背景色
+                            .inner_margin(egui::Margin::symmetric(5.0, 2.0)) // パディング
+                            .show(ui, |ui| {
+                                ui.set_width(ui.available_width());
+                                ui.monospace(suggestion_text);
+                            });
+                    }
+
+                    // --- コマンド履歴ナビゲーション ---
+                    if text_edit_response.has_focus() {
+                        let ctrl_p_pressed = ctx.input(|i| i.key_pressed(egui::Key::P) && (i.modifiers.ctrl || i.modifiers.command));
+                        let up_pressed = ctx.input(|i| i.key_pressed(egui::Key::ArrowUp));
+                        
+                        if (ctrl_p_pressed || up_pressed) && self.history_index > 0 {
+                            self.history_index -= 1;
+                            self.input_string = self.user_command_history.get(self.history_index).cloned().unwrap_or_default();
+                        }
+
+                        let ctrl_n_pressed = ctx.input(|i| i.key_pressed(egui::Key::N) && (i.modifiers.ctrl || i.modifiers.command));
+                        let down_pressed = ctx.input(|i| i.key_pressed(egui::Key::ArrowDown));
+
+                        if ctrl_n_pressed || down_pressed {
+                            if self.history_index < self.user_command_history.len() {
+                                self.history_index += 1;
+                                if self.history_index == self.user_command_history.len() {
+                                    self.input_string.clear();
+                                } else {
+                                    self.input_string = self.user_command_history.get(self.history_index).cloned().unwrap_or_default();
+                                }
+                            }
+                        }
+                    }
+
+                    // --- コマンド実行 ---
                     if text_edit_response.lost_focus() && ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
-                        let full_command_line_owned = self.input_string.trim().to_owned(); // Fix: Clone to String
+                        let full_command_line_owned = self.input_string.trim().to_owned();
                         if !full_command_line_owned.is_empty() {
+                            // ユーザーが入力したコマンドを表示用履歴と入力履歴の両方に追加
                             self.command_history.push(format!("> {}", full_command_line_owned));
+                            self.user_command_history.push(full_command_line_owned.clone());
+                            // 履歴の最後に移動
+                            self.history_index = self.user_command_history.len();
                             // clapでコマンドをパース
                             match shlex::split(&full_command_line_owned) {
                                 Some(args) => {
@@ -344,6 +447,7 @@ impl eframe::App for MyApp {
                             }
                         }
                         self.input_string.clear();
+                        self.current_suggestions.clear();
                         text_edit_response.request_focus();
                     }
                 });
