@@ -145,7 +145,7 @@ impl MyApp {
                 let mut rng = rand::thread_rng();
 
                 // 新しい波紋の生成 (0.5秒ごとに1回)
-                if time - self.last_ripple_spawn_time > 0.5 {
+                if time - self.last_ripple_spawn_time > 0.4 {
                     self.last_ripple_spawn_time = time;
                     let center_x = rng.gen_range(rect.left()..=rect.right());
                     let center_y = rng.gen_range(rect.top()..=rect.bottom());
@@ -154,8 +154,8 @@ impl MyApp {
                     self.ripples.push(Ripple {
                         center,
                         spawn_time: time,
-                        max_radius: rng.gen_range(50.0..=200.0),
-                        duration: rng.gen_range(2.0..=4.0),
+                        max_radius: rng.gen_range(50.0..=300.0),
+                        duration: rng.gen_range(2.0..=5.0),
                     });
                 }
 
@@ -172,13 +172,13 @@ impl MyApp {
                     let current_radius = ripple.max_radius * progress;
 
                     // 透明度も進行度に応じて変化させる (0.8 -> 0.0)
-                    let alpha = (1.0 - progress).powf(2.0) * 0.8; // powfで減衰を滑らかに
+                    let alpha = (1.0 - progress).powf(2.0) * 1.0; // powfで減衰を滑らかに
                     let stroke_alpha = (alpha * 255.0) as u8;
                     
                     let color = egui::Color32::from_rgba_unmultiplied(0, 200, 255, stroke_alpha); // 青っぽい色
 
-                    // 線の太さも進行度に応じて変化させる (3.0 -> 0.5)
-                    let stroke_width = (1.0 - progress) * 2.5 + 0.5;
+                    // 線の太さも進行度に応じて変化させる (4.0 -> 0.5)
+                    let stroke_width = (1.0 - progress) * 3.5 + 0.5;
 
                     painter.circle_stroke(
                         ripple.center,
