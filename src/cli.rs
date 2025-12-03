@@ -22,11 +22,7 @@ pub enum Commands {
         #[command(subcommand)]
         command: SetCommands,
     },
-    /// Set the LiDAR device path.
-    Setpath {
-        /// New LiDAR device path.
-        path: String,
-    },
+
     /// Show the path of the storage file.
     #[command(name = "debug-storage")] // Explicitly set name for hyphenated command
     DebugStorage,
@@ -49,7 +45,13 @@ pub enum SetCommands {
     /// Set the demo mode.
     Demo {
         /// Demo mode to set ("scan" or "ripple").
+        #[arg(value_parser = ["scan", "ripple"])]
         mode: String,
+    },
+    /// Set the LiDAR device path.
+    Path {
+        /// New LiDAR device path.
+        path: String,
     },
 }
 
@@ -59,7 +61,7 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
             app.command_history.push("Available commands:".to_string());
             app.command_history.push("  help                         - Show this help message".to_string());
             app.command_history.push("  set demo <scan|ripple>       - Set the demo mode".to_string());
-            app.command_history.push("  setpath <path>               - Set the LiDAR device path".to_string());
+            app.command_history.push("  set path <path>              - Set the LiDAR device path".to_string());
             app.command_history.push("  debug-storage                - Show the path of the storage file".to_string());
             app.command_history.push("  quit (or q)                  - Quit the application".to_string());
             app.command_history.push("  clear                        - Clear console history (or Ctrl+L/Cmd+L)".to_string());
@@ -81,11 +83,6 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                 app.command_history.push("Could not determine storage directory.".to_string());
             }
         }
-        Commands::Setpath { path } => {
-            app.lidar_path = path.clone();
-            app.command_history.push(format!("LiDAR path set to: {}", path));
-            app.command_history.push("NOTE: Restart the application to apply the new path.".to_string());
-        }
         Commands::Set { command } => match command {
             SetCommands::Demo { mode } => {
                 match mode.as_str() {
@@ -101,6 +98,11 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                         app.command_history.push(format!("ERROR: Unknown demo mode: '{}'. Use 'scan' or 'ripple'.", mode));
                     }
                 }
+            }
+            SetCommands::Path { path } => {
+                app.lidar_path = path.clone();
+                app.command_history.push(format!("LiDAR path set to: {}", path));
+                app.command_history.push("NOTE: Restart the application to apply the new path.".to_string());
             }
         },
         Commands::Save => {
