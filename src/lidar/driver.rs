@@ -2,6 +2,7 @@ use anyhow::Result;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
+use serialport;
 
 use super::comm::LidarConnection;
 use super::protocol::{decode_scip_2_0_3char, decode_scip_2_0_4char};
@@ -18,6 +19,19 @@ pub struct LidarDriver {
 
 impl LidarDriver {
     pub fn new(info: &LidarInfo) -> Result<Self> {
+        // ここからシリアルポートの存在チェックロジックを追加します
+        let available_ports = serialport::available_ports()?;
+        let port_exists = available_ports.iter().any(|p| p.port_name == info.lidar_path);
+
+        if !port_exists {
+            return Err(anyhow::anyhow!(
+                "指定されたポート '{}' が見つかりません。利用可能なポート: {}",
+                info.lidar_path,
+                available_ports.iter().map(|p| p.port_name.as_str()).collect::<Vec<_>>().join(", ")
+            ));
+        }
+        // ここまで追加してください
+
         let connection = LidarConnection::new(&info.lidar_path, info.baud_rate)?;
         Ok(Self { connection })
     }
