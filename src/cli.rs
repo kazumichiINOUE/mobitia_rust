@@ -1,4 +1,4 @@
-use crate::app::{MyApp, DemoMode};
+use crate::app::{MyApp, DemoMode, ConsoleOutputEntry};
 use chrono::Local;
 use eframe::egui;
 use std::thread;
@@ -82,22 +82,26 @@ pub enum SetCommands {
 }
 
 pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
+    // 新しいコマンド実行のグループIDを生成
+    app.next_group_id += 1;
+    let current_group_id = app.next_group_id;
+
     match cli.command {
         Commands::Help => {
-            app.command_history.push("Available commands:".to_string());
-            app.command_history.push("  help                         - Show this help message".to_string());
-            app.command_history.push("  set demo <scan|ripple|breathing> - Set the demo mode".to_string());
-            app.command_history.push("  set path <path>              - Set the LiDAR device path".to_string());
-            app.command_history.push("  serial list [--detail] [path] - List available serial ports".to_string());
-            app.command_history.push("  debug-storage                - Show the path of the storage file".to_string());
-            app.command_history.push("  quit (or q)                  - Quit the application".to_string());
-            app.command_history.push("  clear                        - Clear console history (or Ctrl+L/Cmd+L)".to_string());
-            app.command_history.push("  ls [path]                    - List directory contents".to_string());
-            app.command_history.push("  save                         - Save current LiDAR visualization as image".to_string());
-            app.command_history.push("  save-points (or sp) [--output <file>] - Save current LiDAR point cloud to a file (.lsp format)".to_string());
+            app.command_history.push(ConsoleOutputEntry { text: "Available commands:".to_string(), group_id: current_group_id });
+            app.command_history.push(ConsoleOutputEntry { text: "  help                         - Show this help message".to_string(), group_id: current_group_id });
+            app.command_history.push(ConsoleOutputEntry { text: "  set demo <scan|ripple|breathing> - Set the demo mode".to_string(), group_id: current_group_id });
+            app.command_history.push(ConsoleOutputEntry { text: "  set path <path>              - Set the LiDAR device path".to_string(), group_id: current_group_id });
+            app.command_history.push(ConsoleOutputEntry { text: "  serial list [--detail] [path] - List available serial ports".to_string(), group_id: current_group_id });
+            app.command_history.push(ConsoleOutputEntry { text: "  debug-storage                - Show the path of the storage file".to_string(), group_id: current_group_id });
+            app.command_history.push(ConsoleOutputEntry { text: "  quit (or q)                  - Quit the application".to_string(), group_id: current_group_id });
+            app.command_history.push(ConsoleOutputEntry { text: "  clear                        - Clear console history (or Ctrl+L/Cmd+L)".to_string(), group_id: current_group_id });
+            app.command_history.push(ConsoleOutputEntry { text: "  ls [path]                    - List directory contents".to_string(), group_id: current_group_id });
+            app.command_history.push(ConsoleOutputEntry { text: "  save                         - Save current LiDAR visualization as image".to_string(), group_id: current_group_id });
+            app.command_history.push(ConsoleOutputEntry { text: "  save-points (or sp) [--output <file>] - Save current LiDAR point cloud to a file (.lsp format)".to_string(), group_id: current_group_id });
         }
         Commands::Quit => {
-            app.command_history.push("Exiting application...".to_string());
+            app.command_history.push(ConsoleOutputEntry { text: "Exiting application...".to_string(), group_id: current_group_id });
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
         Commands::Clear => {
@@ -106,9 +110,9 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
         Commands::DebugStorage => {
             let app_name = "Mobitia 2-Pane Prototype";
             if let Some(dir) = eframe::storage_dir(app_name) {
-                app.command_history.push(format!("Storage directory: {}", dir.display()));
+                app.command_history.push(ConsoleOutputEntry { text: format!("Storage directory: {}", dir.display()), group_id: current_group_id });
             } else {
-                app.command_history.push("Could not determine storage directory.".to_string());
+                app.command_history.push(ConsoleOutputEntry { text: "Could not determine storage directory.".to_string(), group_id: current_group_id });
             }
         }
         Commands::Set { command } => match command {
@@ -116,34 +120,34 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                 match mode.as_str() {
                     "scan" => {
                         app.demo_mode = DemoMode::RotatingScan;
-                        app.command_history.push("Demo mode set to Rotating Scan.".to_string());
+                        app.command_history.push(ConsoleOutputEntry { text: "Demo mode set to Rotating Scan.".to_string(), group_id: current_group_id });
                     }
                     "ripple" => {
                         app.demo_mode = DemoMode::ExpandingRipple;
-                        app.command_history.push("Demo mode set to Expanding Ripple.".to_string());
+                        app.command_history.push(ConsoleOutputEntry { text: "Demo mode set to Expanding Ripple.".to_string(), group_id: current_group_id });
                     }
                     "breathing" => {
                         app.demo_mode = DemoMode::BreathingCircle;
-                        app.command_history.push("Demo mode set to Breathing Circle.".to_string());
+                        app.command_history.push(ConsoleOutputEntry { text: "Demo mode set to Breathing Circle.".to_string(), group_id: current_group_id });
                     }
                     _ => {
-                        app.command_history.push(format!("ERROR: Unknown demo mode: '{}'. Use 'scan', 'ripple', or 'breathing'.", mode));
+                        app.command_history.push(ConsoleOutputEntry { text: format!("ERROR: Unknown demo mode: '{}'. Use 'scan', 'ripple', or 'breathing'.", mode), group_id: current_group_id });
                     }
                 }
             }
             SetCommands::Path { path } => {
                 app.lidar_path = path.clone();
-                app.command_history.push(format!("LiDAR path set to: {}", path));
-                app.command_history.push("NOTE: Restart the application to apply the new path.".to_string());
+                app.command_history.push(ConsoleOutputEntry { text: format!("LiDAR path set to: {}", path), group_id: current_group_id });
+                app.command_history.push(ConsoleOutputEntry { text: "NOTE: Restart the application to apply the new path.".to_string(), group_id: current_group_id });
             }
         },
         Commands::Serial { command } => match command {
             SerialCommands::List { path, detail } => {
-                app.command_history.push("Searching for available serial ports...".to_string());
+                app.command_history.push(ConsoleOutputEntry { text: "Searching for available serial ports...".to_string(), group_id: current_group_id });
                 match serialport::available_ports() {
                     Ok(ports) => {
                         if ports.is_empty() {
-                            app.command_history.push("No serial ports found.".to_string());
+                            app.command_history.push(ConsoleOutputEntry { text: "No serial ports found.".to_string(), group_id: current_group_id });
                             return;
                         }
 
@@ -157,51 +161,51 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                             found_any = true;
 
                             if detail {
-                                app.command_history.push(format!("Port: {}", p.port_name));
+                                app.command_history.push(ConsoleOutputEntry { text: format!("Port: {}", p.port_name), group_id: current_group_id });
                                 match &p.port_type {
                                     serialport::SerialPortType::UsbPort(info) => {
-                                        app.command_history.push("  Type: USB".to_string());
-                                        app.command_history.push(format!("  VID: {:04x}, PID: {:04x}", info.vid, info.pid));
+                                        app.command_history.push(ConsoleOutputEntry { text: "  Type: USB".to_string(), group_id: current_group_id });
+                                        app.command_history.push(ConsoleOutputEntry { text: format!("  VID: {:04x}, PID: {:04x}", info.vid, info.pid), group_id: current_group_id });
                                         if let Some(sn) = &info.serial_number {
-                                            app.command_history.push(format!("  Serial Number: {}", sn));
+                                            app.command_history.push(ConsoleOutputEntry { text: format!("  Serial Number: {}", sn), group_id: current_group_id });
                                         }
                                         if let Some(manufacturer) = &info.manufacturer {
-                                            app.command_history.push(format!("  Manufacturer: {}", manufacturer));
+                                            app.command_history.push(ConsoleOutputEntry { text: format!("  Manufacturer: {}", manufacturer), group_id: current_group_id });
                                         }
                                         if let Some(product) = &info.product {
-                                            app.command_history.push(format!("  Product: {}", product));
+                                            app.command_history.push(ConsoleOutputEntry { text: format!("  Product: {}", product), group_id: current_group_id });
                                         }
                                     }
                                     serialport::SerialPortType::BluetoothPort => {
-                                        app.command_history.push("  Type: Bluetooth".to_string());
+                                        app.command_history.push(ConsoleOutputEntry { text: "  Type: Bluetooth".to_string(), group_id: current_group_id });
                                     }
                                     serialport::SerialPortType::PciPort => {
-                                        app.command_history.push("  Type: PCI".to_string());
+                                        app.command_history.push(ConsoleOutputEntry { text: "  Type: PCI".to_string(), group_id: current_group_id });
                                     }
                                     serialport::SerialPortType::Unknown => {
-                                        app.command_history.push("  Type: Unknown".to_string());
+                                    app.command_history.push(ConsoleOutputEntry { text: "  Type: Unknown".to_string(), group_id: current_group_id });
                                     }
                                 }
                             } else {
-                                app.command_history.push(p.port_name);
+                                app.command_history.push(ConsoleOutputEntry { text: p.port_name, group_id: current_group_id });
                             }
                         }
 
                         if let Some(path_filter) = path {
                             if !found_any {
-                                app.command_history.push(format!("Port '{}' not found.", path_filter));
+                                app.command_history.push(ConsoleOutputEntry { text: format!("Port '{}' not found.", path_filter), group_id: current_group_id });
                             }
                         }
                     }
                     Err(e) => {
-                        app.command_history.push(format!("ERROR: Failed to list serial ports: {}", e));
+                        app.command_history.push(ConsoleOutputEntry { text: format!("ERROR: Failed to list serial ports: {}", e), group_id: current_group_id });
                     }
                 }
             }
         },
         Commands::Save => {
             let sender_clone = app.command_output_sender.clone();
-            app.command_history.push("Saving LiDAR visualization...".to_string());
+            app.command_history.push(ConsoleOutputEntry { text: "Saving LiDAR visualization...".to_string(), group_id: current_group_id });
 
             let lidar_rect = match app.lidar_draw_rect {
                 Some(rect) => rect,
@@ -259,14 +263,14 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                 let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
                 format!("lidar_points_{}.lsp", timestamp)
             });
-            app.command_history.push(format!("Requesting save of point cloud to '{}'...", filename));
+            app.command_history.push(ConsoleOutputEntry { text: format!("Requesting save of point cloud to '{}'...", filename), group_id: current_group_id });
             app.request_save_points(filename);
             ctx.request_repaint(); // ファイル保存リクエストのために再描画
         }
         Commands::Ls { path } => {
             let sender_clone = app.command_output_sender.clone();
             let path_arg = path.unwrap_or_else(|| ".".to_string());
-            app.command_history.push(format!("Executing 'ls -1 {}'...", path_arg));
+            app.command_history.push(ConsoleOutputEntry { text: format!("Executing 'ls -1 {}'...", path_arg), group_id: current_group_id });
             thread::spawn(move || {
                 match std::process::Command::new("ls").arg("-1").arg(&path_arg).output() {
                     Ok(output) => {

@@ -18,6 +18,11 @@ pub enum DemoMode {
     BreathingCircle,
 }
 
+pub struct ConsoleOutputEntry {
+    pub text: String,
+    pub group_id: usize, // どのコマンド実行に属するか
+}
+
 pub struct Ripple {
     center: egui::Pos2,
     spawn_time: f64,
@@ -27,7 +32,7 @@ pub struct Ripple {
 
 pub struct MyApp {
     pub(crate) input_string: String,                              // コンソールの入力文字列
-    pub(crate) command_history: Vec<String>,                      // コンソールの表示履歴
+    pub(crate) command_history: Vec<ConsoleOutputEntry>,          // コンソールの表示履歴
     pub(crate) user_command_history: Vec<String>,                 // ユーザーのコマンド入力履歴
     pub(crate) history_index: usize,                              // コマンド履歴のインデックス
     pub(crate) current_suggestions: Vec<String>,                  // 現在のサジェスト候補
@@ -47,6 +52,7 @@ pub struct MyApp {
     pub(crate) show_command_window: bool,
     pub(crate) focus_console_requested: bool,
     pub(crate) requested_point_save_path: Option<String>,
+    pub(crate) next_group_id: usize,
 }
 
 impl MyApp {
@@ -71,9 +77,9 @@ impl MyApp {
         start_lidar_thread(lidar_config.clone(), sender.clone(), status_sender.clone());
 
         let command_history = vec![
-            "Welcome to the interactive console!".to_string(),
-            "Press Ctrl+P (Cmd+P on macOS) to toggle the floating console.".to_string(),
-            "Type 'help' for a list of commands.".to_string(),
+            ConsoleOutputEntry { text: "Welcome to the interactive console!".to_string(), group_id: 0 },
+            ConsoleOutputEntry { text: "Press Ctrl+P (Cmd+P on macOS) to toggle the floating console.".to_string(), group_id: 0 },
+            ConsoleOutputEntry { text: "Type 'help' for a list of commands.".to_string(), group_id: 0 },
         ];
         let user_command_history = Vec::new();
         let history_index = user_command_history.len();
@@ -100,6 +106,7 @@ impl MyApp {
             show_command_window: true,
             focus_console_requested: true,
             requested_point_save_path: None,
+            next_group_id: 0,
         }
     }
 
@@ -282,7 +289,7 @@ impl eframe::App for MyApp {
                     self.lidar_points = points;
                 }
                 Err(e) => {
-                    self.command_history.push(format!("INFO: {}", e));
+                    self.command_history.push(ConsoleOutputEntry { text: format!("INFO: {}", e), group_id: self.next_group_id });
                 }
             }
             ctx.request_repaint();
@@ -313,7 +320,7 @@ impl eframe::App for MyApp {
         }
 
         while let Ok(msg) = self.command_output_receiver.try_recv() {
-            self.command_history.push(msg);
+            self.command_history.push(ConsoleOutputEntry { text: msg, group_id: self.next_group_id });
             ctx.request_repaint();
         }
 
@@ -465,15 +472,21 @@ impl eframe::App for MyApp {
                         .stick_to_bottom(true)
                         .max_height(ui.available_height() - ui.text_style_height(&egui::TextStyle::Monospace) * 2.0 - 10.0) // 入力欄とマージンを考慮
                         .show(ui, |ui| {
-                            for line in &self.command_history {
-                                let rich_text = if line.starts_with("> ") {
-                                    egui::RichText::new(line).color(egui::Color32::GRAY)
-                                } else if line.starts_with("ERROR:") {
-                                    egui::RichText::new(line).color(egui::Color32::RED)
+                            for line_entry in &self.command_history {
+                                let is_current_group = line_entry.group_id == self.next_group_id;
+                                
+                                let final_color = if line_entry.text.starts_with("> ") {
+                                    egui::Color32::GRAY // 確定後のユーザー入力は常にGRAY
+                                } else if line_entry.text.starts_with("ERROR:") {
+                                    egui::Color32::RED // エラーは常にRED
                                 } else {
-                                    egui::RichText::new(line).color(egui::Color32::WHITE)
+                                    if is_current_group {
+                                        egui::Color32::WHITE // 最新の通常の出力はWHITE
+                                    } else {
+                                        egui::Color32::DARK_GRAY // 過去の通常の出力はDARK_GRAY
+                                    }
                                 };
-                                ui.monospace(rich_text);
+                                ui.monospace(egui::RichText::new(&line_entry.text).color(final_color));
                             }
                         });
 
@@ -587,9 +600,8 @@ impl eframe::App for MyApp {
                     if text_edit_response.lost_focus() && ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
                         let full_command_line_owned = self.input_string.trim().to_owned();
                         if !full_command_line_owned.is_empty() {
-                            self.command_history.push(format!("> {}", full_command_line_owned));
-                            self.user_command_history.push(full_command_line_owned.clone());
-                            self.history_index = self.user_command_history.len();
+                                                            self.command_history.push(ConsoleOutputEntry { text: format!("> {}", full_command_line_owned), group_id: self.next_group_id });
+                                                            self.user_command_history.push(full_command_line_owned.clone());                            self.history_index = self.user_command_history.len();
                             match shlex::split(&full_command_line_owned) {
                                 Some(args) => {
                                     match Cli::try_parse_from(args.into_iter()) {
@@ -598,13 +610,13 @@ impl eframe::App for MyApp {
                                         }
                                         Err(e) => {
                                             for line in e.to_string().lines() {
-                                                self.command_history.push(line.to_string());
+                                                self.command_history.push(ConsoleOutputEntry { text: line.to_string(), group_id: self.next_group_id });
                                             }
                                         }
                                     }
                                 }
                                 None => {
-                                    self.command_history.push("ERROR: Failed to parse command line.".to_string());
+                                    self.command_history.push(ConsoleOutputEntry { text: "ERROR: Failed to parse command line.".to_string(), group_id: self.next_group_id });
                                 }
                             }
                         }
