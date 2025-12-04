@@ -276,9 +276,11 @@ impl eframe::App for MyApp {
             let mut handled_as_status = false;
             if msg.starts_with("ERROR: Failed to open port") {
                 self.lidar_connection_status = msg.clone();
-                handled_as_status = true;
-            } else if msg.contains("Successfully opened port") {
-                self.lidar_connection_status = "Connected".to_string();
+                            handled_as_status = true;
+                        } else if msg.starts_with("ERROR: Failed to get distance data") {
+                            self.lidar_connection_status = "Connection Lost".to_string();
+                            // handled_as_status は false のままにして、詳細ログにもメッセージが表示されるようにする
+                        } else if msg.contains("Successfully opened port") {                self.lidar_connection_status = "Connected".to_string();
                 handled_as_status = true;
             } else if msg.contains("INFO: LiDAR initialized. Laser is ON.") {
                 self.lidar_connection_status = "Connected (Laser ON)".to_string();
