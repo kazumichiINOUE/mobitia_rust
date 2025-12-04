@@ -375,89 +375,6 @@ impl eframe::App for MyApp {
             ctx.request_repaint();
         }
 
-        // 1. 左側のパネル（コンソール）
-        egui::SidePanel::left("terminal")
-            .exact_width(ctx.input(|i| i.screen_rect()).width() / 3.0)
-            .resizable(true)
-            .min_width(150.0)
-            .show(ctx, |ui| {
-                let background_response = ui.interact(
-                    ui.available_rect_before_wrap(),
-                    ui.id().with("terminal_background"),
-                    egui::Sense::click(),
-                );
-                if background_response.clicked() {
-                    ctx.memory_mut(|m| m.request_focus(console_input_id));
-                }
-                ui.heading("Console");
-
-                egui::Frame::group(ui.style()).show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.label(format!("Device Path: {}", self.lidar_path));
-                    ui.label(format!("Baud Rate: {}", self.lidar_baud_rate));
-                    let status_text = format!("Status: {}", self.lidar_connection_status);
-                    let status_color = if self.lidar_connection_status.starts_with("Connected") {
-                        egui::Color32::GREEN
-                    } else if self.lidar_connection_status.starts_with("Connecting") {
-                        egui::Color32::YELLOW
-                    } else {
-                        egui::Color32::RED
-                    };
-                    ui.label(egui::RichText::new(status_text).color(status_color));
-                });
-                ui.separator();
-
-                ui.group(|ui| {
-                    ui.set_width(ui.available_width());
-                    ui.set_height(ui.text_style_height(&egui::TextStyle::Monospace) * 10.0);
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        for line in &self.lidar_status_messages {
-                            ui.monospace(line);
-                        }
-                    });
-                });
-                ui.separator();
-                
-            });
-
-        // 2. 右側のパネル（グラフィック表示）
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("LiDAR Data Visualization");
-            let (response, painter) = ui.allocate_painter(ui.available_size(), egui::Sense::hover());
-            self.lidar_draw_rect = Some(response.rect);
-
-            // LiDARの接続状態で描画を切り替える
-            if self.lidar_connection_status.starts_with("Connected") {
-                // --- LiDAR接続時：点群を描画 ---
-                let side = response.rect.height();
-                let square_rect = egui::Rect::from_center_size(response.rect.center(), egui::vec2(side, side));
-                let to_screen = egui::emath::RectTransform::from_to(
-                    egui::Rect::from_center_size(egui::Pos2::ZERO, egui::vec2(16.0, 16.0)),
-                    square_rect,
-                );
-                painter.rect_filled(square_rect, 0.0, egui::Color32::from_rgb(20, 20, 20));
-                painter.hline(square_rect.x_range(), to_screen.transform_pos(egui::pos2(0.0, 0.0)).y, egui::Stroke::new(0.5, egui::Color32::DARK_GRAY));
-                painter.vline(to_screen.transform_pos(egui::pos2(0.0, 0.0)).x, square_rect.y_range(), egui::Stroke::new(0.5, egui::Color32::DARK_GRAY));
-                for point in &self.lidar_points {
-                    let pxx = point.0;
-                    let pyy = point.1;
-                    let px = -pyy;
-                    let py = -pxx;
-                    let screen_pos = to_screen.transform_pos(egui::pos2(px, py));
-                    //let screen_pos = to_screen.transform_pos(egui::pos2(point.0, point.1));
-                    if square_rect.contains(screen_pos) {
-                        painter.circle_filled(screen_pos, 2.0, egui::Color32::GREEN);
-                    }
-                }
-                let robot_pos = to_screen.transform_pos(egui::Pos2::ZERO);
-                painter.circle_filled(robot_pos, 5.0, egui::Color32::RED);
-            } else {
-                // --- LiDAR未接続時：デモ画面を描画 ---
-                painter.rect_filled(response.rect, 0.0, egui::Color32::from_rgb(20, 20, 20));
-                self.draw_demo_mode(ui, &painter, response.rect);
-            }
-        });
-
         if self.show_command_window {
             egui::Window::new("Console")
                 .default_pos(egui::pos2(20.0, 500.0)) // 初期位置
@@ -578,15 +495,13 @@ impl eframe::App for MyApp {
 
                     // --- コマンド履歴ナビゲーション ---
                     if text_edit_response.has_focus() {
-                        let ctrl_p_pressed = ctx.input(|i| i.key_pressed(egui::Key::P) && (i.modifiers.ctrl || i.modifiers.command));
                         let up_pressed = ctx.input(|i| i.key_pressed(egui::Key::ArrowUp));
-                        if (ctrl_p_pressed || up_pressed) && self.history_index > 0 {
+                        if up_pressed && self.history_index > 0 {
                             self.history_index -= 1;
                             self.input_string = self.user_command_history.get(self.history_index).cloned().unwrap_or_default();
                         }
-                        let ctrl_n_pressed = ctx.input(|i| i.key_pressed(egui::Key::N) && (i.modifiers.ctrl || i.modifiers.command));
                         let down_pressed = ctx.input(|i| i.key_pressed(egui::Key::ArrowDown));
-                        if (ctrl_n_pressed || down_pressed) && self.history_index < self.user_command_history.len() {
+                        if down_pressed && self.history_index < self.user_command_history.len() {
                             self.history_index += 1;
                             if self.history_index == self.user_command_history.len() {
                                 self.input_string.clear();
@@ -626,6 +541,91 @@ impl eframe::App for MyApp {
                     }
                 });
         }
+
+        // 1. 左側のパネル（コンソール）
+        egui::SidePanel::left("terminal")
+            .exact_width(ctx.input(|i| i.screen_rect()).width() / 3.0)
+            .resizable(true)
+            .min_width(150.0)
+            .show(ctx, |ui| {
+                let background_response = ui.interact(
+                    ui.available_rect_before_wrap(),
+                    ui.id().with("terminal_background"),
+                    egui::Sense::click(),
+                );
+                if background_response.clicked() {
+                    ctx.memory_mut(|m| m.request_focus(console_input_id));
+                }
+                ui.heading("Console");
+
+                egui::Frame::group(ui.style()).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label(format!("Device Path: {}", self.lidar_path));
+                    ui.label(format!("Baud Rate: {}", self.lidar_baud_rate));
+                    let status_text = format!("Status: {}", self.lidar_connection_status);
+                    let status_color = if self.lidar_connection_status.starts_with("Connected") {
+                        egui::Color32::GREEN
+                    } else if self.lidar_connection_status.starts_with("Connecting") {
+                        egui::Color32::YELLOW
+                    } else {
+                        egui::Color32::RED
+                    };
+                    ui.label(egui::RichText::new(status_text).color(status_color));
+                });
+                ui.separator();
+
+                ui.group(|ui| {
+                    ui.set_width(ui.available_width());
+                    ui.set_height(ui.text_style_height(&egui::TextStyle::Monospace) * 10.0);
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        for line in &self.lidar_status_messages {
+                            ui.monospace(line);
+                        }
+                    });
+                });
+                ui.separator();
+                
+            });
+
+        // 2. 右側のパネル（グラフィック表示）
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.heading("LiDAR Data Visualization");
+            let (response, painter) = ui.allocate_painter(ui.available_size(), egui::Sense::hover());
+            self.lidar_draw_rect = Some(response.rect);
+
+            // LiDARの接続状態で描画を切り替える
+            if self.lidar_connection_status.starts_with("Connected") {
+                // --- LiDAR接続時：点群を描画 ---
+                let side = response.rect.height();
+                let square_rect = egui::Rect::from_center_size(response.rect.center(), egui::vec2(side, side));
+                let to_screen = egui::emath::RectTransform::from_to(
+                    egui::Rect::from_center_size(egui::Pos2::ZERO, egui::vec2(16.0, 16.0)),
+                    square_rect,
+                );
+                painter.rect_filled(square_rect, 0.0, egui::Color32::from_rgb(20, 20, 20));
+                painter.hline(square_rect.x_range(), to_screen.transform_pos(egui::pos2(0.0, 0.0)).y, egui::Stroke::new(0.5, egui::Color32::DARK_GRAY));
+                painter.vline(to_screen.transform_pos(egui::pos2(0.0, 0.0)).x, square_rect.y_range(), egui::Stroke::new(0.5, egui::Color32::DARK_GRAY));
+                for point in &self.lidar_points {
+                    let pxx = point.0;
+                    let pyy = point.1;
+                    let px = -pyy;
+                    let py = -pxx;
+                    let screen_pos = to_screen.transform_pos(egui::pos2(px, py));
+                    //let screen_pos = to_screen.transform_pos(egui::pos2(point.0, point.1));
+                    if square_rect.contains(screen_pos) {
+                        painter.circle_filled(screen_pos, 2.0, egui::Color32::GREEN);
+                    }
+                }
+                let robot_pos = to_screen.transform_pos(egui::Pos2::ZERO);
+                painter.circle_filled(robot_pos, 5.0, egui::Color32::RED);
+            } else {
+                // --- LiDAR未接続時：デモ画面を描画 ---
+                painter.rect_filled(response.rect, 0.0, egui::Color32::from_rgb(20, 20, 20));
+                self.draw_demo_mode(ui, &painter, response.rect);
+            }
+        });
+
+
 
         ctx.request_repaint();
     }
