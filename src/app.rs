@@ -361,7 +361,7 @@ impl eframe::App for MyApp {
         }
 
         // Ctrl/Cmd + P でコマンドウィンドウの表示/非表示を切り替える
-        if ctx.input(|i| (i.modifiers.command || i.modifiers.ctrl) && i.key_pressed(egui::Key::P)) {
+        if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::P)) {
             self.show_command_window = !self.show_command_window;
             // ウィンドウが表示されるときにフォーカスを要求
             if self.show_command_window {
