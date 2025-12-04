@@ -3,6 +3,7 @@ use chrono::Local;
 use eframe::egui;
 use std::thread;
 use clap::{Parser, Subcommand}; // clapをインポート
+use chrono;
 
 /// CLI Commands for Mobitia application
 #[derive(Parser, Debug)]
@@ -43,6 +44,13 @@ pub enum Commands {
     },
     /// Save current LiDAR visualization as image.
     Save,
+    /// Save current LiDAR point cloud data to a file.
+    #[command(alias = "sp")]
+    SavePoints {
+        /// Optional output file path (e.g., "output.lsp"). Defaults to "lidar_points_YYYYMMDD_HHMMSS.lsp".
+        #[arg(short, long)]
+        output: Option<String>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -86,6 +94,7 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
             app.command_history.push("  clear                        - Clear console history (or Ctrl+L/Cmd+L)".to_string());
             app.command_history.push("  ls [path]                    - List directory contents".to_string());
             app.command_history.push("  save                         - Save current LiDAR visualization as image".to_string());
+            app.command_history.push("  save-points (or sp) [--output <file>] - Save current LiDAR point cloud to a file (.lsp format)".to_string());
         }
         Commands::Quit => {
             app.command_history.push("Exiting application...".to_string());
@@ -243,6 +252,16 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                     Err(e) => sender_clone.send(format!("ERROR: Failed to save image: {}", e)).unwrap_or_default(),
                 }
             });
+        },
+        Commands::SavePoints { output } => {
+            let filename = output.unwrap_or_else(|| {
+                // chrono を使うために use chrono::*; が必要
+                let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
+                format!("lidar_points_{}.lsp", timestamp)
+            });
+            app.command_history.push(format!("Requesting save of point cloud to '{}'...", filename));
+            app.request_save_points(filename);
+            ctx.request_repaint(); // ファイル保存リクエストのために再描画
         }
         Commands::Ls { path } => {
             let sender_clone = app.command_output_sender.clone();

@@ -4,6 +4,8 @@ use eframe::egui::ecolor::Hsva;
 use std::sync::mpsc;
 use rand::Rng;
 use clap::Parser; // Add this line
+use std::io::Write;
+use std::thread;
 
 use crate::cli::Cli; // Modify this line from {handle_command, Cli}
 
@@ -43,6 +45,8 @@ pub struct MyApp {
     ripples: Vec<Ripple>,
     last_ripple_spawn_time: f64,
     pub(crate) show_command_window: bool,
+    pub(crate) focus_console_requested: bool,
+    pub(crate) requested_point_save_path: Option<String>,
 }
 
 impl MyApp {
@@ -66,7 +70,11 @@ impl MyApp {
         
         start_lidar_thread(lidar_config.clone(), sender.clone(), status_sender.clone());
 
-        let command_history = vec!["Welcome to the interactive console!".to_string()];
+        let command_history = vec![
+            "Welcome to the interactive console!".to_string(),
+            "Press Ctrl+P (Cmd+P on macOS) to toggle the floating console.".to_string(),
+            "Type 'help' for a list of commands.".to_string(),
+        ];
         let user_command_history = Vec::new();
         let history_index = user_command_history.len();
 
@@ -90,7 +98,13 @@ impl MyApp {
             ripples: Vec::new(),
             last_ripple_spawn_time: 0.0,
             show_command_window: true,
+            focus_console_requested: true,
+            requested_point_save_path: None,
         }
+    }
+
+    pub fn request_save_points(&mut self, path: String) {
+        self.requested_point_save_path = Some(path);
     }
 
     fn draw_demo_mode(&mut self, ui: &mut egui::Ui, painter: &egui::Painter, rect: egui::Rect) {
@@ -303,12 +317,49 @@ impl eframe::App for MyApp {
             ctx.request_repaint();
         }
 
+        // --- 点群データ保存リクエストの処理 ---
+        if let Some(path) = self.requested_point_save_path.take() {
+            let lidar_points_clone = self.lidar_points.clone();
+            let command_output_sender_clone = self.command_output_sender.clone();
+
+            thread::spawn(move || {
+                let file_path = std::path::PathBuf::from(&path);
+                match std::fs::File::create(&file_path) {
+                    Ok(mut file) => {
+                        let mut content = String::new();
+                        for point in lidar_points_clone {
+                            content.push_str(&format!("{} {}\n", point.0, point.1));
+                        }
+                        match file.write_all(content.as_bytes()) {
+                            Ok(_) => command_output_sender_clone.send(format!("Point cloud saved to '{}'.", path)).unwrap_or_default(),
+                            Err(e) => command_output_sender_clone.send(format!("ERROR: Failed to write to file '{}': {}", path, e)).unwrap_or_default(),
+                        }
+                    }
+                    Err(e) => {
+                        command_output_sender_clone.send(format!("ERROR: Failed to create file '{}': {}", path, e)).unwrap_or_default();
+                    }
+                }
+            });
+            ctx.request_repaint(); // 保存リクエスト処理のために再描画
+        }
+
         let console_input_id = egui::Id::new("console_input");
         let enter_pressed_while_unfocused = ctx.input(|i| i.key_pressed(egui::Key::Enter)) && !ctx.wants_keyboard_input();
 
-        // Escapeキーでコマンドウィンドウの表示/非表示を切り替える
-        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+        // Enterキーでフローティングコンソールにフォーカスを当てる
+        if self.show_command_window && enter_pressed_while_unfocused {
+            let console_input_id_in_window = egui::Id::new("console_input_window"); // フローティングコンソールのテキスト入力ID
+            ctx.memory_mut(|m| m.request_focus(console_input_id_in_window));
+            ctx.request_repaint(); // フォーカス変更のために再描画
+        }
+
+        // Ctrl/Cmd + P でコマンドウィンドウの表示/非表示を切り替える
+        if ctx.input(|i| (i.modifiers.command || i.modifiers.ctrl) && i.key_pressed(egui::Key::P)) {
             self.show_command_window = !self.show_command_window;
+            // ウィンドウが表示されるときにフォーカスを要求
+            if self.show_command_window {
+                self.focus_console_requested = true;
+            }
             ctx.request_repaint(); // 表示が変わるので再描画
         }
 
@@ -381,7 +432,12 @@ impl eframe::App for MyApp {
                 painter.hline(square_rect.x_range(), to_screen.transform_pos(egui::pos2(0.0, 0.0)).y, egui::Stroke::new(0.5, egui::Color32::DARK_GRAY));
                 painter.vline(to_screen.transform_pos(egui::pos2(0.0, 0.0)).x, square_rect.y_range(), egui::Stroke::new(0.5, egui::Color32::DARK_GRAY));
                 for point in &self.lidar_points {
-                    let screen_pos = to_screen.transform_pos(egui::pos2(point.0, point.1));
+                    let pxx = point.0;
+                    let pyy = point.1;
+                    let px = -pyy;
+                    let py = -pxx;
+                    let screen_pos = to_screen.transform_pos(egui::pos2(px, py));
+                    //let screen_pos = to_screen.transform_pos(egui::pos2(point.0, point.1));
                     if square_rect.contains(screen_pos) {
                         painter.circle_filled(screen_pos, 2.0, egui::Color32::GREEN);
                     }
@@ -427,6 +483,11 @@ impl eframe::App for MyApp {
                                 .desired_width(f32::INFINITY), // 幅を最大化
                         )
                     }).inner;
+
+                    if self.focus_console_requested {
+                        text_edit_response.request_focus();
+                        self.focus_console_requested = false;
+                    }
 
                     // --- サジェスト候補の生成 ---
                     if text_edit_response.changed() || self.input_string.is_empty() {

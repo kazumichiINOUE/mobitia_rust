@@ -75,9 +75,9 @@ impl LidarDriver {
         let start_step = u32::from_str_radix(&String::from_utf8_lossy(&gd_params[0..4]), 10).unwrap_or(0);
         let end_step = u32::from_str_radix(&String::from_utf8_lossy(&gd_params[4..8]), 10).unwrap_or(0);
         
-        let max_angle = (end_step as f32 - 384.0) * 0.25_f32;
+        let max_angle = (end_step as f32) * 0.25_f32 - 135.0;
         let angle_increment = 0.25_f32;
-        let mut current_angle = (start_step as f32 - 384.0) * 0.25_f32;
+        let mut current_angle = (start_step as f32) * 0.25_f32 - 135.0;
 
         let mut all_data_chars = String::new();
         for data_line_with_checksum in lines.iter().skip(3) {
@@ -98,9 +98,8 @@ impl LidarDriver {
                     if distance_mm > 1 && distance_mm < 30000 && current_angle <= max_angle {
                         let distance_m = distance_mm as f32 / 1000.0;
                         let angle_rad = current_angle.to_radians();
-                        let x = - (distance_m * angle_rad.sin());
-                        let y = - (distance_m * angle_rad.cos());
-                        lidar_points_current_scan.push((x, y));
+                        let x = distance_m * angle_rad.cos();
+                        let y = distance_m * angle_rad.sin();                        lidar_points_current_scan.push((x, y));
                     }
                 }
                 Err(_) => {
