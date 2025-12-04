@@ -13,6 +13,7 @@ use crate::lidar::{LidarInfo, start_lidar_thread};
 pub enum DemoMode {
     RotatingScan,
     ExpandingRipple,
+    BreathingCircle,
 }
 
 pub struct Ripple {
@@ -208,6 +209,42 @@ impl MyApp {
                     egui::Color32::WHITE,
                 );
             }
+            DemoMode::BreathingCircle => {
+                let time = ui.input(|i| i.time) as f32;
+                let center = rect.center();
+
+                // 8秒周期のアニメーション
+                let cycle_duration = 8.0;
+                // progress は 0.0 から 1.0 の間で滑らかに変化する
+                let progress = (time / cycle_duration * std::f32::consts::TAU).cos() * -0.5 + 0.5;
+
+                // 描画半径を矩形の高さの10%から40%の間で変化させる
+                let min_radius_ratio = 0.10;
+                let max_radius_ratio = 0.40;
+                let radius_ratio = min_radius_ratio + (max_radius_ratio - min_radius_ratio) * progress;
+                let radius = rect.height().min(rect.width()) * radius_ratio;
+
+                // 色のアルファ値を 30% から 80% の間で変化させる
+                let min_alpha = 0.3;
+                let max_alpha = 0.8;
+                let alpha = min_alpha + (max_alpha - min_alpha) * progress;
+
+                // 淡いグレーの色
+                let color = egui::Color32::from_rgba_unmultiplied(128, 128, 128, (alpha * 255.0) as u8);
+
+                // 円を描画
+                painter.circle_filled(center, radius, color);
+                ui.ctx().request_repaint(); // アニメーションのために再描画を要求
+
+                // 中央のテキスト
+                painter.text(
+                    center,
+                    egui::Align2::CENTER_CENTER,
+                    "Breathing Circle Demo",
+                    egui::FontId::proportional(40.0),
+                    egui::Color32::WHITE,
+                );
+            }
         }
     }
 
@@ -343,11 +380,11 @@ impl eframe::App for MyApp {
                             match parts.as_slice() {
                                 // "set demo " の後 -> 引数の候補
                                 ["set", "demo"] if ends_with_space => {
-                                    self.current_suggestions = vec!["scan".to_string(), "ripple".to_string()];
+                                    self.current_suggestions = vec!["scan".to_string(), "ripple".to_string(), "breathing".to_string()];
                                 }
                                 // "set demo r" のような入力中 -> 引数のフィルタリング
                                 ["set", "demo", partial_arg] => {
-                                    let options = vec!["scan", "ripple"];
+                                    let options = vec!["scan", "ripple", "breathing"];
                                     self.current_suggestions = options.into_iter()
                                         .filter(|opt| opt.starts_with(partial_arg))
                                         .map(|s| s.to_string())

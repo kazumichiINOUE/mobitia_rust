@@ -45,7 +45,7 @@ pub enum SetCommands {
     /// Set the demo mode.
     Demo {
         /// Demo mode to set ("scan" or "ripple").
-        #[arg(value_parser = ["scan", "ripple"])]
+        #[arg(value_parser = ["scan", "ripple", "breathing"])]
         mode: String,
     },
     /// Set the LiDAR device path.
@@ -60,7 +60,7 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
         Commands::Help => {
             app.command_history.push("Available commands:".to_string());
             app.command_history.push("  help                         - Show this help message".to_string());
-            app.command_history.push("  set demo <scan|ripple>       - Set the demo mode".to_string());
+            app.command_history.push("  set demo <scan|ripple|breathing> - Set the demo mode".to_string());
             app.command_history.push("  set path <path>              - Set the LiDAR device path".to_string());
             app.command_history.push("  debug-storage                - Show the path of the storage file".to_string());
             app.command_history.push("  quit (or q)                  - Quit the application".to_string());
@@ -94,8 +94,12 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                         app.demo_mode = DemoMode::ExpandingRipple;
                         app.command_history.push("Demo mode set to Expanding Ripple.".to_string());
                     }
+                    "breathing" => {
+                        app.demo_mode = DemoMode::BreathingCircle;
+                        app.command_history.push("Demo mode set to Breathing Circle.".to_string());
+                    }
                     _ => {
-                        app.command_history.push(format!("ERROR: Unknown demo mode: '{}'. Use 'scan' or 'ripple'.", mode));
+                        app.command_history.push(format!("ERROR: Unknown demo mode: '{}'. Use 'scan', 'ripple', or 'breathing'.", mode));
                     }
                 }
             }
