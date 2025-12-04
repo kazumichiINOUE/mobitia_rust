@@ -22,6 +22,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: SetCommands,
     },
+    /// Manage serial port functions.
+    Serial {
+        #[command(subcommand)]
+        command: SerialCommands,
+    },
 
     /// Show the path of the storage file.
     #[command(name = "debug-storage")] // Explicitly set name for hyphenated command
@@ -38,6 +43,19 @@ pub enum Commands {
     },
     /// Save current LiDAR visualization as image.
     Save,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum SerialCommands {
+    /// List available serial ports.
+    #[command(alias = "ls")]
+    List {
+        /// Optional: Show details for a specific port path.
+        path: Option<String>,
+        /// Show detailed information for each port.
+        #[arg(long, short)]
+        detail: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -62,6 +80,7 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
             app.command_history.push("  help                         - Show this help message".to_string());
             app.command_history.push("  set demo <scan|ripple|breathing> - Set the demo mode".to_string());
             app.command_history.push("  set path <path>              - Set the LiDAR device path".to_string());
+            app.command_history.push("  serial list [--detail] [path] - List available serial ports".to_string());
             app.command_history.push("  debug-storage                - Show the path of the storage file".to_string());
             app.command_history.push("  quit (or q)                  - Quit the application".to_string());
             app.command_history.push("  clear                        - Clear console history (or Ctrl+L/Cmd+L)".to_string());
@@ -107,6 +126,68 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                 app.lidar_path = path.clone();
                 app.command_history.push(format!("LiDAR path set to: {}", path));
                 app.command_history.push("NOTE: Restart the application to apply the new path.".to_string());
+            }
+        },
+        Commands::Serial { command } => match command {
+            SerialCommands::List { path, detail } => {
+                app.command_history.push("Searching for available serial ports...".to_string());
+                match serialport::available_ports() {
+                    Ok(ports) => {
+                        if ports.is_empty() {
+                            app.command_history.push("No serial ports found.".to_string());
+                            return;
+                        }
+
+                        let mut found_any = false;
+                        for p in ports {
+                            if let Some(ref path_filter) = path {
+                                if p.port_name != *path_filter {
+                                    continue;
+                                }
+                            }
+                            found_any = true;
+
+                            if detail {
+                                app.command_history.push(format!("Port: {}", p.port_name));
+                                match &p.port_type {
+                                    serialport::SerialPortType::UsbPort(info) => {
+                                        app.command_history.push("  Type: USB".to_string());
+                                        app.command_history.push(format!("  VID: {:04x}, PID: {:04x}", info.vid, info.pid));
+                                        if let Some(sn) = &info.serial_number {
+                                            app.command_history.push(format!("  Serial Number: {}", sn));
+                                        }
+                                        if let Some(manufacturer) = &info.manufacturer {
+                                            app.command_history.push(format!("  Manufacturer: {}", manufacturer));
+                                        }
+                                        if let Some(product) = &info.product {
+                                            app.command_history.push(format!("  Product: {}", product));
+                                        }
+                                    }
+                                    serialport::SerialPortType::BluetoothPort => {
+                                        app.command_history.push("  Type: Bluetooth".to_string());
+                                    }
+                                    serialport::SerialPortType::PciPort => {
+                                        app.command_history.push("  Type: PCI".to_string());
+                                    }
+                                    serialport::SerialPortType::Unknown => {
+                                        app.command_history.push("  Type: Unknown".to_string());
+                                    }
+                                }
+                            } else {
+                                app.command_history.push(p.port_name);
+                            }
+                        }
+
+                        if let Some(path_filter) = path {
+                            if !found_any {
+                                app.command_history.push(format!("Port '{}' not found.", path_filter));
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        app.command_history.push(format!("ERROR: Failed to list serial ports: {}", e));
+                    }
+                }
             }
         },
         Commands::Save => {
