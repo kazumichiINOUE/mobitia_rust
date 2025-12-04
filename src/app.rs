@@ -3,11 +3,11 @@ use eframe::egui;
 use eframe::egui::ecolor::Hsva;
 use std::sync::mpsc;
 use rand::Rng;
-use clap::Parser; // Add this line
+use clap::Parser; 
 use std::io::Write;
 use std::thread;
 
-use crate::cli::Cli; // Modify this line from {handle_command, Cli}
+use crate::cli::Cli; 
 
 use crate::lidar::{LidarInfo, start_lidar_thread};
 
