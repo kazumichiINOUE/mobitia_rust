@@ -42,6 +42,7 @@ pub struct MyApp {
     pub(crate) demo_mode: DemoMode,
     ripples: Vec<Ripple>,
     last_ripple_spawn_time: f64,
+    pub(crate) show_command_window: bool,
 }
 
 impl MyApp {
@@ -88,6 +89,7 @@ impl MyApp {
             demo_mode: DemoMode::RotatingScan,
             ripples: Vec::new(),
             last_ripple_spawn_time: 0.0,
+            show_command_window: true,
         }
     }
 
@@ -304,6 +306,12 @@ impl eframe::App for MyApp {
         let console_input_id = egui::Id::new("console_input");
         let enter_pressed_while_unfocused = ctx.input(|i| i.key_pressed(egui::Key::Enter)) && !ctx.wants_keyboard_input();
 
+        // Escapeキーでコマンドウィンドウの表示/非表示を切り替える
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.show_command_window = !self.show_command_window;
+            ctx.request_repaint(); // 表示が変わるので再描画
+        }
+
         if ctx.input(|i| (i.modifiers.ctrl || i.modifiers.command) && i.key_pressed(egui::Key::L)) {
             self.command_history.clear();
             ctx.request_repaint();
@@ -351,161 +359,7 @@ impl eframe::App for MyApp {
                     });
                 });
                 ui.separator();
-                egui::ScrollArea::vertical()
-                    .stick_to_bottom(true)
-                    .max_height(ui.available_height() * 0.8)
-                    .show(ui, |ui| {
-                        for line in &self.command_history {
-                            ui.monospace(line);
-                        }
-                    });
-                // ui.horizontal のクロージャ内は TextEdit の配置に限定し、.innerでResponseを取り出す
-                let text_edit_response = ui.horizontal(|ui| {
-                    ui.monospace("> ");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.input_string)
-                            .id(console_input_id)
-                            .frame(false)
-                            .hint_text("Enter command...")
-                            .font(egui::TextStyle::Monospace)
-                            .lock_focus(true)
-                            .desired_width(f32::INFINITY), // 幅を最大化
-                    )
-                }).inner;
-
-                // --- サジェスト候補の生成 ---
-                if text_edit_response.changed() || self.input_string.is_empty() {
-                    let input = self.input_string.trim_start();
-                    self.current_suggestions.clear(); // 毎回クリアしてから再計算
-
-                    if !input.is_empty() {
-                        let parts: Vec<&str> = input.split_whitespace().collect();
-                        let ends_with_space = input.ends_with(' ');
-
-                        match parts.as_slice() {
-                            // "set demo " の後 -> 引数の候補
-                            ["set", "demo"] if ends_with_space => {
-                                self.current_suggestions = vec!["scan".to_string(), "ripple".to_string(), "breathing".to_string()];
-                            }
-                            // "set demo r" のような入力中 -> 引数のフィルタリング
-                            ["set", "demo", partial_arg] => {
-                                let options = vec!["scan", "ripple", "breathing"];
-                                self.current_suggestions = options.into_iter()
-                                    .filter(|opt| opt.starts_with(partial_arg))
-                                    .map(|s| s.to_string())
-                                    .collect();
-                            }
-                            // "set " の後 -> サブコマンドの候補
-                            ["set"] if ends_with_space => {
-                                self.current_suggestions = vec!["path".to_string(), "demo".to_string()];
-                            }
-                            // "set p" のような入力中 -> サブコマンドのフィルタリング
-                            ["set", partial_subcommand] => {
-                                let options = vec!["path", "demo"];
-                                self.current_suggestions = options.into_iter()
-                                    .filter(|opt| opt.starts_with(partial_subcommand))
-                                    .map(|s| s.to_string())
-                                    .collect();
-                            }
-                            // "serial " の後 -> サブコマンドの候補
-                            ["serial"] if ends_with_space => {
-                                self.current_suggestions = vec!["list".to_string()];
-                            }
-                            // "serial l" のような入力中 -> サブコマンドのフィルタリング
-                            ["serial", partial_subcommand] => {
-                                let options = vec!["list"];
-                                self.current_suggestions = options.into_iter()
-                                    .filter(|opt| opt.starts_with(partial_subcommand))
-                                    .map(|s| s.to_string())
-                                    .collect();
-                            }
-                            // トップレベルのコマンド入力中
-                            [partial_command] => {
-                                let all_commands = vec![
-                                    "help", "set", "setpath", "debug-storage", "quit", "q", "clear", "ls", "serial", "save"
-                                ];
-                                self.current_suggestions = all_commands.into_iter()
-                                    .filter(|cmd| cmd.starts_with(partial_command))
-                                    .map(|s| s.to_string())
-                                    .collect();
-                            }
-                            // それ以外のケース（例: "set path /dev" など）ではサジェストしない
-                            _ => {}
-                        }
-                    }
-                }
-
-                // --- サジェスト候補の表示 ---
-                if !self.current_suggestions.is_empty() {
-                    let suggestion_text = format!("Suggestions: {}", self.current_suggestions.join(", "));
-                    
-                    egui::Frame::none() // デフォルトのフレームはなし
-                        .fill(egui::Color32::from_rgb(40, 40, 40)) // 好きな背景色
-                        .inner_margin(egui::Margin::symmetric(5.0, 2.0)) // パディング
-                        .show(ui, |ui| {
-                            ui.set_width(ui.available_width());
-                            ui.monospace(suggestion_text);
-                        });
-                }
-
-                // --- コマンド履歴ナビゲーション ---
-                if text_edit_response.has_focus() {
-                    let ctrl_p_pressed = ctx.input(|i| i.key_pressed(egui::Key::P) && (i.modifiers.ctrl || i.modifiers.command));
-                    let up_pressed = ctx.input(|i| i.key_pressed(egui::Key::ArrowUp));
-                    
-                    if (ctrl_p_pressed || up_pressed) && self.history_index > 0 {
-                        self.history_index -= 1;
-                        self.input_string = self.user_command_history.get(self.history_index).cloned().unwrap_or_default();
-                    }
-
-                    let ctrl_n_pressed = ctx.input(|i| i.key_pressed(egui::Key::N) && (i.modifiers.ctrl || i.modifiers.command));
-                    let down_pressed = ctx.input(|i| i.key_pressed(egui::Key::ArrowDown));
-
-                    if (ctrl_n_pressed || down_pressed) && self.history_index < self.user_command_history.len() {
-                        self.history_index += 1;
-                        if self.history_index == self.user_command_history.len() {
-                            self.input_string.clear();
-                        } else {
-                            self.input_string = self.user_command_history.get(self.history_index).cloned().unwrap_or_default();
-                        }
-                    }
-
-
-                }
-
-                // --- コマンド実行 ---
-                if text_edit_response.lost_focus() && ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    let full_command_line_owned = self.input_string.trim().to_owned();
-                    if !full_command_line_owned.is_empty() {
-                        // ユーザーが入力したコマンドを表示用履歴と入力履歴の両方に追加
-                        self.command_history.push(format!("> {}", full_command_line_owned));
-                        self.user_command_history.push(full_command_line_owned.clone());
-                        // 履歴の最後に移動
-                        self.history_index = self.user_command_history.len();
-                        // clapでコマンドをパース
-                        match shlex::split(&full_command_line_owned) {
-                            Some(args) => {
-                                match Cli::try_parse_from(args.into_iter()) {
-                                    Ok(cli_command) => {
-                                        crate::cli::handle_command(self, ctx, cli_command);
-                                    }
-                                    Err(e) => {
-                                        // clapのエラーメッセージは複数行になることがあるため、行ごとに履歴に追加する
-                                        for line in e.to_string().lines() {
-                                            self.command_history.push(line.to_string());
-                                        }
-                                    }
-                                }
-                            }
-                            None => {
-                                self.command_history.push("ERROR: Failed to parse command line.".to_string());
-                            }
-                        }
-                    }
-                    self.input_string.clear();
-                    self.current_suggestions.clear();
-                    text_edit_response.request_focus();
-                }
+                
             });
 
         // 2. 右側のパネル（グラフィック表示）
@@ -540,6 +394,157 @@ impl eframe::App for MyApp {
                 self.draw_demo_mode(ui, &painter, response.rect);
             }
         });
+
+        if self.show_command_window {
+            egui::Window::new("Console")
+                .default_pos(egui::pos2(20.0, 500.0)) // 初期位置
+                .default_size(egui::vec2(ctx.input(|i| i.screen_rect()).width() / 3.0, 400.0)) // 初期サイズ
+                .resizable(true)
+                .collapsible(true)
+                .show(ctx, |ui| {
+                    let console_input_id = egui::Id::new("console_input_window");
+
+                    // コマンド履歴
+                    egui::ScrollArea::vertical()
+                        .stick_to_bottom(true)
+                        .max_height(ui.available_height() - ui.text_style_height(&egui::TextStyle::Monospace) * 2.0 - 10.0) // 入力欄とマージンを考慮
+                        .show(ui, |ui| {
+                            for line in &self.command_history {
+                                ui.monospace(line);
+                            }
+                        });
+
+                    // 入力欄
+                    let text_edit_response = ui.horizontal(|ui| {
+                        ui.monospace("> ");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.input_string)
+                                .id(console_input_id)
+                                .frame(false)
+                                .hint_text("Enter command...")
+                                .font(egui::TextStyle::Monospace)
+                                .lock_focus(true)
+                                .desired_width(f32::INFINITY), // 幅を最大化
+                        )
+                    }).inner;
+
+                    // --- サジェスト候補の生成 ---
+                    if text_edit_response.changed() || self.input_string.is_empty() {
+                        let input = self.input_string.trim_start();
+                        self.current_suggestions.clear(); // 毎回クリアしてから再計算
+
+                        if !input.is_empty() {
+                            let parts: Vec<&str> = input.split_whitespace().collect();
+                            let ends_with_space = input.ends_with(' ');
+
+                            match parts.as_slice() {
+                                ["set", "demo"] if ends_with_space => {
+                                    self.current_suggestions = vec!["scan".to_string(), "ripple".to_string(), "breathing".to_string()];
+                                }
+                                ["set", "demo", partial_arg] => {
+                                    let options = vec!["scan", "ripple", "breathing"];
+                                    self.current_suggestions = options.into_iter()
+                                        .filter(|opt| opt.starts_with(partial_arg))
+                                        .map(|s| s.to_string())
+                                        .collect();
+                                }
+                                ["set"] if ends_with_space => {
+                                    self.current_suggestions = vec!["path".to_string(), "demo".to_string()];
+                                }
+                                ["set", partial_subcommand] => {
+                                    let options = vec!["path", "demo"];
+                                    self.current_suggestions = options.into_iter()
+                                        .filter(|opt| opt.starts_with(partial_subcommand))
+                                        .map(|s| s.to_string())
+                                        .collect();
+                                }
+                                ["serial"] if ends_with_space => {
+                                    self.current_suggestions = vec!["list".to_string()];
+                                }
+                                ["serial", partial_subcommand] => {
+                                    let options = vec!["list"];
+                                    self.current_suggestions = options.into_iter()
+                                        .filter(|opt| opt.starts_with(partial_subcommand))
+                                        .map(|s| s.to_string())
+                                        .collect();
+                                }
+                                [partial_command] => {
+                                    let all_commands = vec![
+                                        "help", "set", "setpath", "debug-storage", "quit", "q", "clear", "ls", "serial", "save"
+                                    ];
+                                    self.current_suggestions = all_commands.into_iter()
+                                        .filter(|cmd| cmd.starts_with(partial_command))
+                                        .map(|s| s.to_string())
+                                        .collect();
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+
+                    // --- サジェスト候補の表示 ---
+                    if !self.current_suggestions.is_empty() {
+                        let suggestion_text = format!("Suggestions: {}", self.current_suggestions.join(", "));
+                        egui::Frame::none()
+                            .fill(egui::Color32::from_rgb(40, 40, 40))
+                            .inner_margin(egui::Margin::symmetric(5.0, 2.0))
+                            .show(ui, |ui| {
+                                ui.set_width(ui.available_width());
+                                ui.monospace(suggestion_text);
+                            });
+                    }
+
+                    // --- コマンド履歴ナビゲーション ---
+                    if text_edit_response.has_focus() {
+                        let ctrl_p_pressed = ctx.input(|i| i.key_pressed(egui::Key::P) && (i.modifiers.ctrl || i.modifiers.command));
+                        let up_pressed = ctx.input(|i| i.key_pressed(egui::Key::ArrowUp));
+                        if (ctrl_p_pressed || up_pressed) && self.history_index > 0 {
+                            self.history_index -= 1;
+                            self.input_string = self.user_command_history.get(self.history_index).cloned().unwrap_or_default();
+                        }
+                        let ctrl_n_pressed = ctx.input(|i| i.key_pressed(egui::Key::N) && (i.modifiers.ctrl || i.modifiers.command));
+                        let down_pressed = ctx.input(|i| i.key_pressed(egui::Key::ArrowDown));
+                        if (ctrl_n_pressed || down_pressed) && self.history_index < self.user_command_history.len() {
+                            self.history_index += 1;
+                            if self.history_index == self.user_command_history.len() {
+                                self.input_string.clear();
+                            } else {
+                                self.input_string = self.user_command_history.get(self.history_index).cloned().unwrap_or_default();
+                            }
+                        }
+                    }
+
+                    // --- コマンド実行 ---
+                    if text_edit_response.lost_focus() && ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        let full_command_line_owned = self.input_string.trim().to_owned();
+                        if !full_command_line_owned.is_empty() {
+                            self.command_history.push(format!("> {}", full_command_line_owned));
+                            self.user_command_history.push(full_command_line_owned.clone());
+                            self.history_index = self.user_command_history.len();
+                            match shlex::split(&full_command_line_owned) {
+                                Some(args) => {
+                                    match Cli::try_parse_from(args.into_iter()) {
+                                        Ok(cli_command) => {
+                                            crate::cli::handle_command(self, ctx, cli_command);
+                                        }
+                                        Err(e) => {
+                                            for line in e.to_string().lines() {
+                                                self.command_history.push(line.to_string());
+                                            }
+                                        }
+                                    }
+                                }
+                                None => {
+                                    self.command_history.push("ERROR: Failed to parse command line.".to_string());
+                                }
+                            }
+                        }
+                        self.input_string.clear();
+                        self.current_suggestions.clear();
+                        text_edit_response.request_focus();
+                    }
+                });
+        }
 
         ctx.request_repaint();
     }
