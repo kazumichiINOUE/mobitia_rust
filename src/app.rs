@@ -386,7 +386,7 @@ impl eframe::App for MyApp {
                     ui.id().with("terminal_background"),
                     egui::Sense::click(),
                 );
-                if background_response.clicked() || enter_pressed_while_unfocused {
+                if background_response.clicked() {
                     ctx.memory_mut(|m| m.request_focus(console_input_id));
                 }
                 ui.heading("Console");
