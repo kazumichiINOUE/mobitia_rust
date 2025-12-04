@@ -466,7 +466,14 @@ impl eframe::App for MyApp {
                         .max_height(ui.available_height() - ui.text_style_height(&egui::TextStyle::Monospace) * 2.0 - 10.0) // 入力欄とマージンを考慮
                         .show(ui, |ui| {
                             for line in &self.command_history {
-                                ui.monospace(line);
+                                let rich_text = if line.starts_with("> ") {
+                                    egui::RichText::new(line).color(egui::Color32::GRAY)
+                                } else if line.starts_with("ERROR:") {
+                                    egui::RichText::new(line).color(egui::Color32::RED)
+                                } else {
+                                    egui::RichText::new(line).color(egui::Color32::WHITE)
+                                };
+                                ui.monospace(rich_text);
                             }
                         });
 
@@ -480,7 +487,8 @@ impl eframe::App for MyApp {
                                 .hint_text("Enter command...")
                                 .font(egui::TextStyle::Monospace)
                                 .lock_focus(true)
-                                .desired_width(f32::INFINITY), // 幅を最大化
+                                .desired_width(f32::INFINITY) // 幅を最大化
+                                .text_color(egui::Color32::LIGHT_GREEN), // ここを追加
                         )
                     }).inner;
 
