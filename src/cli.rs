@@ -2,8 +2,7 @@ use crate::app::{MyApp, DemoMode, ConsoleOutputEntry};
 use chrono::Local;
 use eframe::egui;
 use std::thread;
-use clap::{Parser, Subcommand}; // clapをインポート
-use chrono;
+use clap::{Parser, Subcommand};
 use dirs;
 
 /// CLI Commands for Mobitia application
@@ -262,7 +261,7 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                     }
 
                     for point in &lidar_points_clone {
-                        let screen_pos = to_screen.transform_pos(egui::pos2(point.0, point.1));
+                        let screen_pos = to_screen.transform_pos(egui::pos2(point.0, -point.1));
                         let x = screen_pos.x.round() as u32;
                         let y = screen_pos.y.round() as u32;
                         if x < width && y < height {
