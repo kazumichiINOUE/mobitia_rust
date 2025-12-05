@@ -467,9 +467,19 @@ impl eframe::App for MyApp {
                                         .map(|s| s.to_string())
                                         .collect();
                                 }
+                                ["save"] if ends_with_space => {
+                                    self.current_suggestions = vec!["image".to_string(), "points".to_string()];
+                                }
+                                ["save", partial_subcommand] => {
+                                    let options = vec!["image", "points"];
+                                    self.current_suggestions = options.into_iter()
+                                        .filter(|opt| opt.starts_with(partial_subcommand))
+                                        .map(|s| s.to_string())
+                                        .collect();
+                                }
                                 [partial_command] => {
                                     let all_commands = vec![
-                                        "help", "set", "setpath", "debug-storage", "quit", "q", "clear", "ls", "serial", "save"
+                                        "help", "set", "debug-storage", "quit", "q", "clear", "ls", "serial", "save"
                                     ];
                                     self.current_suggestions = all_commands.into_iter()
                                         .filter(|cmd| cmd.starts_with(partial_command))
