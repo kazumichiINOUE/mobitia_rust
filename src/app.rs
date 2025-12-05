@@ -479,7 +479,7 @@ impl eframe::App for MyApp {
                                 }
                                 [partial_command] => {
                                     let all_commands = vec![
-                                        "help", "set", "debug-storage", "quit", "q", "clear", "ls", "serial", "save"
+                                        "help", "set", "debug-storage", "quit", "q", "clear", "serial", "save"
                                     ];
                                     self.current_suggestions = all_commands.into_iter()
                                         .filter(|cmd| cmd.starts_with(partial_command))
