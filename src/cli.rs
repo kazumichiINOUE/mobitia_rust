@@ -37,11 +37,6 @@ pub enum Commands {
     Quit,
     /// Clear console history.
     Clear,
-    /// List directory contents.
-    Ls {
-        /// Path to list (defaults to current directory).
-        path: Option<String>,
-    },
     /// Save data (image or points).
     Save {
         #[command(subcommand)]
@@ -105,7 +100,6 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
             app.command_history.push(ConsoleOutputEntry { text: "  debug-storage                - Show the path of the storage file".to_string(), group_id: current_group_id });
             app.command_history.push(ConsoleOutputEntry { text: "  quit (or q)                  - Quit the application".to_string(), group_id: current_group_id });
             app.command_history.push(ConsoleOutputEntry { text: "  clear                        - Clear console history (or Ctrl+L/Cmd+L)".to_string(), group_id: current_group_id });
-            app.command_history.push(ConsoleOutputEntry { text: "  ls [path]                    - List directory contents".to_string(), group_id: current_group_id });
             app.command_history.push(ConsoleOutputEntry { text: "  save image                   - Save current LiDAR visualization as an image".to_string(), group_id: current_group_id });
             app.command_history.push(ConsoleOutputEntry { text: "  save points (or p) [--output <file>] - Save current LiDAR point cloud to a file (.lsp format)".to_string(), group_id: current_group_id });
         }
@@ -304,29 +298,5 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                 ctx.request_repaint(); // ファイル保存リクエストのために再描画
             }
         },
-        Commands::Ls { path } => {
-            let sender_clone = app.command_output_sender.clone();
-            let path_arg = path.unwrap_or_else(|| ".".to_string());
-            app.command_history.push(ConsoleOutputEntry { text: format!("Executing 'ls -1 {}'...", path_arg), group_id: current_group_id });
-            thread::spawn(move || {
-                match std::process::Command::new("ls").arg("-1").arg(&path_arg).output() {
-                    Ok(output) => {
-                        if !output.stdout.is_empty() {
-                            String::from_utf8_lossy(&output.stdout)
-                                .lines()
-                                .for_each(|line| { sender_clone.send(line.to_string()).unwrap_or_default(); });
-                        }
-                        if !output.stderr.is_empty() {
-                            String::from_utf8_lossy(&output.stderr)
-                                .lines()
-                                .for_each(|line| { sender_clone.send(format!("ERROR: {}", line)).unwrap_or_default(); });
-                        }
-                    },
-                    Err(e) => {
-                        sender_clone.send(format!("ERROR: Failed to execute 'ls': {}", e)).unwrap_or_default();
-                    }
-                }
-            });
-        }
     }
 }
