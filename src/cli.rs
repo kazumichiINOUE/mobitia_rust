@@ -93,7 +93,7 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
     match cli.command {
         Commands::Help => {
             app.command_history.push(ConsoleOutputEntry { text: "Available commands:".to_string(), group_id: current_group_id });
-            app.command_history.push(ConsoleOutputEntry { text: "  help                         - Show this help message".to_string(), group_id: current_group_id });
+            app.command_history.push(ConsoleOutputEntry { text: "  help (or h)                  - Show this help message".to_string(), group_id: current_group_id });
             app.command_history.push(ConsoleOutputEntry { text: "  set demo <scan|ripple|breathing> - Set the demo mode".to_string(), group_id: current_group_id });
             app.command_history.push(ConsoleOutputEntry { text: "  set path <path>              - Set the LiDAR device path".to_string(), group_id: current_group_id });
             app.command_history.push(ConsoleOutputEntry { text: "  serial list [--detail] [path] - List available serial ports".to_string(), group_id: current_group_id });
