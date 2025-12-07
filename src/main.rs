@@ -25,13 +25,17 @@ fn main() -> Result<(), eframe::Error> {
             // Install Source Han Sans font
             fonts.font_data.insert(
                 "source_han_sans".to_owned(),
-                egui::FontData::from_static(include_bytes!("../assets/fonts/SourceHanSans-Regular.otf")),
+                egui::FontData::from_static(include_bytes!(
+                    "../assets/fonts/SourceHanSans-Regular.otf"
+                )),
             );
 
             // Install Hack Nerd Font
             fonts.font_data.insert(
                 "hack_nerd".to_owned(),
-                egui::FontData::from_static(include_bytes!("../assets/fonts/HackNerdFont-Regular.ttf")),
+                egui::FontData::from_static(include_bytes!(
+                    "../assets/fonts/HackNerdFont-Regular.ttf"
+                )),
             );
 
             // Set Hack Nerd Font as the first priority for both proportional and monospace fonts
@@ -59,7 +63,7 @@ fn main() -> Result<(), eframe::Error> {
                 .push("source_han_sans".to_owned());
 
             cc.egui_ctx.set_fonts(fonts);
-            // --- End of font setup ---        
+            // --- End of font setup ---
             cc.egui_ctx.set_visuals(egui::Visuals::dark());
             let mut style = (*cc.egui_ctx.style()).clone();
             style.text_styles.insert(

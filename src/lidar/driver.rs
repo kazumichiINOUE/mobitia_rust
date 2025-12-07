@@ -1,8 +1,8 @@
 use anyhow::Result;
+use serialport;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
-use serialport;
 
 use super::comm::LidarConnection;
 use super::protocol::{decode_scip_2_0_3char, decode_scip_2_0_4char};
@@ -21,13 +21,19 @@ impl LidarDriver {
     pub fn new(info: &LidarInfo) -> Result<Self> {
         // ここからシリアルポートの存在チェックロジックを追加します
         let available_ports = serialport::available_ports()?;
-        let port_exists = available_ports.iter().any(|p| p.port_name == info.lidar_path);
+        let port_exists = available_ports
+            .iter()
+            .any(|p| p.port_name == info.lidar_path);
 
         if !port_exists {
             return Err(anyhow::anyhow!(
                 "指定されたポート '{}' が見つかりません。利用可能なポート: {}",
                 info.lidar_path,
-                available_ports.iter().map(|p| p.port_name.as_str()).collect::<Vec<_>>().join(", ")
+                available_ports
+                    .iter()
+                    .map(|p| p.port_name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ));
         }
         // ここまで追加してください
@@ -39,27 +45,46 @@ impl LidarDriver {
     pub fn initialize(&mut self, status_sender: &mpsc::Sender<String>) -> Result<()> {
         let init_commands: &[&[u8]] = &[b"VV\n", b"PP\n", b"II\n"];
         for cmd in init_commands {
-            status_sender.send(format!("INFO: Sending command: {}", String::from_utf8_lossy(*cmd).trim())).unwrap_or_default();
+            status_sender
+                .send(format!(
+                    "INFO: Sending command: {}",
+                    String::from_utf8_lossy(*cmd).trim()
+                ))
+                .unwrap_or_default();
             let response = self.connection.send_and_receive(*cmd)?;
-            status_sender.send(format!("INFO: Response for {}: {}", String::from_utf8_lossy(*cmd).trim(), response.trim())).unwrap_or_default();
+            status_sender
+                .send(format!(
+                    "INFO: Response for {}: {}",
+                    String::from_utf8_lossy(*cmd).trim(),
+                    response.trim()
+                ))
+                .unwrap_or_default();
             thread::sleep(Duration::from_millis(50));
         }
 
-        status_sender.send(format!("INFO: Sending command: BM")).unwrap_or_default();
+        status_sender
+            .send(format!("INFO: Sending command: BM"))
+            .unwrap_or_default();
         let response_bm = self.connection.send_and_receive(b"BM\n")?;
-        status_sender.send(format!("INFO: Response for BM: {}", response_bm.trim())).unwrap_or_default();
+        status_sender
+            .send(format!("INFO: Response for BM: {}", response_bm.trim()))
+            .unwrap_or_default();
         thread::sleep(Duration::from_millis(50));
-        status_sender.send("INFO: LiDAR initialized. Laser is ON.".to_string()).unwrap_or_default();
+        status_sender
+            .send("INFO: LiDAR initialized. Laser is ON.".to_string())
+            .unwrap_or_default();
         Ok(())
     }
 
     pub fn get_distance_data(&mut self) -> Result<Vec<(f32, f32)>> {
         let command = b"GD0000108001\n";
         let response = self.connection.send_and_receive(command)?;
-        
+
         let lines: Vec<&str> = response.trim().lines().collect();
         if lines.len() < 3 {
-            return Err(anyhow::anyhow!("Malformed GD response (expected at least 3 lines)"));
+            return Err(anyhow::anyhow!(
+                "Malformed GD response (expected at least 3 lines)"
+            ));
         }
 
         // Decode timestamp (for logging/debugging, not used in calculation here)
@@ -72,9 +97,11 @@ impl LidarDriver {
         // Parse data
         let mut lidar_points_current_scan: Vec<(f32, f32)> = Vec::new();
         let gd_params = &command[2..10];
-        let start_step = u32::from_str_radix(&String::from_utf8_lossy(&gd_params[0..4]), 10).unwrap_or(0);
-        let end_step = u32::from_str_radix(&String::from_utf8_lossy(&gd_params[4..8]), 10).unwrap_or(0);
-        
+        let start_step =
+            u32::from_str_radix(&String::from_utf8_lossy(&gd_params[0..4]), 10).unwrap_or(0);
+        let end_step =
+            u32::from_str_radix(&String::from_utf8_lossy(&gd_params[4..8]), 10).unwrap_or(0);
+
         let max_angle = (end_step as f32) * 0.25_f32 - 135.0;
         let angle_increment = 0.25_f32;
         let mut current_angle = (start_step as f32) * 0.25_f32 - 135.0;
@@ -99,7 +126,8 @@ impl LidarDriver {
                         let distance_m = distance_mm as f32 / 1000.0;
                         let angle_rad = current_angle.to_radians();
                         let x = distance_m * angle_rad.cos();
-                        let y = distance_m * angle_rad.sin();                        lidar_points_current_scan.push((x, y));
+                        let y = distance_m * angle_rad.sin();
+                        lidar_points_current_scan.push((x, y));
                     }
                 }
                 Err(_) => {
@@ -124,22 +152,38 @@ pub fn start_lidar_thread(
     status_sender: mpsc::Sender<String>,
 ) {
     thread::spawn(move || {
-        status_sender.send(format!("LiDAR Path: {}", lidar_config.lidar_path)).unwrap_or_default();
-        status_sender.send(format!("Baud Rate: {}", lidar_config.baud_rate)).unwrap_or_default();
+        status_sender
+            .send(format!("LiDAR Path: {}", lidar_config.lidar_path))
+            .unwrap_or_default();
+        status_sender
+            .send(format!("Baud Rate: {}", lidar_config.baud_rate))
+            .unwrap_or_default();
 
         let mut driver = match LidarDriver::new(&lidar_config) {
             Ok(d) => {
-                status_sender.send(format!("INFO: Successfully opened port {}", lidar_config.lidar_path)).unwrap_or_default();
+                status_sender
+                    .send(format!(
+                        "INFO: Successfully opened port {}",
+                        lidar_config.lidar_path
+                    ))
+                    .unwrap_or_default();
                 d
             }
             Err(e) => {
-                status_sender.send(format!("ERROR: Failed to open port '{}': {}", lidar_config.lidar_path, e)).unwrap_or_default();
+                status_sender
+                    .send(format!(
+                        "ERROR: Failed to open port '{}': {}",
+                        lidar_config.lidar_path, e
+                    ))
+                    .unwrap_or_default();
                 return;
             }
         };
 
         if let Err(e) = driver.initialize(&status_sender) {
-            status_sender.send(format!("ERROR: Failed to initialize LiDAR: {}", e)).unwrap_or_default();
+            status_sender
+                .send(format!("ERROR: Failed to initialize LiDAR: {}", e))
+                .unwrap_or_default();
             return;
         }
 
@@ -152,13 +196,17 @@ pub fn start_lidar_thread(
                     }
                 }
                 Err(e) => {
-                    status_sender.send(format!("ERROR: Failed to get distance data: {}", e)).unwrap_or_default();
+                    status_sender
+                        .send(format!("ERROR: Failed to get distance data: {}", e))
+                        .unwrap_or_default();
                 }
             }
             thread::sleep(Duration::from_millis(100));
         }
 
         driver.stop_laser();
-        status_sender.send("INFO: LiDAR thread stopped. Laser is OFF.".to_string()).unwrap_or_default();
+        status_sender
+            .send("INFO: LiDAR thread stopped. Laser is OFF.".to_string())
+            .unwrap_or_default();
     });
 }
