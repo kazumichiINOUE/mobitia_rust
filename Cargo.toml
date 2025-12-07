@@ -1,14 +1,13 @@
 [package]
 name = "mobitia"
 version = "0.1.0"
-edition = "2021"
+edition = "2025"
 
 [dependencies]
 anyhow = "1.0.100"
 clap = { version = "4.5.4", features = ["derive"] }
 eframe = { version = "0.27.2", features = ["persistence"] }
 rand = "0.8"
-
 
 serialport = "4.3.0"
 shlex = "1.3.0"
@@ -23,7 +22,7 @@ pretty_assertions = "1.4.1"
 
 [package.metadata.bundle]
 name = "Mobitia" # アプリケーション名
-identifier = "com.yourcompany.mobitia" # バンドル識別子 (ユニークなもの)
+identifier = "com.kazumichiinoue.mobitia" # バンドル識別子 (ユニークなもの)
 icon = ["icons/icon.icns"] # macOSアプリのアイコンファイル (後で作成)
 resources = [] # アプリケーションに含めるリソースファイル (フォントなど)
 category = "Utility" # macOSでのカテゴリ (Optional)
