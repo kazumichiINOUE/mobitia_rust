@@ -60,6 +60,10 @@ pub enum Commands {
 pub enum SlamCommands {
     /// Get a single LiDAR scan for the SLAM map.
     GetLidar,
+    /// Start continuous SLAM updates.
+    Continuous,
+    /// Pause continuous SLAM updates.
+    Pause,
 }
 
 #[derive(Subcommand, Debug)]
@@ -126,6 +130,14 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                 group_id: current_group_id,
             });
             app.command_history.push(ConsoleOutputEntry {
+                text: "  slam continuous              - Start continuous SLAM updates".to_string(),
+                group_id: current_group_id,
+            });
+            app.command_history.push(ConsoleOutputEntry {
+                text: "  slam pause                   - Pause continuous SLAM updates".to_string(),
+                group_id: current_group_id,
+            });
+            app.command_history.push(ConsoleOutputEntry {
                 text: "  demo <scan|ripple|breathing|table> - Enter demo mode with a specific pattern".to_string(),
                 group_id: current_group_id,
             });
@@ -178,7 +190,21 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                             text: "Requesting single scan for SLAM.".to_string(),
                             group_id: current_group_id,
                         });
-                    }
+                    },
+                    SlamCommands::Continuous => {
+                        app.slam_mode = crate::app::SlamMode::Continuous;
+                        app.command_history.push(ConsoleOutputEntry {
+                            text: "SLAM set to continuous mode.".to_string(),
+                            group_id: current_group_id,
+                        });
+                    },
+                    SlamCommands::Pause => {
+                        app.slam_mode = crate::app::SlamMode::Paused;
+                        app.command_history.push(ConsoleOutputEntry {
+                            text: "SLAM paused.".to_string(),
+                            group_id: current_group_id,
+                        });
+                    },
                 }
             } else {
                 app.command_history.push(ConsoleOutputEntry {

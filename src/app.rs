@@ -12,10 +12,18 @@ use crate::lidar::{start_lidar_thread, LidarInfo};
 use crate::slam::SlamManager;
 
 // アプリケーション全体のの状態を管理する構造体
+#[derive(PartialEq)]
 pub enum AppMode {
     Lidar,
     Slam,
     Demo,
+}
+
+#[derive(PartialEq)]
+pub enum SlamMode {
+    Manual,
+    Continuous,
+    Paused,
 }
 
 // アプリケーション全体の状態を管理する構造体
@@ -63,6 +71,9 @@ pub struct MyApp {
     pub(crate) focus_console_requested: bool,
     pub(crate) requested_point_save_path: Option<String>,
     pub(crate) next_group_id: usize,
+
+    pub(crate) slam_mode: SlamMode,
+    pub(crate) last_slam_update: f64,
 }
 
 impl MyApp {
@@ -129,6 +140,8 @@ impl MyApp {
             focus_console_requested: true,
             requested_point_save_path: None,
             next_group_id: 0,
+            slam_mode: SlamMode::Manual,
+            last_slam_update: 0.0,
         }
     }
 
@@ -166,6 +179,19 @@ impl eframe::App for MyApp {
                 self.slam_manager.update(&self.lidar_points);
             }
             self.slam_request_scan = false;
+        }
+
+        if self.app_mode == AppMode::Slam && self.slam_mode == SlamMode::Continuous {
+            let current_time = ctx.input(|i| i.time);
+            const UPDATE_INTERVAL: f64 = 1.0; // 1秒ごとに更新
+
+            if current_time - self.last_slam_update >= UPDATE_INTERVAL {
+                if !self.lidar_points.is_empty() {
+                    self.slam_manager.update(&self.lidar_points);
+                    self.last_slam_update = current_time; // 更新時間を記録
+                }
+                ctx.request_repaint(); // SLAM更新後に再描画を要求
+            }
         }
 
         while let Ok(msg) = self.status_receiver.try_recv() {
