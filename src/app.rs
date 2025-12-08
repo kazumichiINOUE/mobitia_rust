@@ -516,7 +516,6 @@ impl eframe::App for MyApp {
 
         // 2. 右側のパネル（グラフィック表示）
         egui::CentralPanel::default().show(ctx, |ui| {
-
             // LiDARの接続状態で描画を切り替える
             if self.lidar_connection_status.starts_with("Connected") {
                 ui.heading("LiDAR Data Visualization");

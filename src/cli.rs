@@ -28,7 +28,6 @@ pub enum Commands {
         #[command(subcommand)]
         command: SerialCommands,
     },
-
     /// Show the path of the storage file.
     #[command(name = "debug-storage")] // Explicitly set name for hyphenated command
     DebugStorage,
@@ -130,10 +129,12 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
             app.command_history.push(ConsoleOutputEntry {
                 text:
                     "  save image                   - Save current LiDAR visualization as an image"
-                        .to_string(),
+                    .to_string(),
                 group_id: current_group_id,
             });
-            app.command_history.push(ConsoleOutputEntry { text: "  save points (or p) [--output <file>] - Save current LiDAR point cloud to a file (.lsp format)".to_string(), group_id: current_group_id });
+            app.command_history.push(ConsoleOutputEntry { 
+                text: "  save points (or p) [--output <file>] - Save current LiDAR point cloud to a file (.lsp format)"
+                    .to_string(), group_id: current_group_id });
         }
         Commands::Quit => {
             app.command_history.push(ConsoleOutputEntry {
@@ -190,7 +191,9 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                     });
                 }
                 _ => {
-                    app.command_history.push(ConsoleOutputEntry { text: format!("ERROR: Unknown demo mode: '{}'. Use 'scan', 'ripple', 'breathing', or 'table'.", mode), group_id: current_group_id });
+                    app.command_history.push(ConsoleOutputEntry { 
+                        text: format!("ERROR: Unknown demo mode: '{}'. Use 'scan', 'ripple', 'breathing', or 'table'.", 
+                            mode), group_id: current_group_id });
                 }
             },
             SetCommands::Path { path } => {
