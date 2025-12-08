@@ -47,6 +47,7 @@ pub enum Commands {
 #[derive(Subcommand, Debug)]
 pub enum SaveCommands {
     /// Save current LiDAR visualization as an image.
+    #[command(alias = "i")]
     Image,
     /// Save current LiDAR point cloud data to a file.
     #[command(alias = "p")]
