@@ -5,6 +5,7 @@ use eframe::egui;
 mod app;
 mod cli;
 mod lidar;
+mod slam;
 
 use app::MyApp;
 

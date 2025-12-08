@@ -8,8 +8,15 @@ use std::sync::mpsc;
 use std::thread;
 
 use crate::cli::Cli;
-
 use crate::lidar::{start_lidar_thread, LidarInfo};
+use crate::slam::SlamManager;
+
+// アプリケーション全体のの状態を管理する構造体
+pub enum AppMode {
+    Lidar,
+    Slam,
+    Demo,
+}
 
 // アプリケーション全体の状態を管理する構造体
 pub enum DemoMode {
@@ -23,7 +30,6 @@ pub struct ConsoleOutputEntry {
     pub text: String,
     pub group_id: usize, // どのコマンド実行に属するか
 }
-
 pub struct Ripple {
     center: egui::Pos2,
     spawn_time: f64,
@@ -47,7 +53,11 @@ pub struct MyApp {
     pub(crate) lidar_path: String,
     pub(crate) lidar_baud_rate: u32,
     pub(crate) lidar_connection_status: String,
+    pub(crate) app_mode: AppMode,
     pub(crate) demo_mode: DemoMode,
+    pub(crate) slam_manager: SlamManager,
+    pub(crate) slam_request_scan: bool,
+    pub(crate) slam_map_points: Vec<(f32, f32)>,
     ripples: Vec<Ripple>,
     last_ripple_spawn_time: f64,
     pub(crate) show_command_window: bool,
@@ -110,7 +120,11 @@ impl MyApp {
             lidar_path: lidar_config.lidar_path,
             lidar_baud_rate: lidar_config.baud_rate,
             lidar_connection_status: "Connecting...".to_string(),
+            app_mode: AppMode::Lidar, // Default to Lidar mode
             demo_mode: DemoMode::RotatingScan,
+            slam_manager: SlamManager::new(),
+            slam_request_scan: false,
+            slam_map_points: Vec::new(),
             ripples: Vec::new(),
             last_ripple_spawn_time: 0.0,
             show_command_window: true,
@@ -147,6 +161,13 @@ impl eframe::App for MyApp {
                 }
             }
             ctx.request_repaint();
+        }
+
+        if self.slam_request_scan {
+            self.slam_manager.update(&self.lidar_points);
+            // For now, just copy the points. In a real SLAM, you would transform and append.
+            self.slam_map_points.extend(self.lidar_points.iter());
+            self.slam_request_scan = false;
         }
 
         while let Ok(msg) = self.status_receiver.try_recv() {
@@ -515,49 +536,93 @@ impl eframe::App for MyApp {
             });
 
         // 2. 右側のパネル（グラフィック表示）
-        egui::CentralPanel::default().show(ctx, |ui| {
-            // LiDARの接続状態で描画を切り替える
-            if self.lidar_connection_status.starts_with("Connected") {
+        egui::CentralPanel::default().show(ctx, |ui| match self.app_mode {
+            AppMode::Lidar => {
                 ui.heading("LiDAR Data Visualization");
-                // --- LiDAR接続時：点群を描画 (Painterベース) ---
                 let (response, painter) =
                     ui.allocate_painter(ui.available_size(), egui::Sense::hover());
-                self.lidar_draw_rect = Some(response.rect);
+                let rect = response.rect;
+                self.lidar_draw_rect = Some(rect);
 
-                let side = response.rect.height();
-                let square_rect =
-                    egui::Rect::from_center_size(response.rect.center(), egui::vec2(side, side));
+                if self.lidar_connection_status.starts_with("Connected") {
+                    // --- LiDAR接続時：点群を描画 (Painterベース) ---
+                    let side = rect.height();
+                    let square_rect =
+                        egui::Rect::from_center_size(rect.center(), egui::vec2(side, side));
+                    let to_screen = egui::emath::RectTransform::from_to(
+                        egui::Rect::from_center_size(egui::Pos2::ZERO, egui::vec2(16.0, 16.0)),
+                        square_rect,
+                    );
+                    painter.rect_filled(square_rect, 0.0, egui::Color32::from_rgb(20, 20, 20));
+                    painter.hline(
+                        square_rect.x_range(),
+                        to_screen.transform_pos(egui::pos2(0.0, 0.0)).y,
+                        egui::Stroke::new(0.5, egui::Color32::DARK_GRAY),
+                    );
+                    painter.vline(
+                        to_screen.transform_pos(egui::pos2(0.0, 0.0)).x,
+                        square_rect.y_range(),
+                        egui::Stroke::new(0.5, egui::Color32::DARK_GRAY),
+                    );
+                    for point in &self.lidar_points {
+                        let pxx = point.0;
+                        let pyy = point.1;
+                        let px = -pyy;
+                        let py = -pxx;
+                        let screen_pos = to_screen.transform_pos(egui::pos2(px, py));
+                        if square_rect.contains(screen_pos) {
+                            painter.circle_filled(screen_pos, 2.0, egui::Color32::GREEN);
+                        }
+                    }
+                    let robot_pos = to_screen.transform_pos(egui::Pos2::ZERO);
+                    painter.circle_filled(robot_pos, 5.0, egui::Color32::RED);
+                } else {
+                    // --- LiDAR未接続時：メッセージを表示 ---
+                    painter.rect_filled(rect, 0.0, egui::Color32::from_rgb(20, 20, 20));
+                    ui.allocate_ui_at_rect(rect, |ui| {
+                        ui.centered_and_justified(|ui| {
+                            let text = egui::RichText::new(&self.lidar_connection_status)
+                                .color(egui::Color32::WHITE)
+                                .font(egui::FontId::proportional(24.0)); // Reduced font size
+                            ui.add(egui::Label::new(text).wrap(true));
+                        });
+                    });
+                }
+            }
+            AppMode::Slam => {
+                ui.heading("SLAM Mode");
+                let (response, painter) =
+                    ui.allocate_painter(ui.available_size(), egui::Sense::hover());
+                let rect = response.rect;
+                self.lidar_draw_rect = Some(rect);
+                painter.rect_filled(rect, 0.0, egui::Color32::from_rgb(20, 20, 20));
+
                 let to_screen = egui::emath::RectTransform::from_to(
                     egui::Rect::from_center_size(egui::Pos2::ZERO, egui::vec2(16.0, 16.0)),
-                    square_rect,
+                    rect,
                 );
-                painter.rect_filled(square_rect, 0.0, egui::Color32::from_rgb(20, 20, 20));
-                painter.hline(
-                    square_rect.x_range(),
-                    to_screen.transform_pos(egui::pos2(0.0, 0.0)).y,
-                    egui::Stroke::new(0.5, egui::Color32::DARK_GRAY),
-                );
-                painter.vline(
-                    to_screen.transform_pos(egui::pos2(0.0, 0.0)).x,
-                    square_rect.y_range(),
-                    egui::Stroke::new(0.5, egui::Color32::DARK_GRAY),
-                );
-                for point in &self.lidar_points {
-                    let pxx = point.0;
-                    let pyy = point.1;
-                    let px = -pyy;
-                    let py = -pxx;
-                    let screen_pos = to_screen.transform_pos(egui::pos2(px, py));
-                    if square_rect.contains(screen_pos) {
-                        painter.circle_filled(screen_pos, 2.0, egui::Color32::GREEN);
+
+                for point in &self.slam_map_points {
+                    // Right = +X, Up = +Y
+                    let screen_pos = to_screen.transform_pos(egui::pos2(point.0, -point.1));
+                    if rect.contains(screen_pos) {
+                        painter.circle_filled(screen_pos, 2.0, egui::Color32::from_rgb(100, 100, 255));
                     }
                 }
+
+                // Draw robot pose at origin
                 let robot_pos = to_screen.transform_pos(egui::Pos2::ZERO);
                 painter.circle_filled(robot_pos, 5.0, egui::Color32::RED);
-            } else {
-                // --- LiDAR未接続時：デモ画面を描画 ---
-                ui.heading("Demo mode");
-                // Consistent background for all demo modes
+            }
+            AppMode::Demo => {
+                let heading_text = match self.demo_mode {
+                    DemoMode::RotatingScan => "Rotating Scan Demo",
+                    DemoMode::ExpandingRipple => "Expanding Ripple Demo",
+                    DemoMode::BreathingCircle => "Breathing Circle Demo",
+                    DemoMode::Table => "Table Demo",
+                };
+                ui.heading(heading_text);
+
                 ui.painter().rect_filled(
                     ui.available_rect_before_wrap(),
                     0.0,

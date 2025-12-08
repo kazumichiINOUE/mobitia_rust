@@ -1,4 +1,4 @@
-use crate::app::{ConsoleOutputEntry, DemoMode, MyApp};
+use crate::app::{AppMode, ConsoleOutputEntry, DemoMode, MyApp};
 use chrono::Local;
 use clap::{Parser, Subcommand};
 use dirs;
@@ -18,6 +18,19 @@ pub enum Commands {
     /// Show help for commands.
     #[command(alias = "h")]
     Help,
+    /// Enter LiDAR visualization mode.
+    Lidar,
+    /// Enter SLAM mode.
+    Slam {
+        #[command(subcommand)]
+        command: Option<SlamCommands>,
+    },
+    /// Enter demo mode.
+    Demo {
+        /// Demo mode to set ("scan", "ripple", "breathing", or "table").
+        #[arg(value_parser = ["scan", "ripple", "breathing", "table"])]
+        mode: String,
+    },
     /// Set a configuration value.
     Set {
         #[command(subcommand)]
@@ -41,6 +54,12 @@ pub enum Commands {
         #[command(subcommand)]
         command: SaveCommands,
     },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum SlamCommands {
+    /// Get a single LiDAR scan for the SLAM map.
+    GetLidar,
 }
 
 #[derive(Subcommand, Debug)]
@@ -72,12 +91,6 @@ pub enum SerialCommands {
 
 #[derive(Subcommand, Debug)]
 pub enum SetCommands {
-    /// Set the demo mode.
-    Demo {
-        /// Demo mode to set ("scan" or "ripple").
-        #[arg(value_parser = ["scan", "ripple", "breathing", "table"])]
-        mode: String,
-    },
     /// Set the LiDAR device path.
     Path {
         /// New LiDAR device path.
@@ -101,7 +114,19 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                 group_id: current_group_id,
             });
             app.command_history.push(ConsoleOutputEntry {
-                text: "  set demo <scan|ripple|breathing|table> - Set the demo mode".to_string(),
+                text: "  lidar                        - Enter LiDAR visualization mode".to_string(),
+                group_id: current_group_id,
+            });
+            app.command_history.push(ConsoleOutputEntry {
+                text: "  slam                         - Enter SLAM mode".to_string(),
+                group_id: current_group_id,
+            });
+            app.command_history.push(ConsoleOutputEntry {
+                text: "  slam getlidar                - Capture a scan in SLAM mode".to_string(),
+                group_id: current_group_id,
+            });
+            app.command_history.push(ConsoleOutputEntry {
+                text: "  demo <scan|ripple|breathing|table> - Enter demo mode with a specific pattern".to_string(),
                 group_id: current_group_id,
             });
             app.command_history.push(ConsoleOutputEntry {
@@ -129,12 +154,76 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
             app.command_history.push(ConsoleOutputEntry {
                 text:
                     "  save image                   - Save current LiDAR visualization as an image"
-                    .to_string(),
+                        .to_string(),
                 group_id: current_group_id,
             });
-            app.command_history.push(ConsoleOutputEntry { 
+            app.command_history.push(ConsoleOutputEntry {
                 text: "  save points (or p) [--output <file>] - Save current LiDAR point cloud to a file (.lsp format)"
                     .to_string(), group_id: current_group_id });
+        }
+        Commands::Lidar => {
+            app.app_mode = AppMode::Lidar;
+            app.command_history.push(ConsoleOutputEntry {
+                text: "Mode set to LiDAR.".to_string(),
+                group_id: current_group_id,
+            });
+        }
+        Commands::Slam { command } => {
+            app.app_mode = AppMode::Slam;
+            if let Some(slam_command) = command {
+                match slam_command {
+                    SlamCommands::GetLidar => {
+                        app.slam_request_scan = true;
+                        app.command_history.push(ConsoleOutputEntry {
+                            text: "Requesting single scan for SLAM.".to_string(),
+                            group_id: current_group_id,
+                        });
+                    }
+                }
+            } else {
+                app.command_history.push(ConsoleOutputEntry {
+                    text: "Switched to SLAM mode.".to_string(),
+                    group_id: current_group_id,
+                });
+            }
+        },
+        Commands::Demo { mode } => {
+            app.app_mode = AppMode::Demo;
+            match mode.as_str() {
+                "scan" => {
+                    app.demo_mode = DemoMode::RotatingScan;
+                    app.command_history.push(ConsoleOutputEntry {
+                        text: "Mode set to Demo (Rotating Scan).".to_string(),
+                        group_id: current_group_id,
+                    });
+                }
+                "ripple" => {
+                    app.demo_mode = DemoMode::ExpandingRipple;
+                    app.command_history.push(ConsoleOutputEntry {
+                        text: "Mode set to Demo (Expanding Ripple).".to_string(),
+                        group_id: current_group_id,
+                    });
+                }
+                "breathing" => {
+                    app.demo_mode = DemoMode::BreathingCircle;
+                    app.command_history.push(ConsoleOutputEntry {
+                        text: "Mode set to Demo (Breathing Circle).".to_string(),
+                        group_id: current_group_id,
+                    });
+                }
+                "table" => {
+                    app.demo_mode = DemoMode::Table;
+                    app.command_history.push(ConsoleOutputEntry {
+                        text: "Mode set to Demo (Table).".to_string(),
+                        group_id: current_group_id,
+                    });
+                }
+                _ => {
+                    app.command_history.push(ConsoleOutputEntry {
+                        text: format!("ERROR: Unknown demo mode: '{}'. Use 'scan', 'ripple', 'breathing', or 'table'.",
+                            mode), group_id: current_group_id });
+                }
+            }
         }
         Commands::Quit => {
             app.command_history.push(ConsoleOutputEntry {
@@ -161,41 +250,6 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
             }
         }
         Commands::Set { command } => match command {
-            SetCommands::Demo { mode } => match mode.as_str() {
-                "scan" => {
-                    app.demo_mode = DemoMode::RotatingScan;
-                    app.command_history.push(ConsoleOutputEntry {
-                        text: "Demo mode set to Rotating Scan.".to_string(),
-                        group_id: current_group_id,
-                    });
-                }
-                "ripple" => {
-                    app.demo_mode = DemoMode::ExpandingRipple;
-                    app.command_history.push(ConsoleOutputEntry {
-                        text: "Demo mode set to Expanding Ripple.".to_string(),
-                        group_id: current_group_id,
-                    });
-                }
-                "breathing" => {
-                    app.demo_mode = DemoMode::BreathingCircle;
-                    app.command_history.push(ConsoleOutputEntry {
-                        text: "Demo mode set to Breathing Circle.".to_string(),
-                        group_id: current_group_id,
-                    });
-                }
-                "table" => {
-                    app.demo_mode = DemoMode::Table;
-                    app.command_history.push(ConsoleOutputEntry {
-                        text: "Demo mode set to Table.".to_string(),
-                        group_id: current_group_id,
-                    });
-                }
-                _ => {
-                    app.command_history.push(ConsoleOutputEntry { 
-                        text: format!("ERROR: Unknown demo mode: '{}'. Use 'scan', 'ripple', 'breathing', or 'table'.", 
-                            mode), group_id: current_group_id });
-                }
-            },
             SetCommands::Path { path } => {
                 app.lidar_path = path.clone();
                 app.command_history.push(ConsoleOutputEntry {

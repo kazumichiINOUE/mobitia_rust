@@ -27,13 +27,8 @@ impl LidarDriver {
 
         if !port_exists {
             return Err(anyhow::anyhow!(
-                "指定されたポート '{}' が見つかりません。利用可能なポート: {}",
-                info.lidar_path,
-                available_ports
-                    .iter()
-                    .map(|p| p.port_name.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
+                "\n指定されたポート '{}' が見つかりません。",
+                info.lidar_path
             ));
         }
         // ここまで追加してください
