@@ -621,9 +621,22 @@ impl eframe::App for MyApp {
                 self.lidar_draw_rect = Some(rect);
                 painter.rect_filled(rect, 0.0, egui::Color32::from_rgb(20, 20, 20));
 
+                // Draw robot pose
+                let robot_pose = self.slam_manager.get_robot_pose();
+                // ロボットの現在のXY座標を取得 (方向は無視)
+                let robot_center_world = egui::pos2(robot_pose.translation.x, -robot_pose.translation.y);
+
+                // 描画エリアのワールド座標の範囲 (例: 中心から±5メートル)
+                // この範囲の中心をロボットの現在位置に設定
+                let map_view_size = 10.0; // ワールド座標で表示する領域のサイズ (例: 10m x 10m)
+                let map_view_rect = egui::Rect::from_center_size(
+                    robot_center_world,
+                    egui::vec2(map_view_size, map_view_size)
+                );
+
                 let to_screen = egui::emath::RectTransform::from_to(
-                    egui::Rect::from_center_size(egui::Pos2::ZERO, egui::vec2(10.0, 10.0)),
-                    rect,
+                    map_view_rect, // ロボットを中心としたワールド座標の範囲
+                    rect,          // 実際の描画エリア
                 );
 
                 // Draw the map points
@@ -635,15 +648,14 @@ impl eframe::App for MyApp {
                     }
                 }
 
-                // Draw robot pose
-                let robot_pose = self.slam_manager.get_robot_pose();
-                let robot_pos = to_screen.transform_pos(egui::pos2(robot_pose.translation.x, -robot_pose.translation.y));
+                // Draw robot pose (この部分は変更しない)
+                let robot_pos_on_screen = to_screen.transform_pos(egui::pos2(robot_pose.translation.x, -robot_pose.translation.y));
                 let angle = robot_pose.rotation.angle();
-                painter.circle_filled(robot_pos, 5.0, egui::Color32::RED);
+                painter.circle_filled(robot_pos_on_screen, 5.0, egui::Color32::RED);
                 painter.line_segment(
                     [
-                        robot_pos,
-                        robot_pos + egui::vec2(angle.cos(), -angle.sin()) * 20.0,
+                        robot_pos_on_screen,
+                        robot_pos_on_screen + egui::vec2(angle.cos(), -angle.sin()) * 20.0,
                     ],
                     egui::Stroke::new(2.0, egui::Color32::RED),
                 );
