@@ -57,7 +57,6 @@ pub struct MyApp {
     pub(crate) demo_mode: DemoMode,
     pub(crate) slam_manager: SlamManager,
     pub(crate) slam_request_scan: bool,
-    pub(crate) slam_map_points: Vec<(f32, f32)>,
     ripples: Vec<Ripple>,
     last_ripple_spawn_time: f64,
     pub(crate) show_command_window: bool,
@@ -124,7 +123,6 @@ impl MyApp {
             demo_mode: DemoMode::RotatingScan,
             slam_manager: SlamManager::new(),
             slam_request_scan: false,
-            slam_map_points: Vec::new(),
             ripples: Vec::new(),
             last_ripple_spawn_time: 0.0,
             show_command_window: true,
@@ -164,9 +162,9 @@ impl eframe::App for MyApp {
         }
 
         if self.slam_request_scan {
-            self.slam_manager.update(&self.lidar_points);
-            // For now, just copy the points. In a real SLAM, you would transform and append.
-            self.slam_map_points.extend(self.lidar_points.iter());
+            if !self.lidar_points.is_empty() {
+                self.slam_manager.update(&self.lidar_points);
+            }
             self.slam_request_scan = false;
         }
 
@@ -598,21 +596,31 @@ impl eframe::App for MyApp {
                 painter.rect_filled(rect, 0.0, egui::Color32::from_rgb(20, 20, 20));
 
                 let to_screen = egui::emath::RectTransform::from_to(
-                    egui::Rect::from_center_size(egui::Pos2::ZERO, egui::vec2(16.0, 16.0)),
+                    egui::Rect::from_center_size(egui::Pos2::ZERO, egui::vec2(10.0, 10.0)),
                     rect,
                 );
 
-                for point in &self.slam_map_points {
+                // Draw the map points
+                for point in self.slam_manager.get_map_points() {
                     // Right = +X, Up = +Y
-                    let screen_pos = to_screen.transform_pos(egui::pos2(point.0, -point.1));
+                    let screen_pos = to_screen.transform_pos(egui::pos2(point.x, -point.y));
                     if rect.contains(screen_pos) {
                         painter.circle_filled(screen_pos, 2.0, egui::Color32::from_rgb(100, 100, 255));
                     }
                 }
 
-                // Draw robot pose at origin
-                let robot_pos = to_screen.transform_pos(egui::Pos2::ZERO);
+                // Draw robot pose
+                let robot_pose = self.slam_manager.get_robot_pose();
+                let robot_pos = to_screen.transform_pos(egui::pos2(robot_pose.translation.x, -robot_pose.translation.y));
+                let angle = robot_pose.rotation.angle();
                 painter.circle_filled(robot_pos, 5.0, egui::Color32::RED);
+                painter.line_segment(
+                    [
+                        robot_pos,
+                        robot_pos + egui::vec2(angle.cos(), -angle.sin()) * 20.0,
+                    ],
+                    egui::Stroke::new(2.0, egui::Color32::RED),
+                );
             }
             AppMode::Demo => {
                 let heading_text = match self.demo_mode {
