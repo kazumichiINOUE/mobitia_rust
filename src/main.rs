@@ -16,6 +16,7 @@ fn main() -> Result<(), eframe::Error> {
             .with_min_inner_size([400.0, 300.0]),
         ..Default::default()
     };
+
     eframe::run_native(
         "Mobitia 2-Pane Prototype",
         native_options,
@@ -65,7 +66,11 @@ fn main() -> Result<(), eframe::Error> {
 
             cc.egui_ctx.set_fonts(fonts);
             // --- End of font setup ---
+
+            // Light/Dark mode setup
             cc.egui_ctx.set_visuals(egui::Visuals::dark());
+
+            // style setup
             let mut style = (*cc.egui_ctx.style()).clone();
             style.text_styles.insert(
                 egui::TextStyle::Monospace,
