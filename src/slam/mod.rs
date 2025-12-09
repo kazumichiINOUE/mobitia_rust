@@ -3,8 +3,8 @@ use rand::seq::SliceRandom;
 use rand::Rng;
 
 const CSIZE: f32 = 0.025;
-const MAP_WIDTH: usize = 1500;
-const MAP_HEIGHT: usize = 1000;
+const MAP_WIDTH: usize = 3200;
+const MAP_HEIGHT: usize = 3200;
 const MAP_ORIGIN_X: usize = MAP_WIDTH / 2;
 const MAP_ORIGIN_Y: usize = MAP_HEIGHT / 2;
 

@@ -185,7 +185,7 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
             if let Some(slam_command) = command {
                 match slam_command {
                     SlamCommands::GetLidar => {
-                        app.slam_request_scan = true;
+                        app.single_scan_requested_by_ui = true;
                         app.command_history.push(ConsoleOutputEntry {
                             text: "Requesting single scan for SLAM.".to_string(),
                             group_id: current_group_id,
@@ -193,6 +193,7 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                     },
                     SlamCommands::Continuous => {
                         app.slam_mode = crate::app::SlamMode::Continuous;
+                        app.slam_command_sender.send(crate::app::SlamThreadCommand::StartContinuous).unwrap_or_default();
                         app.command_history.push(ConsoleOutputEntry {
                             text: "SLAM set to continuous mode.".to_string(),
                             group_id: current_group_id,
@@ -200,6 +201,7 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                     },
                     SlamCommands::Pause => {
                         app.slam_mode = crate::app::SlamMode::Paused;
+                        app.slam_command_sender.send(crate::app::SlamThreadCommand::Pause).unwrap_or_default();
                         app.command_history.push(ConsoleOutputEntry {
                             text: "SLAM paused.".to_string(),
                             group_id: current_group_id,

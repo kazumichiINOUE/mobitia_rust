@@ -16,6 +16,7 @@ chrono = "0.4"
 dirs = "5.0.1"
 nalgebra = "0.34.1"
 ndarray = "0.15"
+web-time = "0.2"
 
 [dev-dependencies]
 assert_cmd = "2"

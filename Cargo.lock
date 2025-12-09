@@ -2442,6 +2442,7 @@ dependencies = [
  "rand",
  "serialport",
  "shlex",
+ "web-time",
 ]
 
 [[package]]

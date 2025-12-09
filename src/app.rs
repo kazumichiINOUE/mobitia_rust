@@ -7,6 +7,8 @@ use std::io::Write;
 use std::sync::mpsc;
 use std::thread;
 
+use nalgebra::{Isometry2, Point2}; // 追加
+
 use crate::cli::Cli;
 use crate::lidar::{start_lidar_thread, LidarInfo};
 use crate::slam::SlamManager;
@@ -24,6 +26,20 @@ pub enum SlamMode {
     Manual,
     Continuous,
     Paused,
+}
+
+pub enum SlamThreadCommand {
+    StartContinuous,
+    Pause,
+    Resume,
+    UpdateScan { scan: Vec<(f32, f32)> }, // LiDARからの新しいスキャンデータ
+    ProcessSingleScan { scan: Vec<(f32, f32)> }, // 単一スキャン処理要求
+    Shutdown,
+}
+
+pub struct SlamThreadResult {
+    pub map_points: Vec<nalgebra::Point2<f32>>,
+    pub robot_pose: nalgebra::Isometry2<f32>,
 }
 
 // アプリケーション全体の状態を管理する構造体
@@ -63,8 +79,8 @@ pub struct MyApp {
     pub(crate) lidar_connection_status: String,
     pub(crate) app_mode: AppMode,
     pub(crate) demo_mode: DemoMode,
-    pub(crate) slam_manager: SlamManager,
-    pub(crate) slam_request_scan: bool,
+    // pub(crate) slam_manager: SlamManager, // 削除
+    // pub(crate) slam_request_scan: bool, // 削除
     ripples: Vec<Ripple>,
     last_ripple_spawn_time: f64,
     pub(crate) show_command_window: bool,
@@ -73,7 +89,16 @@ pub struct MyApp {
     pub(crate) next_group_id: usize,
 
     pub(crate) slam_mode: SlamMode,
-    pub(crate) last_slam_update: f64,
+
+    // SLAMスレッドとの通信用チャネル
+    pub(crate) slam_command_sender: mpsc::Sender<SlamThreadCommand>,
+    pub(crate) slam_result_receiver: mpsc::Receiver<SlamThreadResult>,
+
+    // SLAMスレッドからの最新結果を保持 (描画用)
+    pub(crate) current_map_points: Vec<nalgebra::Point2<f32>>,
+    pub(crate) current_robot_pose: nalgebra::Isometry2<f32>,
+
+    pub(crate) single_scan_requested_by_ui: bool, // 追加
 }
 
 impl MyApp {
@@ -96,6 +121,69 @@ impl MyApp {
         };
 
         start_lidar_thread(lidar_config.clone(), sender.clone(), status_sender.clone());
+
+        // SLAMスレッドとの通信チャネル
+        let (slam_command_sender, slam_command_receiver) = mpsc::channel();
+        let (slam_result_sender, slam_result_receiver) = mpsc::channel();
+
+        // SLAMスレッドの起動
+        thread::spawn(move || {
+            let mut slam_manager = SlamManager::new();
+            let mut current_slam_mode = SlamMode::Manual;
+            let mut last_slam_update_time = web_time::Instant::now(); // std::time::Instant の代わりにweb_time::Instantを使用
+            const SLAM_UPDATE_INTERVAL_DURATION: web_time::Duration = web_time::Duration::from_secs(1); // Duration型に変更
+
+            loop {
+                // UIスレッドからのコマンドを処理
+                if let Ok(cmd) = slam_command_receiver.try_recv() {
+                    match cmd {
+                        SlamThreadCommand::StartContinuous => {
+                            current_slam_mode = SlamMode::Continuous;
+                            last_slam_update_time = web_time::Instant::now(); // モード切り替え時にリセット
+                            slam_result_sender.send(SlamThreadResult {
+                                map_points: slam_manager.get_map_points().clone(),
+                                robot_pose: *slam_manager.get_robot_pose(),
+                            }).unwrap_or_default();
+                        },
+                        SlamThreadCommand::Pause => current_slam_mode = SlamMode::Paused,
+                        SlamThreadCommand::Resume => { // Resumeを追加
+                            current_slam_mode = SlamMode::Continuous;
+                            last_slam_update_time = web_time::Instant::now(); // リセット
+                            slam_result_sender.send(SlamThreadResult {
+                                map_points: slam_manager.get_map_points().clone(),
+                                robot_pose: *slam_manager.get_robot_pose(),
+                            }).unwrap_or_default();
+                        },
+                        SlamThreadCommand::UpdateScan { scan } => {
+                            // UIからLiDARデータが届いたら、モードとタイマーをチェックして更新
+                            if current_slam_mode == SlamMode::Continuous {
+                                let now = web_time::Instant::now();
+                                if now.duration_since(last_slam_update_time) >= SLAM_UPDATE_INTERVAL_DURATION {
+                                    slam_manager.update(&scan);
+                                    slam_result_sender.send(SlamThreadResult {
+                                        map_points: slam_manager.get_map_points().clone(),
+                                        robot_pose: *slam_manager.get_robot_pose(),
+                                    }).unwrap_or_default();
+                                    last_slam_update_time = now; // 更新時間を記録
+                                }
+                            }
+                        },
+                        SlamThreadCommand::ProcessSingleScan { scan } => {
+                            // 単一スキャン要求はモードに関わらずすぐに処理
+                            slam_manager.update(&scan);
+                            slam_result_sender.send(SlamThreadResult {
+                                map_points: slam_manager.get_map_points().clone(),
+                                robot_pose: *slam_manager.get_robot_pose(),
+                            }).unwrap_or_default();
+                        },
+                        SlamThreadCommand::Shutdown => break, // スレッドを終了
+                    }
+                }
+
+                // 負荷軽減のため短時間スリープ
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        });
 
         let command_history = vec![
             ConsoleOutputEntry {
@@ -132,8 +220,8 @@ impl MyApp {
             lidar_connection_status: "Connecting...".to_string(),
             app_mode: AppMode::Lidar, // Default to Lidar mode
             demo_mode: DemoMode::RotatingScan,
-            slam_manager: SlamManager::new(),
-            slam_request_scan: false,
+            // slam_manager: SlamManager::new(), // 削除
+            // slam_request_scan: false, // 削除
             ripples: Vec::new(),
             last_ripple_spawn_time: 0.0,
             show_command_window: true,
@@ -141,7 +229,15 @@ impl MyApp {
             requested_point_save_path: None,
             next_group_id: 0,
             slam_mode: SlamMode::Manual,
-            last_slam_update: 0.0,
+
+            // SLAMスレッドとの通信チャネル
+            slam_command_sender,
+            slam_result_receiver,
+
+            // SLAMスレッドからの最新結果を保持 (描画用)
+            current_map_points: Vec::new(),
+            current_robot_pose: nalgebra::Isometry2::identity(),
+            single_scan_requested_by_ui: false, // 初期化
         }
     }
 
@@ -162,7 +258,19 @@ impl eframe::App for MyApp {
         if let Ok(result) = self.receiver.try_recv() {
             match result {
                 Ok(points) => {
-                    self.lidar_points = points;
+                    self.lidar_points = points.clone(); // LiDARデータをUI側でも保持（表示のため）
+                    
+                    // SLAMモードに応じた処理
+                    if self.app_mode == AppMode::Slam {
+                        if self.slam_mode == SlamMode::Continuous {
+                            // Continuousモードなら常にSLAMスレッドに送る
+                            self.slam_command_sender.send(SlamThreadCommand::UpdateScan { scan: points }).unwrap_or_default();
+                        } else if self.single_scan_requested_by_ui {
+                            // 単一スキャン要求があれば送る
+                            self.slam_command_sender.send(SlamThreadCommand::ProcessSingleScan { scan: points }).unwrap_or_default();
+                            self.single_scan_requested_by_ui = false; // フラグをリセット
+                        }
+                    }
                 }
                 Err(e) => {
                     self.command_history.push(ConsoleOutputEntry {
@@ -174,24 +282,11 @@ impl eframe::App for MyApp {
             ctx.request_repaint();
         }
 
-        if self.slam_request_scan {
-            if !self.lidar_points.is_empty() {
-                self.slam_manager.update(&self.lidar_points);
-            }
-            self.slam_request_scan = false;
-        }
-
-        if self.app_mode == AppMode::Slam && self.slam_mode == SlamMode::Continuous {
-            let current_time = ctx.input(|i| i.time);
-            const UPDATE_INTERVAL: f64 = 1.0; // 1秒ごとに更新
-
-            if current_time - self.last_slam_update >= UPDATE_INTERVAL {
-                if !self.lidar_points.is_empty() {
-                    self.slam_manager.update(&self.lidar_points);
-                    self.last_slam_update = current_time; // 更新時間を記録
-                }
-                ctx.request_repaint(); // SLAM更新後に再描画を要求
-            }
+        // SLAMスレッドからの結果を受け取る
+        while let Ok(slam_result) = self.slam_result_receiver.try_recv() {
+            self.current_map_points = slam_result.map_points;
+            self.current_robot_pose = slam_result.robot_pose;
+            ctx.request_repaint();
         }
 
         while let Ok(msg) = self.status_receiver.try_recv() {
@@ -622,13 +717,13 @@ impl eframe::App for MyApp {
                 painter.rect_filled(rect, 0.0, egui::Color32::from_rgb(20, 20, 20));
 
                 // Draw robot pose
-                let robot_pose = self.slam_manager.get_robot_pose();
+                let robot_pose = &self.current_robot_pose;
                 // ロボットの現在のXY座標を取得 (方向は無視)
                 let robot_center_world = egui::pos2(robot_pose.translation.x, -robot_pose.translation.y);
 
                 // 描画エリアのワールド座標の範囲 (例: 中心から±5メートル)
                 // この範囲の中心をロボットの現在位置に設定
-                let map_view_size = 10.0; // ワールド座標で表示する領域のサイズ (例: 10m x 10m)
+                let map_view_size = 50.0; // ワールド座標で表示する領域のサイズ (例: 30m x 30m)
                 let map_view_rect = egui::Rect::from_center_size(
                     robot_center_world,
                     egui::vec2(map_view_size, map_view_size)
@@ -640,7 +735,7 @@ impl eframe::App for MyApp {
                 );
 
                 // Draw the map points
-                for point in self.slam_manager.get_map_points() {
+                for point in &self.current_map_points {
                     // Right = +X, Up = +Y
                     let screen_pos = to_screen.transform_pos(egui::pos2(point.x, -point.y));
                     if rect.contains(screen_pos) {
