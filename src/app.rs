@@ -95,6 +95,9 @@ pub struct MyApp {
     // スレッドからのデータ/ステータス受信を統合
     pub(crate) lidar_message_receiver: mpsc::Receiver<LidarMessage>,
 
+    // SLAM用に各Lidarの最新スキャンを保持
+    pub(crate) pending_scans: [Option<Vec<(f32, f32)>>; 2],
+
     // UI関連
     pub(crate) command_output_receiver: mpsc::Receiver<String>,
     pub(crate) command_output_sender: mpsc::Sender<String>,
@@ -258,6 +261,7 @@ impl MyApp {
             current_suggestions: Vec::new(),
             lidars, // 新しいlidarsフィールドを初期化
             lidar_message_receiver, // 単一のLidarメッセージ受信
+            pending_scans: [None, None],
             command_output_receiver,
             command_output_sender,
             lidar_draw_rect: None,
@@ -297,25 +301,64 @@ impl eframe::App for MyApp {
                 // --- データ更新 ---
                 while let Ok(lidar_message) = self.lidar_message_receiver.try_recv() {
                     match lidar_message {
-                        LidarMessage::ScanUpdate { id, scan } => {
-                            if let Some(lidar_state) = self.lidars.get_mut(id) {
-                                lidar_state.points = scan.clone(); // LiDARデータをUI側でも保持（表示のため）
-        
-                                // SLAMモードに応じた処理 (SLAMは最初のLidarのデータのみを使用する)
-                                // TODO: どのLidarのデータをSLAMに使うか指定できるようにする
-                                if id == 0 && self.app_mode == AppMode::Slam {
-                                    if self.slam_mode == SlamMode::Continuous {
-                                        // Continuousモードなら常にSLAMスレッドに送る
-                                        self.slam_command_sender.send(SlamThreadCommand::UpdateScan { scan: scan }).unwrap_or_default();
-                                    } else if self.single_scan_requested_by_ui {
-                                        // 単一スキャン要求があれば送る
-                                        self.slam_command_sender.send(SlamThreadCommand::ProcessSingleScan { scan: scan }).unwrap_or_default();
-                                        self.single_scan_requested_by_ui = false; // フラグをリセット
-                                    }
-                                }
-                            }
-                        }
-                        LidarMessage::StatusUpdate { id, message } => {
+                                        LidarMessage::ScanUpdate { id, scan } => {
+                                            // UI用に点群を更新
+                                            if let Some(lidar_state) = self.lidars.get_mut(id) {
+                                                lidar_state.points = scan.clone();
+                                            }
+                        
+                                            // SLAMモードの場合、スキャンデータを統合する
+                                            if self.app_mode == AppMode::Slam {
+                                                if id < self.pending_scans.len() {
+                                                    self.pending_scans[id] = Some(scan);
+                                                }
+                        
+                                                // 両方のLidarからスキャンデータが届いているか確認
+                                                if self.pending_scans.iter().all(Option::is_some) {
+                                                    let mut combined_scan = Vec::new();
+                        
+                                                    // 各Lidarのスキャンをロボット座標系に変換して結合
+                                                    for (lidar_id, scan_option) in self.pending_scans.iter().enumerate() {
+                                                        if let Some(points) = scan_option {
+                                                            if let Some(lidar_state) = self.lidars.get(lidar_id) {
+                                                                let rotation = lidar_state.rotation;
+                                                                let origin = lidar_state.origin;
+                        
+                                                                for point in points {
+                                                                    // Lidar座標系での点 (px, py)
+                                                                    let pxx = point.0;
+                                                                    let pyy = point.1;
+                                                                    let px_raw = -pyy;
+                                                                    let py_raw = -pxx;
+                                                                    
+                                                                    // Lidarの回転を適用
+                                                                    let px_rotated = px_raw * rotation.cos() - py_raw * rotation.sin();
+                                                                    let py_rotated = px_raw * rotation.sin() + py_raw * rotation.cos();
+                        
+                                                                    // ワールド座標に変換 (Lidarの原点オフセットを加える)
+                                                                    // SLAMマネージャーは (f32, f32) を期待しているので、egui::Pos2にはしない
+                                                                    let world_x = px_rotated + origin.x;
+                                                                    let world_y = py_rotated + origin.y;
+                                                                    
+                                                                    combined_scan.push((world_x, world_y));
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                        
+                                                    // 結合した点群をSLAMスレッドに送信
+                                                    if self.slam_mode == SlamMode::Continuous {
+                                                        self.slam_command_sender.send(SlamThreadCommand::UpdateScan { scan: combined_scan }).unwrap_or_default();
+                                                    } else if self.single_scan_requested_by_ui {
+                                                        self.slam_command_sender.send(SlamThreadCommand::ProcessSingleScan { scan: combined_scan }).unwrap_or_default();
+                                                        self.single_scan_requested_by_ui = false; // フラグをリセット
+                                                    }
+                        
+                                                    // 統合後は保留中のスキャンをクリア
+                                                    self.pending_scans = [None, None];
+                                                }
+                                            }
+                                        }                        LidarMessage::StatusUpdate { id, message } => {
                             if let Some(lidar_state) = self.lidars.get_mut(id) {
                                 let mut handled_as_status = false;
                                 if message.starts_with("ERROR: Failed to open port") {
