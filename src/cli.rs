@@ -95,8 +95,10 @@ pub enum SerialCommands {
 
 #[derive(Subcommand, Debug)]
 pub enum SetCommands {
-    /// Set the LiDAR device path.
+    /// Set the LiDAR device path for a specific Lidar ID.
     Path {
+        /// Lidar ID (e.g., 0, 1).
+        id: usize,
         /// New LiDAR device path.
         path: String,
     },
@@ -142,7 +144,7 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                 group_id: current_group_id,
             });
             app.command_history.push(ConsoleOutputEntry {
-                text: "  set path <path>              - Set the LiDAR device path".to_string(),
+                text: "  set path <id> <path>         - Set the LiDAR device path for a specific Lidar ID".to_string(),
                 group_id: current_group_id,
             });
             app.command_history.push(ConsoleOutputEntry {
@@ -278,16 +280,17 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
             }
         }
         Commands::Set { command } => match command {
-            SetCommands::Path { path } => {
-                app.lidar_path = path.clone();
-                app.command_history.push(ConsoleOutputEntry {
-                    text: format!("LiDAR path set to: {}", path),
-                    group_id: current_group_id,
-                });
-                app.command_history.push(ConsoleOutputEntry {
-                    text: "NOTE: Restart the application to apply the new path.".to_string(),
-                    group_id: current_group_id,
-                });
+            SetCommands::Path { id, path } => {
+                    if let Some(lidar_state) = app.lidars.get_mut(id) {
+                        lidar_state.path = path.clone();
+                        app.command_output_sender
+                            .send(format!("LiDAR {} path set to: {}", id, path))
+                            .unwrap_or_default();
+                    } else {
+                        app.command_output_sender
+                            .send(format!("ERROR: No LiDAR {} configured or found to set path for.", id))
+                            .unwrap_or_default();
+                    }
             }
         },
         Commands::Serial { command } => match command {
@@ -448,7 +451,15 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                     return;
                 }
 
-                let lidar_points_clone = app.lidar_points.clone();
+                // TODO: どのLidarの点群を保存するか指定できるようにする
+                let lidar_points_clone = if let Some(lidar_state) = app.lidars.get(0) {
+                    lidar_state.points.clone()
+                } else {
+                    sender_clone
+                        .send("ERROR: No LiDAR 0 configured to save image from.".to_string())
+                        .unwrap_or_default();
+                    return; // 点群がない場合は処理を中断
+                };
 
                 thread::spawn(move || {
                     let mut img = image::RgbImage::new(width, height);

@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 use eframe::egui;
 use eframe::egui::ecolor::Hsva;
+use egui::Vec2;
 use rand::Rng;
 use std::io::Write;
 use std::sync::mpsc;
@@ -12,6 +13,19 @@ use nalgebra::{Isometry2, Point2}; // 追加
 use crate::cli::Cli;
 use crate::lidar::{start_lidar_thread, LidarInfo};
 use crate::slam::SlamManager;
+
+// Lidar一台分の状態を保持する構造体
+#[derive(Clone)]
+pub(crate) struct LidarState {
+    pub(crate) id: usize,
+    pub(crate) path: String,
+    pub(crate) baud_rate: u32,
+    pub(crate) points: Vec<(f32, f32)>,
+    pub(crate) connection_status: String,
+    pub(crate) status_messages: Vec<String>,
+    // ワールド座標におけるこのLidarの原点オフセット
+    pub(crate) origin: Vec2,
+}
 
 // アプリケーション全体のの状態を管理する構造体
 #[derive(PartialEq)]
@@ -26,6 +40,11 @@ pub enum SlamMode {
     Manual,
     Continuous,
     Paused,
+}
+
+pub enum LidarMessage {
+    ScanUpdate { id: usize, scan: Vec<(f32, f32)> },
+    StatusUpdate { id: usize, message: String },
 }
 
 pub enum SlamThreadCommand {
@@ -67,25 +86,24 @@ pub struct MyApp {
     pub(crate) user_command_history: Vec<String>, // ユーザーのコマンド入力履歴
     pub(crate) history_index: usize, // コマンド履歴のインデックス
     pub(crate) current_suggestions: Vec<String>, // 現在のサジェスト候補
-    pub(crate) lidar_points: Vec<(f32, f32)>, // 描画用のLiDAR点群データ (x, y)
-    pub(crate) receiver: mpsc::Receiver<Result<Vec<(f32, f32)>>>, // データ受信用のレシーバー
-    pub(crate) lidar_status_messages: Vec<String>, // LiDARの状態表示用メッセージ
-    pub(crate) status_receiver: mpsc::Receiver<String>, // LiDARの状態メッセージ受信用のレシーバー
-    pub(crate) command_output_receiver: mpsc::Receiver<String>, // コンソールコマンド出力受信用のレシーバー
-    pub(crate) command_output_sender: mpsc::Sender<String>, // コンソールコマンド出力送信用のセンダー
-    pub(crate) lidar_draw_rect: Option<egui::Rect>,         // LiDAR描画エリアのRect
-    pub(crate) lidar_path: String,
-    pub(crate) lidar_baud_rate: u32,
-    pub(crate) lidar_connection_status: String,
+
+    // 複数Lidarの状態を管理
+    pub(crate) lidars: Vec<LidarState>,
+
+    // スレッドからのデータ/ステータス受信を統合
+    pub(crate) lidar_message_receiver: mpsc::Receiver<LidarMessage>,
+
+    // UI関連
+    pub(crate) command_output_receiver: mpsc::Receiver<String>,
+    pub(crate) command_output_sender: mpsc::Sender<String>,
+    pub(crate) lidar_draw_rect: Option<egui::Rect>, // 描画エリアは共通
     pub(crate) app_mode: AppMode,
     pub(crate) demo_mode: DemoMode,
-    // pub(crate) slam_manager: SlamManager, // 削除
-    // pub(crate) slam_request_scan: bool, // 削除
     ripples: Vec<Ripple>,
     last_ripple_spawn_time: f64,
     pub(crate) show_command_window: bool,
     pub(crate) focus_console_requested: bool,
-    pub(crate) requested_point_save_path: Option<String>,
+    pub(crate) requested_point_save_path: Option<String>, // TODO: これもLidarごとになる可能性
     pub(crate) next_group_id: usize,
 
     pub(crate) slam_mode: SlamMode,
@@ -104,23 +122,51 @@ pub struct MyApp {
 impl MyApp {
     /// Creates a new instance of the application.
     pub fn new(cc: &eframe::CreationContext) -> Self {
-        // eframe::Storageからlidar_pathを読み込む
-        let lidar_path: String = cc
-            .storage
-            .and_then(|storage| storage.get_string("lidar_path"))
-            .unwrap_or_else(|| "/dev/cu.usbmodem2101".to_string());
+        // 2台のLidarの初期設定
+        // TODO: 将来的には設定ファイルなどから読み込む
+        let lidar_defs = vec![
+            (0, "/dev/cu.usbmodem1101", 115200, Vec2::new(0.0, -0.5)),
+            (1, "/dev/cu.usbmodem2101", 115200, Vec2::new(0.0, 0.5)),
+        ];
 
-        // チャネルを作成し、データ生成スレッドを開始する
-        let (sender, receiver) = mpsc::channel();
-        let (status_sender, status_receiver) = mpsc::channel();
+        let mut lidars = Vec::new();
+        for (id, path, baud_rate, origin) in lidar_defs {
+            // eframe::Storageから対応するlidar_pathを読み込む試み
+            let storage_key = format!("lidar_path_{}", id);
+            let device_path = cc
+                .storage
+                .and_then(|storage| storage.get_string(&storage_key))
+                .unwrap_or_else(|| path.to_string());
+
+            lidars.push(LidarState {
+                id,
+                path: device_path,
+                baud_rate,
+                points: Vec::new(),
+                connection_status: "Connecting...".to_string(),
+                status_messages: Vec::new(),
+                origin,
+            });
+        }
+
+        // Lidarメッセージング用の単一チャネルを作成
+        let (lidar_message_sender, lidar_message_receiver) = mpsc::channel();
+
+        // コンソールコマンド出力用のチャネルを作成
         let (command_output_sender, command_output_receiver) = mpsc::channel();
 
-        let lidar_config = LidarInfo {
-            lidar_path: lidar_path.clone(), // 読み込んだパスを使用
-            baud_rate: 115200,
-        };
-
-        start_lidar_thread(lidar_config.clone(), sender.clone(), status_sender.clone());
+        // 各Lidarに対してスレッドを起動
+        for lidar_state in &lidars {
+            let lidar_config = LidarInfo {
+                lidar_path: lidar_state.path.clone(),
+                baud_rate: lidar_state.baud_rate,
+            };
+            start_lidar_thread(
+                lidar_state.id,
+                lidar_config.clone(),
+                lidar_message_sender.clone(),
+            );
+        }
 
         // SLAMスレッドとの通信チャネル
         let (slam_command_sender, slam_command_receiver) = mpsc::channel();
@@ -207,21 +253,14 @@ impl MyApp {
             command_history,
             user_command_history,
             history_index,
-            current_suggestions: Vec::new(), // 初期化
-            lidar_points: Vec::new(),
-            receiver,
-            lidar_status_messages: Vec::new(),
-            status_receiver,
+            current_suggestions: Vec::new(),
+            lidars, // 新しいlidarsフィールドを初期化
+            lidar_message_receiver, // 単一のLidarメッセージ受信
             command_output_receiver,
             command_output_sender,
             lidar_draw_rect: None,
-            lidar_path: lidar_config.lidar_path,
-            lidar_baud_rate: lidar_config.baud_rate,
-            lidar_connection_status: "Connecting...".to_string(),
-            app_mode: AppMode::Lidar, // Default to Lidar mode
+            app_mode: AppMode::Lidar,
             demo_mode: DemoMode::RotatingScan,
-            // slam_manager: SlamManager::new(), // 削除
-            // slam_request_scan: false, // 削除
             ripples: Vec::new(),
             last_ripple_spawn_time: 0.0,
             show_command_window: true,
@@ -229,15 +268,11 @@ impl MyApp {
             requested_point_save_path: None,
             next_group_id: 0,
             slam_mode: SlamMode::Manual,
-
-            // SLAMスレッドとの通信チャネル
             slam_command_sender,
             slam_result_receiver,
-
-            // SLAMスレッドからの最新結果を保持 (描画用)
             current_map_points: Vec::new(),
             current_robot_pose: nalgebra::Isometry2::identity(),
-            single_scan_requested_by_ui: false, // 初期化
+            single_scan_requested_by_ui: false,
         }
     }
 
@@ -249,74 +284,78 @@ impl MyApp {
 impl eframe::App for MyApp {
     /// Called to save state before shutdown.
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        storage.set_string("lidar_path", self.lidar_path.clone());
+        for lidar_state in &self.lidars {
+            let key = format!("lidar_path_{}", lidar_state.id);
+            storage.set_string(&key, lidar_state.path.clone());
+        }
     }
 
     /// フレームごとに呼ばれ、UIを描画する
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // --- データ更新 ---
-        if let Ok(result) = self.receiver.try_recv() {
-            match result {
-                Ok(points) => {
-                    self.lidar_points = points.clone(); // LiDARデータをUI側でも保持（表示のため）
-                    
-                    // SLAMモードに応じた処理
-                    if self.app_mode == AppMode::Slam {
-                        if self.slam_mode == SlamMode::Continuous {
-                            // Continuousモードなら常にSLAMスレッドに送る
-                            self.slam_command_sender.send(SlamThreadCommand::UpdateScan { scan: points }).unwrap_or_default();
-                        } else if self.single_scan_requested_by_ui {
-                            // 単一スキャン要求があれば送る
-                            self.slam_command_sender.send(SlamThreadCommand::ProcessSingleScan { scan: points }).unwrap_or_default();
-                            self.single_scan_requested_by_ui = false; // フラグをリセット
+                // --- データ更新 ---
+                while let Ok(lidar_message) = self.lidar_message_receiver.try_recv() {
+                    match lidar_message {
+                        LidarMessage::ScanUpdate { id, scan } => {
+                            if let Some(lidar_state) = self.lidars.get_mut(id) {
+                                lidar_state.points = scan.clone(); // LiDARデータをUI側でも保持（表示のため）
+        
+                                // SLAMモードに応じた処理 (SLAMは最初のLidarのデータのみを使用する)
+                                // TODO: どのLidarのデータをSLAMに使うか指定できるようにする
+                                if id == 0 && self.app_mode == AppMode::Slam {
+                                    if self.slam_mode == SlamMode::Continuous {
+                                        // Continuousモードなら常にSLAMスレッドに送る
+                                        self.slam_command_sender.send(SlamThreadCommand::UpdateScan { scan: scan }).unwrap_or_default();
+                                    } else if self.single_scan_requested_by_ui {
+                                        // 単一スキャン要求があれば送る
+                                        self.slam_command_sender.send(SlamThreadCommand::ProcessSingleScan { scan: scan }).unwrap_or_default();
+                                        self.single_scan_requested_by_ui = false; // フラグをリセット
+                                    }
+                                }
+                            }
+                        }
+                        LidarMessage::StatusUpdate { id, message } => {
+                            if let Some(lidar_state) = self.lidars.get_mut(id) {
+                                let mut handled_as_status = false;
+                                if message.starts_with("ERROR: Failed to open port") {
+                                    lidar_state.connection_status = message.clone();
+                                    handled_as_status = true;
+                                } else if message.starts_with("ERROR: Failed to get distance data") {
+                                    lidar_state.connection_status = "Connection Lost".to_string();
+                                } else if message.contains("Successfully opened port") {
+                                    lidar_state.connection_status = "Connected".to_string();
+                                    handled_as_status = true;
+                                } else if message.contains("INFO: LiDAR initialized. Laser is ON.") {
+                                    lidar_state.connection_status = "Connected (Laser ON)".to_string();
+                                    handled_as_status = true;
+                                }
+        
+                                if !handled_as_status
+                                    && !message.starts_with("LiDAR Path:")
+                                    && !message.starts_with("Baud Rate:")
+                                {
+                                    lidar_state.status_messages.push(message);
+                                    if lidar_state.status_messages.len() > 10 {
+                                        lidar_state.status_messages.remove(0);
+                                    }
+                                }
+                            } else {
+                                 // 不明なLidar IDからのメッセージはコンソールに出力
+                                 self.command_history.push(ConsoleOutputEntry {
+                                    text: format!("ERROR: Message from unknown Lidar ID {}: {}", id, message),
+                                    group_id: self.next_group_id,
+                                });
+                            }
                         }
                     }
+                    ctx.request_repaint();
                 }
-                Err(e) => {
-                    self.command_history.push(ConsoleOutputEntry {
-                        text: format!("INFO: {}", e),
-                        group_id: self.next_group_id,
-                    });
+        
+                // SLAMスレッドからの結果を受け取る
+                while let Ok(slam_result) = self.slam_result_receiver.try_recv() {
+                    self.current_map_points = slam_result.map_points;
+                    self.current_robot_pose = slam_result.robot_pose;
+                    ctx.request_repaint();
                 }
-            }
-            ctx.request_repaint();
-        }
-
-        // SLAMスレッドからの結果を受け取る
-        while let Ok(slam_result) = self.slam_result_receiver.try_recv() {
-            self.current_map_points = slam_result.map_points;
-            self.current_robot_pose = slam_result.robot_pose;
-            ctx.request_repaint();
-        }
-
-        while let Ok(msg) = self.status_receiver.try_recv() {
-            let mut handled_as_status = false;
-            if msg.starts_with("ERROR: Failed to open port") {
-                self.lidar_connection_status = msg.clone();
-                handled_as_status = true;
-            } else if msg.starts_with("ERROR: Failed to get distance data") {
-                self.lidar_connection_status = "Connection Lost".to_string();
-                // handled_as_status は false のままにして、詳細ログにもメッセージが表示されるようにする
-            } else if msg.contains("Successfully opened port") {
-                self.lidar_connection_status = "Connected".to_string();
-                handled_as_status = true;
-            } else if msg.contains("INFO: LiDAR initialized. Laser is ON.") {
-                self.lidar_connection_status = "Connected (Laser ON)".to_string();
-                handled_as_status = true;
-            }
-
-            if !handled_as_status
-                && !msg.starts_with("LiDAR Path:")
-                && !msg.starts_with("Baud Rate:")
-            {
-                self.lidar_status_messages.push(msg);
-                if self.lidar_status_messages.len() > 10 {
-                    self.lidar_status_messages.remove(0);
-                }
-            }
-            ctx.request_repaint();
-        }
-
         while let Ok(msg) = self.command_output_receiver.try_recv() {
             self.command_history.push(ConsoleOutputEntry {
                 text: msg,
@@ -327,34 +366,41 @@ impl eframe::App for MyApp {
 
         // --- 点群データ保存リクエストの処理 ---
         if let Some(path) = self.requested_point_save_path.take() {
-            let lidar_points_clone = self.lidar_points.clone();
-            let command_output_sender_clone = self.command_output_sender.clone();
+            // TODO: どのLidarの点群を保存するかIDで指定できるようにする
+            // 現在は仮に最初のLidar(id=0)の点群を保存する
+            if let Some(lidar_state) = self.lidars.get(0) {
+                let lidar_points_clone = lidar_state.points.clone();
+                let command_output_sender_clone = self.command_output_sender.clone();
 
-            thread::spawn(move || {
-                let file_path = std::path::PathBuf::from(&path);
-                match std::fs::File::create(&file_path) {
-                    Ok(mut file) => {
-                        let mut content = String::new();
-                        for point in lidar_points_clone {
-                            content.push_str(&format!("{} {}\n", point.0, point.1));
+                thread::spawn(move || {
+                    let file_path = std::path::PathBuf::from(&path);
+                    match std::fs::File::create(&file_path) {
+                        Ok(mut file) => {
+                            let mut content = String::new();
+                            for point in lidar_points_clone {
+                                content.push_str(&format!("{} {}\n", point.0, point.1));
+                            }
+                            match file.write_all(content.as_bytes()) {
+                                Ok(_) => command_output_sender_clone
+                                    .send(format!("Point cloud saved to '{}'.", path))
+                                    .unwrap_or_default(),
+                                Err(e) => command_output_sender_clone
+                                    .send(format!("ERROR: Failed to write to file '{}': {}", path, e))
+                                    .unwrap_or_default(),
+                            }
                         }
-                        match file.write_all(content.as_bytes()) {
-                            Ok(_) => command_output_sender_clone
-                                .send(format!("Point cloud saved to '{}'.", path))
-                                .unwrap_or_default(),
-                            Err(e) => command_output_sender_clone
-                                .send(format!("ERROR: Failed to write to file '{}': {}", path, e))
-                                .unwrap_or_default(),
+                        Err(e) => {
+                            command_output_sender_clone
+                                .send(format!("ERROR: Failed to create file '{}': {}", path, e))
+                                .unwrap_or_default();
                         }
                     }
-                    Err(e) => {
-                        command_output_sender_clone
-                            .send(format!("ERROR: Failed to create file '{}': {}", path, e))
-                            .unwrap_or_default();
-                    }
-                }
-            });
-            ctx.request_repaint(); // 保存リクエスト処理のために再描画
+                });
+                ctx.request_repaint(); // 保存リクエスト処理のために再描画
+            } else {
+                // Lidarが設定されていない場合のメッセージ
+                self.command_output_sender.send("ERROR: No LiDAR 0 configured to save points from.".to_string()).unwrap_or_default();
+            }
         }
 
         let console_input_id = egui::Id::new("console_input");
@@ -626,31 +672,33 @@ impl eframe::App for MyApp {
                 }
                 ui.heading("Console");
 
-                egui::Frame::group(ui.style()).show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.label(format!("Device Path: {}", self.lidar_path));
-                    ui.label(format!("Baud Rate: {}", self.lidar_baud_rate));
-                    let status_text = format!("Status: {}", self.lidar_connection_status);
-                    let status_color = if self.lidar_connection_status.starts_with("Connected") {
-                        egui::Color32::GREEN
-                    } else if self.lidar_connection_status.starts_with("Connecting") {
-                        egui::Color32::YELLOW
-                    } else {
-                        egui::Color32::RED
-                    };
-                    ui.label(egui::RichText::new(status_text).color(status_color));
-                });
-                ui.separator();
-
-                ui.group(|ui| {
-                    ui.set_width(ui.available_width());
-                    ui.set_height(ui.text_style_height(&egui::TextStyle::Monospace) * 10.0);
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        for line in &self.lidar_status_messages {
-                            ui.monospace(line);
-                        }
+                for lidar_state in &self.lidars {
+                    egui::Frame::group(ui.style()).show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.label(format!("[LIDAR {}]", lidar_state.id));
+                        ui.label(format!("  Path: {}", lidar_state.path));
+                        ui.label(format!("  Baud: {}", lidar_state.baud_rate));
+                        let status_text = format!("  Status: {}", lidar_state.connection_status);
+                        let status_color = if lidar_state.connection_status.starts_with("Connected") {
+                            egui::Color32::GREEN
+                        } else if lidar_state.connection_status.starts_with("Connecting") {
+                            egui::Color32::YELLOW
+                        } else {
+                            egui::Color32::RED
+                        };
+                        ui.label(egui::RichText::new(status_text).color(status_color));
                     });
-                });
+
+                    ui.group(|ui| {
+                        ui.set_height(ui.text_style_height(&egui::TextStyle::Monospace) * 5.0); // 高さを調整
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            for line in &lidar_state.status_messages {
+                                ui.monospace(line);
+                            }
+                        });
+                    });
+                    ui.separator();
+                }
                 ui.separator();
             });
 
@@ -663,46 +711,77 @@ impl eframe::App for MyApp {
                 let rect = response.rect;
                 self.lidar_draw_rect = Some(rect);
 
-                if self.lidar_connection_status.starts_with("Connected") {
-                    // --- LiDAR接続時：点群を描画 (Painterベース) ---
-                    let side = rect.height();
-                    let square_rect =
-                        egui::Rect::from_center_size(rect.center(), egui::vec2(side, side));
-                    let to_screen = egui::emath::RectTransform::from_to(
-                        egui::Rect::from_center_size(egui::Pos2::ZERO, egui::vec2(16.0, 16.0)),
-                        square_rect,
-                    );
-                    painter.rect_filled(square_rect, 0.0, egui::Color32::from_rgb(20, 20, 20));
-                    painter.hline(
-                        square_rect.x_range(),
-                        to_screen.transform_pos(egui::pos2(0.0, 0.0)).y,
-                        egui::Stroke::new(0.5, egui::Color32::DARK_GRAY),
-                    );
-                    painter.vline(
-                        to_screen.transform_pos(egui::pos2(0.0, 0.0)).x,
-                        square_rect.y_range(),
-                        egui::Stroke::new(0.5, egui::Color32::DARK_GRAY),
-                    );
-                    for point in &self.lidar_points {
-                        let pxx = point.0;
-                        let pyy = point.1;
-                        let px = -pyy;
-                        let py = -pxx;
-                        let screen_pos = to_screen.transform_pos(egui::pos2(px, py));
-                        if square_rect.contains(screen_pos) {
-                            painter.circle_filled(screen_pos, 2.0, egui::Color32::GREEN);
+                // --- 全Lidar共通の描画設定 ---
+                let side = rect.height();
+                let square_rect =
+                    egui::Rect::from_center_size(rect.center(), egui::vec2(side, side));
+                
+                // ワールド座標からスクリーン座標への変換を定義
+                // 画面中央にワールドの(0,0)が来るようにし、表示範囲を16.0x16.0メートルとする
+                let to_screen = egui::emath::RectTransform::from_to(
+                    egui::Rect::from_center_size(egui::Pos2::ZERO, egui::vec2(16.0, 16.0)),
+                    square_rect,
+                );
+
+                // 背景とグリッドを描画
+                painter.rect_filled(square_rect, 0.0, egui::Color32::from_rgb(20, 20, 20));
+                painter.hline(
+                    square_rect.x_range(),
+                    to_screen.transform_pos(egui::pos2(0.0, 0.0)).y,
+                    egui::Stroke::new(0.5, egui::Color32::DARK_GRAY),
+                );
+                painter.vline(
+                    to_screen.transform_pos(egui::pos2(0.0, 0.0)).x,
+                    square_rect.y_range(),
+                    egui::Stroke::new(0.5, egui::Color32::DARK_GRAY),
+                );
+
+                let mut any_lidar_connected = false;
+
+                // --- 各Lidarのデータを描画 ---
+                for (i, lidar_state) in self.lidars.iter().enumerate() {
+                    if lidar_state.connection_status.starts_with("Connected") {
+                        any_lidar_connected = true;
+
+                        let lidar_origin_world = lidar_state.origin;
+                        let lidar_color = if i == 0 { egui::Color32::GREEN } else { egui::Color32::YELLOW };
+
+                        // Lidarの原点を描画
+                        let lidar_origin_screen = to_screen.transform_pos(lidar_origin_world.to_pos2());
+                        painter.circle_filled(lidar_origin_screen, 5.0, lidar_color);
+                        painter.text(lidar_origin_screen + egui::vec2(10.0, -10.0), egui::Align2::LEFT_BOTTOM, format!("LIDAR {}", lidar_state.id), egui::FontId::default(), egui::Color32::WHITE);
+
+
+                        // Lidarの点群を描画
+                        for point in &lidar_state.points {
+                            // Lidar座標系での点 (px, py)
+                            let pxx = point.0;
+                            let pyy = point.1;
+                            let px = -pyy;
+                            let py = -pxx;
+                            
+                            // ワールド座標に変換 (Lidarの原点オフセットを加える)
+                            let world_pos = egui::pos2(px, py) + lidar_origin_world;
+
+                            // スクリーン座標に変換
+                            let screen_pos = to_screen.transform_pos(world_pos);
+
+                            if square_rect.contains(screen_pos) {
+                                painter.circle_filled(screen_pos, 2.0, lidar_color);
+                            }
                         }
                     }
-                    let robot_pos = to_screen.transform_pos(egui::Pos2::ZERO);
-                    painter.circle_filled(robot_pos, 5.0, egui::Color32::RED);
-                } else {
-                    // --- LiDAR未接続時：メッセージを表示 ---
-                    painter.rect_filled(rect, 0.0, egui::Color32::from_rgb(20, 20, 20));
+                }
+                
+                // どのLidarも接続されていない場合にメッセージを表示
+                if !any_lidar_connected {
                     ui.allocate_ui_at_rect(rect, |ui| {
                         ui.centered_and_justified(|ui| {
-                            let text = egui::RichText::new(&self.lidar_connection_status)
+                            // 最初のLidarのステータスを代表として表示（暫定）
+                            let status = self.lidars.get(0).map_or("No Lidars configured", |l| &l.connection_status);
+                            let text = egui::RichText::new(status)
                                 .color(egui::Color32::WHITE)
-                                .font(egui::FontId::proportional(24.0)); // Reduced font size
+                                .font(egui::FontId::proportional(24.0));
                             ui.add(egui::Label::new(text).wrap(true));
                         });
                     });
@@ -723,7 +802,7 @@ impl eframe::App for MyApp {
 
                 // 描画エリアのワールド座標の範囲 (例: 中心から±5メートル)
                 // この範囲の中心をロボットの現在位置に設定
-                let map_view_size = 50.0; // ワールド座標で表示する領域のサイズ (例: 30m x 30m)
+                let map_view_size = 30.0; // ワールド座標で表示する領域のサイズ (例: 30m x 30m)
                 let map_view_rect = egui::Rect::from_center_size(
                     robot_center_world,
                     egui::vec2(map_view_size, map_view_size)
