@@ -25,6 +25,8 @@ pub(crate) struct LidarState {
     pub(crate) status_messages: Vec<String>,
     // ワールド座標におけるこのLidarの原点オフセット
     pub(crate) origin: Vec2,
+    // ワールド座標におけるこのLidarの回転オフセット (ラジアン)
+    pub(crate) rotation: f32,
 }
 
 // アプリケーション全体のの状態を管理する構造体
@@ -124,13 +126,12 @@ impl MyApp {
     pub fn new(cc: &eframe::CreationContext) -> Self {
         // 2台のLidarの初期設定
         // TODO: 将来的には設定ファイルなどから読み込む
-        let lidar_defs = vec![
-            (0, "/dev/cu.usbmodem1101", 115200, Vec2::new(0.0, -0.5)),
-            (1, "/dev/cu.usbmodem2101", 115200, Vec2::new(0.0, 0.5)),
-        ];
-
+                    let lidar_defs = vec![
+                        (0, "/dev/cu.usbmodem1101", 115200, Vec2::new(0.0, 0.51), -std::f32::consts::PI), // 0 deg (90 deg - 90 deg)
+                        (1, "/dev/cu.usbmodem2101", 115200, Vec2::new(0.0, -0.51), 0.0), //-std::f32::consts::FRAC_PI_2), // -90 deg
+                    ];
         let mut lidars = Vec::new();
-        for (id, path, baud_rate, origin) in lidar_defs {
+        for (id, path, baud_rate, origin, rotation) in lidar_defs {
             // eframe::Storageから対応するlidar_pathを読み込む試み
             let storage_key = format!("lidar_path_{}", id);
             let device_path = cc
@@ -146,6 +147,7 @@ impl MyApp {
                 connection_status: "Connecting...".to_string(),
                 status_messages: Vec::new(),
                 origin,
+                rotation,
             });
         }
 
@@ -757,11 +759,16 @@ impl eframe::App for MyApp {
                             // Lidar座標系での点 (px, py)
                             let pxx = point.0;
                             let pyy = point.1;
-                            let px = -pyy;
-                            let py = -pxx;
+                            let px_raw = -pyy;
+                            let py_raw = -pxx;
                             
+                            // Lidarの回転を適用
+                            let rotation = lidar_state.rotation;
+                            let px_rotated = px_raw * rotation.cos() - py_raw * rotation.sin();
+                            let py_rotated = px_raw * rotation.sin() + py_raw * rotation.cos();
+
                             // ワールド座標に変換 (Lidarの原点オフセットを加える)
-                            let world_pos = egui::pos2(px, py) + lidar_origin_world;
+                            let world_pos = egui::pos2(px_rotated, py_rotated) + lidar_origin_world;
 
                             // スクリーン座標に変換
                             let screen_pos = to_screen.transform_pos(world_pos);
