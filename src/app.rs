@@ -818,9 +818,13 @@ impl eframe::App for MyApp {
                     egui::Rect::from_center_size(rect.center(), egui::vec2(side, side));
 
                 // ワールド座標からスクリーン座標への変換を定義
-                // 画面中央にワールドの(0,0)が来るようにし、表示範囲を16.0x16.0メートルとする
+                // Y軸を反転させるため、fromに渡すRectのYのmin/maxを入れ替える
+                let world_to_screen_rect = egui::Rect::from_min_max(
+                    egui::pos2(-8.0, 8.0),  // ワールドの左上 (min_x, max_y)
+                    egui::pos2(8.0, -8.0)   // ワールドの右下 (max_x, min_y)
+                );
                 let to_screen = egui::emath::RectTransform::from_to(
-                    egui::Rect::from_center_size(egui::Pos2::ZERO, egui::vec2(16.0, 16.0)),
+                    world_to_screen_rect,
                     square_rect,
                 );
 
@@ -930,8 +934,12 @@ impl eframe::App for MyApp {
                     egui::vec2(map_view_size, map_view_size),
                 );
 
+                // Y軸を反転させるため、map_view_rectのYのmin/maxを入れ替える
+                let mut inverted_map_view_rect = map_view_rect;
+                inverted_map_view_rect.min.y = map_view_rect.max.y;
+                inverted_map_view_rect.max.y = map_view_rect.min.y;
                 let to_screen = egui::emath::RectTransform::from_to(
-                    map_view_rect, // ロボットを中心としたワールド座標の範囲
+                    inverted_map_view_rect,
                     rect,          // 実際の描画エリア
                 );
 
