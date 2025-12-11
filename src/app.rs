@@ -48,6 +48,7 @@ pub enum LidarMessage {
     StatusUpdate { id: usize, message: String },
 }
 
+#[allow(dead_code)]
 pub enum SlamThreadCommand {
     StartContinuous,
     Pause,
