@@ -249,7 +249,6 @@ impl MyApp {
                                 {
                                     is_slam_processing_for_thread.store(true, Ordering::SeqCst);
 
-                                    let slam_update_start = web_time::Instant::now();
                                     slam_manager.update(&scan);
 
                                     slam_result_sender
@@ -261,7 +260,7 @@ impl MyApp {
                                     last_slam_update_time = now; // 更新時間を記録
                                     is_slam_processing_for_thread.store(false, Ordering::SeqCst);
                                 } else {
-                                    ;
+                                    //
                                 }
                             }
                         }
@@ -269,7 +268,6 @@ impl MyApp {
                             // 単一スキャン要求はモードに関わらずすぐに処理
                             is_slam_processing_for_thread.store(true, Ordering::SeqCst);
 
-                            let slam_update_start = web_time::Instant::now();
                             slam_manager.update(&scan);
 
                             slam_result_sender
@@ -369,7 +367,6 @@ impl eframe::App for MyApp {
 
                         // 両方のLidarからスキャンデータが届いているか確認
                         if self.pending_scans.iter().all(Option::is_some) {
-                            let integration_start_time = web_time::Instant::now();
                             let mut combined_scan = Vec::new();
 
                             // 各Lidarのスキャンをロボット座標系に変換して結合
