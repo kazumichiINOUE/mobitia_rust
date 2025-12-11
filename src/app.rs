@@ -6,7 +6,8 @@ use eframe::egui::ecolor::Hsva;
 use egui::Vec2;
 use rand::Rng;
 use std::io::Write;
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc};
 use std::thread;
 
 use nalgebra::{Isometry2, Point2}; // 追加
@@ -96,34 +97,67 @@ pub struct MyApp {
     // スレッドからのデータ/ステータス受信を統合
     pub(crate) lidar_message_receiver: mpsc::Receiver<LidarMessage>,
 
-    // SLAM用に各Lidarの最新スキャンを保持
-    pub(crate) pending_scans: [Option<Vec<(f32, f32)>>; 2],
+        // SLAM用に各Lidarの最新スキャンを保持
 
-    // UI関連
-    pub(crate) command_output_receiver: mpsc::Receiver<String>,
-    pub(crate) command_output_sender: mpsc::Sender<String>,
-    pub(crate) log_file_sender: mpsc::Sender<String>,
-    pub(crate) lidar_draw_rect: Option<egui::Rect>, // 描画エリアは共通
-    pub(crate) app_mode: AppMode,
-    pub(crate) demo_mode: DemoMode,
-    ripples: Vec<Ripple>,
-    last_ripple_spawn_time: f64,
-    pub(crate) show_command_window: bool,
-    pub(crate) focus_console_requested: bool,
-    pub(crate) requested_point_save_path: Option<String>, // TODO: これもLidarごとになる可能性
-    pub(crate) next_group_id: usize,
+        pub(crate) pending_scans: [Option<Vec<(f32, f32)>>; 2],
 
-    pub(crate) slam_mode: SlamMode,
+    
 
-    // SLAMスレッドとの通信用チャネル
-    pub(crate) slam_command_sender: mpsc::Sender<SlamThreadCommand>,
-    pub(crate) slam_result_receiver: mpsc::Receiver<SlamThreadResult>,
+        // UI関連
 
-    // SLAMスレッドからの最新結果を保持 (描画用)
-    pub(crate) current_map_points: Vec<nalgebra::Point2<f32>>,
-    pub(crate) current_robot_pose: nalgebra::Isometry2<f32>,
+        pub(crate) command_output_receiver: mpsc::Receiver<String>,
 
-    pub(crate) single_scan_requested_by_ui: bool, // 追加
+        pub(crate) command_output_sender: mpsc::Sender<String>,
+
+        pub(crate) log_file_sender: mpsc::Sender<String>,
+
+        pub(crate) lidar_draw_rect: Option<egui::Rect>, // 描画エリアは共通
+
+        pub(crate) app_mode: AppMode,
+
+        pub(crate) demo_mode: DemoMode,
+
+        ripples: Vec<Ripple>,
+
+        last_ripple_spawn_time: f64,
+
+        pub(crate) show_command_window: bool,
+
+        pub(crate) focus_console_requested: bool,
+
+        pub(crate) requested_point_save_path: Option<String>, // TODO: これもLidarごとになる可能性
+
+        pub(crate) next_group_id: usize,
+
+    
+
+        pub(crate) slam_mode: SlamMode,
+
+    
+
+        // SLAMスレッドとの通信用チャネル
+
+        pub(crate) slam_command_sender: mpsc::Sender<SlamThreadCommand>,
+
+        pub(crate) slam_result_receiver: mpsc::Receiver<SlamThreadResult>,
+
+    
+
+        // SLAMが処理中かどうかを示す共有フラグ
+
+        pub(crate) is_slam_processing: Arc<AtomicBool>,
+
+    
+
+        // SLAMスレッドからの最新結果を保持 (描画用)
+
+        pub(crate) current_map_points: Vec<nalgebra::Point2<f32>>,
+
+        pub(crate) current_robot_pose: nalgebra::Isometry2<f32>,
+
+    
+
+        pub(crate) single_scan_requested_by_ui: bool, // 追加
 }
 
 impl MyApp {
@@ -187,11 +221,15 @@ impl MyApp {
             );
         }
 
+        // SLAM処理中フラグの作成
+        let is_slam_processing = Arc::new(AtomicBool::new(false));
+
         // SLAMスレッドとの通信チャネル
         let (slam_command_sender, slam_command_receiver) = mpsc::channel();
         let (slam_result_sender, slam_result_receiver) = mpsc::channel();
         let command_output_sender_for_slam = command_output_sender.clone(); // SLAMスレッド用にクローン
         let log_file_sender_for_slam = log_file_sender.clone(); // SLAMスレッド用にクローン
+        let is_slam_processing_for_thread = is_slam_processing.clone();
 
         // SLAMスレッドの起動
         thread::spawn(move || {
@@ -226,6 +264,7 @@ impl MyApp {
                             if current_slam_mode == SlamMode::Continuous {
                                 let now = web_time::Instant::now();
                                 if now.duration_since(last_slam_update_time) >= SLAM_UPDATE_INTERVAL_DURATION {
+                                    is_slam_processing_for_thread.store(true, Ordering::SeqCst);
                                     let msg = format!("DEBUG: SLAM update triggered at {:?}", now);
                                     command_output_sender_for_slam.send(msg.clone()).unwrap_or_default();
                                     log_file_sender_for_slam.send(msg).unwrap_or_default();
@@ -242,6 +281,7 @@ impl MyApp {
                                         robot_pose: *slam_manager.get_robot_pose(),
                                     }).unwrap_or_default();
                                     last_slam_update_time = now; // 更新時間を記録
+                                    is_slam_processing_for_thread.store(false, Ordering::SeqCst);
                                 } else {
                                     let msg = format!("DEBUG: SLAM update skipped (too soon) at {:?}", now);
                                     command_output_sender_for_slam.send(msg.clone()).unwrap_or_default();
@@ -251,17 +291,24 @@ impl MyApp {
                         },
                         SlamThreadCommand::ProcessSingleScan { scan } => {
                             // 単一スキャン要求はモードに関わらずすぐに処理
+                            is_slam_processing_for_thread.store(true, Ordering::SeqCst);
                             let now = web_time::Instant::now();
                             let msg = format!("DEBUG: SLAM single scan triggered at {:?}", now);
                             command_output_sender_for_slam.send(msg.clone()).unwrap_or_default();
                             log_file_sender_for_slam.send(msg).unwrap_or_default();
 
+                            let slam_update_start = web_time::Instant::now();
                             slam_manager.update(&scan);
+                            let slam_update_duration = slam_update_start.elapsed();
+                            let msg = format!("DEBUG: slam_manager.update() took {:?}", slam_update_duration);
+                            command_output_sender_for_slam.send(msg.clone()).unwrap_or_default();
+                            log_file_sender_for_slam.send(msg).unwrap_or_default();
                             
                             slam_result_sender.send(SlamThreadResult {
                                 map_points: slam_manager.get_map_points().clone(),
                                 robot_pose: *slam_manager.get_robot_pose(),
                             }).unwrap_or_default();
+                            is_slam_processing_for_thread.store(false, Ordering::SeqCst);
                         },
                         SlamThreadCommand::Shutdown => break, // スレッドを終了
                     }
@@ -313,6 +360,7 @@ impl MyApp {
             slam_mode: SlamMode::Manual,
             slam_command_sender,
             slam_result_receiver,
+            is_slam_processing: is_slam_processing.clone(),
             current_map_points: Vec::new(),
             current_robot_pose: nalgebra::Isometry2::identity(),
             single_scan_requested_by_ui: false,
@@ -388,12 +436,25 @@ impl eframe::App for MyApp {
                                                                                 self.command_output_sender.send(msg.clone()).unwrap_or_default();
                                                                                 self.log_file_sender.send(msg).unwrap_or_default();
                                                     
-                                                                                // 結合した点群をSLAMスレッドに送信
-                                                                                if self.slam_mode == SlamMode::Continuous {
-                                                                                    self.slam_command_sender.send(SlamThreadCommand::UpdateScan { scan: combined_scan }).unwrap_or_default();
-                                                                                } else if self.single_scan_requested_by_ui {                                                        self.slam_command_sender.send(SlamThreadCommand::ProcessSingleScan { scan: combined_scan }).unwrap_or_default();
-                                                        self.single_scan_requested_by_ui = false; // フラグをリセット
-                                                    }
+                                                                                                            // 結合した点群をSLAMスレッドに送信
+                                                    
+                                                                                                            // SLAMが処理中でない場合のみ送信
+                                                    
+                                                                                                            if !self.is_slam_processing.load(Ordering::SeqCst) {
+                                                    
+                                                                                                                if self.slam_mode == SlamMode::Continuous {
+                                                    
+                                                                                                                    self.slam_command_sender.send(SlamThreadCommand::UpdateScan { scan: combined_scan }).unwrap_or_default();
+                                                    
+                                                                                                                } else if self.single_scan_requested_by_ui {
+                                                    
+                                                                                                                    self.slam_command_sender.send(SlamThreadCommand::ProcessSingleScan { scan: combined_scan }).unwrap_or_default();
+                                                    
+                                                                                                                    self.single_scan_requested_by_ui = false; // フラグをリセット
+                                                    
+                                                                                                                }
+                                                    
+                                                                                                            }
                         
                                                     // 統合後は保留中のスキャンをクリア
                                                     self.pending_scans = [None, None];
