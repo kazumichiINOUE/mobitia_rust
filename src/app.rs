@@ -130,16 +130,12 @@ impl MyApp {
                 0,
                 "/dev/cu.usbmodem1101",
                 115200,
-                Vec2::new(0.0, 0.51 / 2.0),
-                -std::f32::consts::PI,
-            ), // 0 deg (90 deg - 90 deg)
+                Vec2::new(0.0, 0.14),  std::f32::consts::FRAC_PI_2), // 0 deg (90 deg - 90 deg)
             (
                 1,
                 "/dev/cu.usbmodem2101",
                 115200,
-                Vec2::new(0.0, -0.51 / 2.0),
-                0.0,
-            ), //-std::f32::consts::FRAC_PI_2), // -90 deg
+                Vec2::new(0.0, -0.14), -std::f32::consts::FRAC_PI_2), // -90 deg
         ];
         let mut lidars = Vec::new();
         for (id, path, baud_rate, origin, rotation) in lidar_defs {
@@ -872,8 +868,10 @@ impl eframe::App for MyApp {
                             // Lidar座標系での点 (px, py)
                             let pxx = point.0;
                             let pyy = point.1;
-                            let px_raw = -pyy;
-                            let py_raw = -pxx;
+                            let px_raw = pxx;
+                            let py_raw = -pyy;
+                            //let px_raw = -pyy;
+                            //let py_raw = -pxx;
 
                             // Lidarの回転を適用
                             let rotation = lidar_state.rotation;
