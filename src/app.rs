@@ -128,14 +128,14 @@ impl MyApp {
         let lidar_defs = vec![
             (
                 0, // 進行方向右手のlidar
-                "/dev/cu.usbmodem1101",
+                "/dev/cu.usbmodem1201",
                 115200,
-                Vec2::new(0.0,-0.14), -std::f32::consts::FRAC_PI_2), // 0 deg (90 deg - 90 deg)
+                Vec2::new(0.0,-0.14), -std::f32::consts::FRAC_PI_2), // - 90 deg
             (
                 1, // 進行方向左手のliar
-                "/dev/cu.usbmodem2101",
+                "/dev/cu.usbmodem1301",
                 115200,
-                Vec2::new(0.0, 0.14), std::f32::consts::FRAC_PI_2), // -90 deg
+                Vec2::new(0.0, 0.14), std::f32::consts::FRAC_PI_2), // 90 deg
         ];
         let mut lidars = Vec::new();
         for (id, path, baud_rate, origin, rotation) in lidar_defs {
@@ -358,8 +358,8 @@ impl eframe::App for MyApp {
                                             // Lidar座標系での点 (px, py)
                                             let pxx = point.0;
                                             let pyy = point.1;
-                                            let px_raw = -pyy;
-                                            let py_raw = -pxx;
+                                            let px_raw = pxx;
+                                            let py_raw = pyy;
 
                                             // Lidarの回転を適用
                                             let px_rotated =
@@ -869,7 +869,7 @@ impl eframe::App for MyApp {
                             let pxx = point.0;
                             let pyy = point.1;
                             let px_raw = pxx;
-                            let py_raw = -pyy;
+                            let py_raw = pyy;
                             //let px_raw = -pyy;
                             //let py_raw = -pxx;
 
@@ -920,7 +920,7 @@ impl eframe::App for MyApp {
                 let robot_pose = &self.current_robot_pose;
                 // ロボットの現在のXY座標を取得 (方向は無視)
                 let robot_center_world =
-                    egui::pos2(robot_pose.translation.x, -robot_pose.translation.y);
+                    egui::pos2(robot_pose.translation.x, robot_pose.translation.y);
 
                 // 描画エリアのワールド座標の範囲 (例: 中心から±5メートル)
                 // この範囲の中心をロボットの現在位置に設定
@@ -938,7 +938,7 @@ impl eframe::App for MyApp {
                 // Draw the map points
                 for point in &self.current_map_points {
                     // Right = +X, Up = +Y
-                    let screen_pos = to_screen.transform_pos(egui::pos2(point.x, -point.y));
+                    let screen_pos = to_screen.transform_pos(egui::pos2(point.x, point.y));
                     if rect.contains(screen_pos) {
                         painter.circle_filled(
                             screen_pos,
@@ -951,7 +951,7 @@ impl eframe::App for MyApp {
                 // Draw robot pose (この部分は変更しない)
                 let robot_pos_on_screen = to_screen.transform_pos(egui::pos2(
                     robot_pose.translation.x,
-                    -robot_pose.translation.y,
+                    robot_pose.translation.y,
                 ));
                 let angle = robot_pose.rotation.angle();
                 painter.circle_filled(robot_pos_on_screen, 5.0, egui::Color32::RED);
