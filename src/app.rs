@@ -6,12 +6,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread;
 
-
 use crate::cli::Cli;
-use crate::lidar::{start_lidar_thread, LidarInfo};
-use crate::slam::SlamManager;
 use crate::demo::DemoManager;
 pub use crate::demo::DemoMode;
+use crate::lidar::{start_lidar_thread, LidarInfo};
+use crate::slam::SlamManager;
 
 // Lidar一台分の状態を保持する構造体
 #[derive(Clone)]
@@ -90,11 +89,11 @@ pub struct MyApp {
 
     pub(crate) lidar_draw_rect: Option<egui::Rect>, // 描画エリアは共通
 
-            pub(crate) app_mode: AppMode,
+    pub(crate) app_mode: AppMode,
 
-            pub(crate) demo_manager: DemoManager,
+    pub(crate) demo_manager: DemoManager,
 
-            pub(crate) show_command_window: bool,
+    pub(crate) show_command_window: bool,
 
     pub(crate) focus_console_requested: bool,
 
@@ -130,12 +129,16 @@ impl MyApp {
                 0, // 進行方向右手のlidar
                 "/dev/cu.usbmodem1201",
                 115200,
-                Vec2::new(0.0,-0.14), -std::f32::consts::FRAC_PI_2), // - 90 deg
+                Vec2::new(0.0, -0.14),
+                -std::f32::consts::FRAC_PI_2,
+            ), // - 90 deg
             (
                 1, // 進行方向左手のliar
                 "/dev/cu.usbmodem1301",
                 115200,
-                Vec2::new(0.0, 0.14), std::f32::consts::FRAC_PI_2), // 90 deg
+                Vec2::new(0.0, 0.14),
+                std::f32::consts::FRAC_PI_2,
+            ), // 90 deg
         ];
         let mut lidars = Vec::new();
         for (id, path, baud_rate, origin, rotation) in lidar_defs {
@@ -163,7 +166,6 @@ impl MyApp {
 
         // コンソールコマンド出力用のチャネルを作成
         let (command_output_sender, command_output_receiver) = mpsc::channel();
-
 
         // 各Lidarに対してスレッドを起動
         for lidar_state in &lidars {
@@ -823,13 +825,11 @@ impl eframe::App for MyApp {
                 // ワールド座標からスクリーン座標への変換を定義
                 // Y軸を反転させるため、fromに渡すRectのYのmin/maxを入れ替える
                 let world_to_screen_rect = egui::Rect::from_min_max(
-                    egui::pos2(-8.0, 8.0),  // ワールドの左上 (min_x, max_y)
-                    egui::pos2(8.0, -8.0)   // ワールドの右下 (max_x, min_y)
+                    egui::pos2(-8.0, 8.0), // ワールドの左上 (min_x, max_y)
+                    egui::pos2(8.0, -8.0), // ワールドの右下 (max_x, min_y)
                 );
-                let to_screen = egui::emath::RectTransform::from_to(
-                    world_to_screen_rect,
-                    square_rect,
-                );
+                let to_screen =
+                    egui::emath::RectTransform::from_to(world_to_screen_rect, square_rect);
 
                 // 背景とグリッドを描画
                 painter.rect_filled(square_rect, 0.0, egui::Color32::from_rgb(20, 20, 20));
@@ -943,7 +943,7 @@ impl eframe::App for MyApp {
                 inverted_map_view_rect.max.y = map_view_rect.min.y;
                 let to_screen = egui::emath::RectTransform::from_to(
                     inverted_map_view_rect,
-                    rect,          // 実際の描画エリア
+                    rect, // 実際の描画エリア
                 );
 
                 // Draw the map points

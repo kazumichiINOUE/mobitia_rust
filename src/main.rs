@@ -4,9 +4,9 @@ use eframe::egui;
 // Define application modules
 mod app;
 mod cli;
+mod demo;
 mod lidar;
 mod slam;
-mod demo;
 
 use app::MyApp;
 
