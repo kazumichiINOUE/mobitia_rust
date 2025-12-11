@@ -140,7 +140,9 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                 group_id: current_group_id,
             });
             app.command_history.push(ConsoleOutputEntry {
-                text: "  demo <scan|ripple|breathing|table> - Enter demo mode with a specific pattern".to_string(),
+                text:
+                    "  demo <scan|ripple|breathing|table> - Enter demo mode with a specific pattern"
+                        .to_string(),
                 group_id: current_group_id,
             });
             app.command_history.push(ConsoleOutputEntry {
@@ -192,23 +194,27 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                             text: "Requesting single scan for SLAM.".to_string(),
                             group_id: current_group_id,
                         });
-                    },
+                    }
                     SlamCommands::Continuous => {
                         app.slam_mode = crate::app::SlamMode::Continuous;
-                        app.slam_command_sender.send(crate::app::SlamThreadCommand::StartContinuous).unwrap_or_default();
+                        app.slam_command_sender
+                            .send(crate::app::SlamThreadCommand::StartContinuous)
+                            .unwrap_or_default();
                         app.command_history.push(ConsoleOutputEntry {
                             text: "SLAM set to continuous mode.".to_string(),
                             group_id: current_group_id,
                         });
-                    },
+                    }
                     SlamCommands::Pause => {
                         app.slam_mode = crate::app::SlamMode::Paused;
-                        app.slam_command_sender.send(crate::app::SlamThreadCommand::Pause).unwrap_or_default();
+                        app.slam_command_sender
+                            .send(crate::app::SlamThreadCommand::Pause)
+                            .unwrap_or_default();
                         app.command_history.push(ConsoleOutputEntry {
                             text: "SLAM paused.".to_string(),
                             group_id: current_group_id,
                         });
-                    },
+                    }
                 }
             } else {
                 app.command_history.push(ConsoleOutputEntry {
@@ -216,7 +222,7 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                     group_id: current_group_id,
                 });
             }
-        },
+        }
         Commands::Demo { mode } => {
             app.app_mode = AppMode::Demo;
             match mode.as_str() {
@@ -281,16 +287,19 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
         }
         Commands::Set { command } => match command {
             SetCommands::Path { id, path } => {
-                    if let Some(lidar_state) = app.lidars.get_mut(id) {
-                        lidar_state.path = path.clone();
-                        app.command_output_sender
-                            .send(format!("LiDAR {} path set to: {}", id, path))
-                            .unwrap_or_default();
-                    } else {
-                        app.command_output_sender
-                            .send(format!("ERROR: No LiDAR {} configured or found to set path for.", id))
-                            .unwrap_or_default();
-                    }
+                if let Some(lidar_state) = app.lidars.get_mut(id) {
+                    lidar_state.path = path.clone();
+                    app.command_output_sender
+                        .send(format!("LiDAR {} path set to: {}", id, path))
+                        .unwrap_or_default();
+                } else {
+                    app.command_output_sender
+                        .send(format!(
+                            "ERROR: No LiDAR {} configured or found to set path for.",
+                            id
+                        ))
+                        .unwrap_or_default();
+                }
             }
         },
         Commands::Serial { command } => match command {

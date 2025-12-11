@@ -39,7 +39,11 @@ impl LidarDriver {
         Ok(Self { connection })
     }
 
-    pub fn initialize(&mut self, lidar_id: usize, message_sender: &mpsc::Sender<LidarMessage>) -> Result<()> {
+    pub fn initialize(
+        &mut self,
+        lidar_id: usize,
+        message_sender: &mpsc::Sender<LidarMessage>,
+    ) -> Result<()> {
         let init_commands: &[&[u8]] = &[b"VV\n", b"PP\n", b"II\n"];
         for cmd in init_commands {
             message_sender
@@ -183,7 +187,10 @@ pub fn start_lidar_thread(
                 message_sender
                     .send(LidarMessage::StatusUpdate {
                         id: lidar_id,
-                        message: format!("INFO: Successfully opened port {}", lidar_config.lidar_path),
+                        message: format!(
+                            "INFO: Successfully opened port {}",
+                            lidar_config.lidar_path
+                        ),
                     })
                     .unwrap_or_default();
                 d

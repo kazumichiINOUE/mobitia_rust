@@ -1,4 +1,4 @@
-use nalgebra::{Isometry2, Point2, Vector3, Rotation2, Translation2};
+use nalgebra::{Isometry2, Point2, Rotation2, Translation2, Vector3};
 use rand::seq::SliceRandom;
 use rand::Rng;
 
@@ -139,7 +139,7 @@ fn gaussian_match_count(
     kernel_obj: &GaussianKernel,
 ) -> f64 {
     let mut total_score = 0.0;
-    
+
     let height = gmap.height as i32;
     let width = gmap.width as i32;
 
@@ -162,7 +162,8 @@ fn gaussian_match_count(
                 if map_x >= 0 && map_x < width && map_y >= 0 && map_y < height {
                     let map_idx = (map_y as usize) * gmap.width + (map_x as usize);
                     if gmap.data[map_idx] > 0.0 {
-                        let kernel_idx = ((dy + kernel_radius) as usize) * kernel_size + ((dx + kernel_radius) as usize);
+                        let kernel_idx = ((dy + kernel_radius) as usize) * kernel_size
+                            + ((dx + kernel_radius) as usize);
                         point_score += kernel_obj.kernel[kernel_idx];
                     }
                 }
@@ -181,12 +182,12 @@ fn optimize_de(
     initial_pose: Isometry2<f32>,
 ) -> (Isometry2<f32>, f64) {
     // DE Parameters
-    const WXY: f32 = 0.8;                     // Search range for x, y [m]
+    const WXY: f32 = 0.8; // Search range for x, y [m]
     const WA: f32 = std::f32::consts::PI / 8.0; // Search range for angle [rad], 22.5 deg = PI / 8
-    const POPULATION_SIZE: usize = 200;       // Increased for better search
-    const GENERATIONS: usize = 100;           // Increased for better search
-    const F: f32 = 0.5;                       // Mutation factor
-    const CR: f32 = 0.2;                      // Crossover rate
+    const POPULATION_SIZE: usize = 200; // Increased for better search
+    const GENERATIONS: usize = 100; // Increased for better search
+    const F: f32 = 0.5; // Mutation factor
+    const CR: f32 = 0.2; // Crossover rate
 
     let mut rng = rand::thread_rng();
 
@@ -214,7 +215,7 @@ fn optimize_de(
         let rotation = Rotation2::new(current_a);
         let translation = Translation2::new(current_x, current_y);
         let pose = Isometry2::from_parts(translation, rotation.into());
-        
+
         scores.push(gaussian_match_count(gmap, points, &pose, kernel_obj));
     }
 
@@ -237,7 +238,7 @@ fn optimize_de(
             let r1 = candidates[0];
             let r2 = candidates[1];
             let r3 = candidates[2];
-            
+
             let p_r1 = &population[r1];
             let p_r2 = &population[r2];
             let p_r3 = &population[r3];
@@ -245,7 +246,7 @@ fn optimize_de(
             // v = p_r1 + F * (p_r2 - p_r3)
             let vx = p_r1.x + F * (p_r2.x - p_r3.x);
             let vy = p_r1.y + F * (p_r2.y - p_r3.y);
-            
+
             // Angle mutation with wrap-around handling
             let ax1 = p_r1.z.cos();
             let ay1 = p_r1.z.sin();
@@ -261,10 +262,16 @@ fn optimize_de(
             // Crossover
             let mut trial_pose = population[i];
             let j_rand = rng.gen_range(0..3);
-            
-            if rng.gen::<f32>() < CR || j_rand == 0 { trial_pose.x = vx; }
-            if rng.gen::<f32>() < CR || j_rand == 1 { trial_pose.y = vy; }
-            if rng.gen::<f32>() < CR || j_rand == 2 { trial_pose.z = va; }
+
+            if rng.gen::<f32>() < CR || j_rand == 0 {
+                trial_pose.x = vx;
+            }
+            if rng.gen::<f32>() < CR || j_rand == 1 {
+                trial_pose.y = vy;
+            }
+            if rng.gen::<f32>() < CR || j_rand == 2 {
+                trial_pose.z = va;
+            }
 
             // Selection
             let rotation_trial = Rotation2::new(trial_pose.z);
@@ -291,6 +298,6 @@ fn optimize_de(
     let final_rotation = Rotation2::new(a);
     let final_translation = Translation2::new(x, y);
     let best_transform = Isometry2::from_parts(final_translation, final_rotation.into());
-    
+
     (best_transform, best_eval)
 }
