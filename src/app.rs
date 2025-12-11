@@ -543,6 +543,7 @@ impl eframe::App for MyApp {
 
                     // コマンド履歴
                     egui::ScrollArea::vertical()
+                        .id_source("console_history_scroll") // ユニークなIDを追加
                         .stick_to_bottom(true)
                         .max_height(
                             ui.available_height()
@@ -792,11 +793,13 @@ impl eframe::App for MyApp {
 
                     ui.group(|ui| {
                         ui.set_height(ui.text_style_height(&egui::TextStyle::Monospace) * 5.0); // 高さを調整
-                        egui::ScrollArea::vertical().show(ui, |ui| {
-                            for line in &lidar_state.status_messages {
-                                ui.monospace(line);
-                            }
-                        });
+                        egui::ScrollArea::vertical()
+                            .id_source(format!("lidar_status_scroll_{}", lidar_state.id))
+                            .show(ui, |ui| {
+                                for line in &lidar_state.status_messages {
+                                    ui.monospace(line);
+                                }
+                            });
                     });
                     ui.separator();
                 }
