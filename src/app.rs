@@ -1,8 +1,6 @@
 use clap::Parser;
 use eframe::egui;
-use eframe::egui::ecolor::Hsva;
 use egui::Vec2;
-use rand::Rng;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
@@ -12,6 +10,8 @@ use std::thread;
 use crate::cli::Cli;
 use crate::lidar::{start_lidar_thread, LidarInfo};
 use crate::slam::SlamManager;
+use crate::demo::DemoManager;
+pub use crate::demo::DemoMode;
 
 // Lidar一台分の状態を保持する構造体
 #[derive(Clone)]
@@ -64,22 +64,9 @@ pub struct SlamThreadResult {
 }
 
 // アプリケーション全体の状態を管理する構造体
-pub enum DemoMode {
-    RotatingScan,
-    ExpandingRipple,
-    BreathingCircle,
-    Table,
-}
-
 pub struct ConsoleOutputEntry {
     pub text: String,
     pub group_id: usize, // どのコマンド実行に属するか
-}
-pub struct Ripple {
-    center: egui::Pos2,
-    spawn_time: f64,
-    max_radius: f32,
-    duration: f32, // 波紋の寿命
 }
 
 pub struct MyApp {
@@ -103,15 +90,11 @@ pub struct MyApp {
 
     pub(crate) lidar_draw_rect: Option<egui::Rect>, // 描画エリアは共通
 
-    pub(crate) app_mode: AppMode,
+            pub(crate) app_mode: AppMode,
 
-    pub(crate) demo_mode: DemoMode,
+            pub(crate) demo_manager: DemoManager,
 
-    ripples: Vec<Ripple>,
-
-    last_ripple_spawn_time: f64,
-
-    pub(crate) show_command_window: bool,
+            pub(crate) show_command_window: bool,
 
     pub(crate) focus_console_requested: bool,
 
@@ -318,9 +301,7 @@ impl MyApp {
             command_output_sender,
             lidar_draw_rect: None,
             app_mode: AppMode::Lidar,
-            demo_mode: DemoMode::RotatingScan,
-            ripples: Vec::new(),
-            last_ripple_spawn_time: 0.0,
+            demo_manager: DemoManager::new(),
             show_command_window: true,
             focus_console_requested: true,
             requested_point_save_path: None,
@@ -985,235 +966,7 @@ impl eframe::App for MyApp {
                 );
             }
             AppMode::Demo => {
-                let heading_text = match self.demo_mode {
-                    DemoMode::RotatingScan => "Rotating Scan Demo",
-                    DemoMode::ExpandingRipple => "Expanding Ripple Demo",
-                    DemoMode::BreathingCircle => "Breathing Circle Demo",
-                    DemoMode::Table => "Table Demo",
-                };
-                ui.heading(heading_text);
-
-                ui.painter().rect_filled(
-                    ui.available_rect_before_wrap(),
-                    0.0,
-                    egui::Color32::from_rgb(20, 20, 20),
-                );
-
-                match self.demo_mode {
-                    DemoMode::Table => {
-                        // --- Widgetベースのデモ ---
-                        ui.centered_and_justified(|ui| {
-                            egui::Grid::new("demo_table_grid")
-                                .num_columns(2)
-                                .spacing([40.0, 4.0])
-                                .striped(true)
-                                .show(ui, |ui| {
-                                    ui.label("Parameter 1:");
-                                    ui.label("Value A");
-                                    ui.end_row();
-
-                                    ui.label("Parameter 2:");
-                                    ui.label("Value B");
-                                    ui.end_row();
-
-                                    ui.label("A much longer parameter name:");
-                                    ui.label("Some other value C");
-                                    ui.end_row();
-
-                                    ui.label("Status:");
-                                    ui.label(egui::RichText::new("OK").color(egui::Color32::GREEN));
-                                    ui.end_row();
-                                });
-                        });
-                    }
-                    DemoMode::RotatingScan => {
-                        let (response, painter) =
-                            ui.allocate_painter(ui.available_size(), egui::Sense::hover());
-                        let rect = response.rect;
-                        self.lidar_draw_rect = Some(rect);
-
-                        let time = ui.input(|i| i.time);
-                        let center = rect.center();
-                        let radius = rect.height().min(rect.width()) * 0.4;
-                        let angle = time as f32 * std::f32::consts::TAU / 4.0;
-
-                        let scan_angle_width = std::f32::consts::FRAC_PI_3;
-                        let num_segments = 60;
-                        let inner_radius_for_fan = radius * 0.25;
-
-                        let start_scan_angle = angle - scan_angle_width;
-                        let mut current_segment_angle = start_scan_angle;
-
-                        for i in 0..num_segments {
-                            let next_segment_angle = start_scan_angle
-                                + scan_angle_width * ((i + 1) as f32 / num_segments as f32);
-
-                            let p1 = center
-                                + radius
-                                    * egui::vec2(
-                                        current_segment_angle.cos(),
-                                        -current_segment_angle.sin(),
-                                    );
-                            let p2 = center
-                                + radius
-                                    * egui::vec2(
-                                        next_segment_angle.cos(),
-                                        -next_segment_angle.sin(),
-                                    );
-
-                            let inner_p1 = center
-                                + inner_radius_for_fan
-                                    * egui::vec2(
-                                        current_segment_angle.cos(),
-                                        -current_segment_angle.sin(),
-                                    );
-                            let inner_p2 = center
-                                + inner_radius_for_fan
-                                    * egui::vec2(
-                                        next_segment_angle.cos(),
-                                        -next_segment_angle.sin(),
-                                    );
-
-                            let hue = current_segment_angle.rem_euclid(std::f32::consts::TAU)
-                                / std::f32::consts::TAU;
-
-                            let color: egui::Color32 = Hsva {
-                                h: hue,
-                                s: 1.0,
-                                v: 1.0,
-                                a: 0.1,
-                            }
-                            .into();
-
-                            painter.add(egui::Shape::convex_polygon(
-                                vec![inner_p1, p1, p2],
-                                color,
-                                egui::Stroke::NONE,
-                            ));
-                            painter.add(egui::Shape::convex_polygon(
-                                vec![inner_p1, p2, inner_p2],
-                                color,
-                                egui::Stroke::NONE,
-                            ));
-                            current_segment_angle = next_segment_angle;
-                        }
-
-                        painter.text(
-                            center,
-                            egui::Align2::CENTER_CENTER,
-                            "Signal Lost",
-                            egui::FontId::proportional(40.0),
-                            egui::Color32::WHITE,
-                        );
-                    }
-                    DemoMode::ExpandingRipple => {
-                        let (response, painter) =
-                            ui.allocate_painter(ui.available_size(), egui::Sense::hover());
-                        let rect = response.rect;
-                        self.lidar_draw_rect = Some(rect);
-
-                        let time = ui.input(|i| i.time);
-                        let mut rng = rand::thread_rng();
-
-                        if time - self.last_ripple_spawn_time > 0.4 {
-                            self.last_ripple_spawn_time = time;
-                            let center_x = rng.gen_range(rect.left()..=rect.right());
-                            let center_y = rng.gen_range(rect.top()..=rect.bottom());
-                            let center = egui::pos2(center_x, center_y);
-
-                            self.ripples.push(Ripple {
-                                center,
-                                spawn_time: time,
-                                max_radius: rng.gen_range(50.0..=300.0),
-                                duration: rng.gen_range(2.0..=5.0),
-                            });
-                        }
-
-                        let current_ripples = std::mem::take(&mut self.ripples);
-                        self.ripples = current_ripples
-                            .into_iter()
-                            .filter_map(|ripple| {
-                                let elapsed_time = (time - ripple.spawn_time) as f32;
-                                if elapsed_time > ripple.duration {
-                                    return None;
-                                }
-
-                                let progress = elapsed_time / ripple.duration;
-                                let current_radius = ripple.max_radius * progress;
-
-                                let alpha = (1.0 - progress).powf(2.0) * 1.0;
-                                let stroke_alpha = (alpha * 255.0) as u8;
-
-                                let color = egui::Color32::from_rgba_unmultiplied(
-                                    0,
-                                    200,
-                                    255,
-                                    stroke_alpha,
-                                );
-
-                                let stroke_width = (1.0 - progress) * 3.5 + 0.5;
-
-                                painter.circle_stroke(
-                                    ripple.center,
-                                    current_radius,
-                                    egui::Stroke::new(stroke_width, color),
-                                );
-                                ui.ctx().request_repaint();
-
-                                Some(ripple)
-                            })
-                            .collect();
-
-                        painter.text(
-                            rect.center(),
-                            egui::Align2::CENTER_CENTER,
-                            "Expanding Ripple Demo",
-                            egui::FontId::proportional(40.0),
-                            egui::Color32::WHITE,
-                        );
-                    }
-                    DemoMode::BreathingCircle => {
-                        let (response, painter) =
-                            ui.allocate_painter(ui.available_size(), egui::Sense::hover());
-                        let rect = response.rect;
-                        self.lidar_draw_rect = Some(rect);
-
-                        let time = ui.input(|i| i.time) as f32;
-                        let center = rect.center();
-
-                        let cycle_duration = 8.0;
-                        let progress =
-                            (time / cycle_duration * std::f32::consts::TAU).cos() * -0.5 + 0.5;
-
-                        let min_radius_ratio = 0.10;
-                        let max_radius_ratio = 0.40;
-                        let radius_ratio =
-                            min_radius_ratio + (max_radius_ratio - min_radius_ratio) * progress;
-                        let radius = rect.height().min(rect.width()) * radius_ratio;
-
-                        let min_alpha = 0.3;
-                        let max_alpha = 0.8;
-                        let alpha = min_alpha + (max_alpha - min_alpha) * progress;
-
-                        let color = egui::Color32::from_rgba_unmultiplied(
-                            128,
-                            128,
-                            128,
-                            (alpha * 255.0) as u8,
-                        );
-
-                        painter.circle_filled(center, radius, color);
-                        ui.ctx().request_repaint();
-
-                        painter.text(
-                            center,
-                            egui::Align2::CENTER_CENTER,
-                            "Breathing Circle Demo",
-                            egui::FontId::proportional(40.0),
-                            egui::Color32::WHITE,
-                        );
-                    }
-                }
+                self.demo_manager.update_and_draw(ui);
             }
         });
 

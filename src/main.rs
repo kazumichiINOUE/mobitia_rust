@@ -6,6 +6,7 @@ mod app;
 mod cli;
 mod lidar;
 mod slam;
+mod demo;
 
 use app::MyApp;
 

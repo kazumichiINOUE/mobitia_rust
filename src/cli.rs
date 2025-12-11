@@ -227,28 +227,28 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
             app.app_mode = AppMode::Demo;
             match mode.as_str() {
                 "scan" => {
-                    app.demo_mode = DemoMode::RotatingScan;
+                    app.demo_manager.set_mode(DemoMode::RotatingScan);
                     app.command_history.push(ConsoleOutputEntry {
                         text: "Mode set to Demo (Rotating Scan).".to_string(),
                         group_id: current_group_id,
                     });
                 }
                 "ripple" => {
-                    app.demo_mode = DemoMode::ExpandingRipple;
+                    app.demo_manager.set_mode(DemoMode::ExpandingRipple);
                     app.command_history.push(ConsoleOutputEntry {
                         text: "Mode set to Demo (Expanding Ripple).".to_string(),
                         group_id: current_group_id,
                     });
                 }
                 "breathing" => {
-                    app.demo_mode = DemoMode::BreathingCircle;
+                    app.demo_manager.set_mode(DemoMode::BreathingCircle);
                     app.command_history.push(ConsoleOutputEntry {
                         text: "Mode set to Demo (Breathing Circle).".to_string(),
                         group_id: current_group_id,
                     });
                 }
                 "table" => {
-                    app.demo_mode = DemoMode::Table;
+                    app.demo_manager.set_mode(DemoMode::Table);
                     app.command_history.push(ConsoleOutputEntry {
                         text: "Mode set to Demo (Table).".to_string(),
                         group_id: current_group_id,
