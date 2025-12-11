@@ -127,15 +127,15 @@ impl MyApp {
         // TODO: 将来的には設定ファイルなどから読み込む
         let lidar_defs = vec![
             (
-                0,
+                0, // 進行方向右手のlidar
                 "/dev/cu.usbmodem1101",
                 115200,
-                Vec2::new(0.0, 0.14),  std::f32::consts::FRAC_PI_2), // 0 deg (90 deg - 90 deg)
+                Vec2::new(0.0,-0.14), -std::f32::consts::FRAC_PI_2), // 0 deg (90 deg - 90 deg)
             (
-                1,
+                1, // 進行方向左手のliar
                 "/dev/cu.usbmodem2101",
                 115200,
-                Vec2::new(0.0, -0.14), -std::f32::consts::FRAC_PI_2), // -90 deg
+                Vec2::new(0.0, 0.14), std::f32::consts::FRAC_PI_2), // -90 deg
         ];
         let mut lidars = Vec::new();
         for (id, path, baud_rate, origin, rotation) in lidar_defs {
