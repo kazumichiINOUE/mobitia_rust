@@ -1,5 +1,3 @@
-use anyhow::Result;
-use chrono::Local;
 use clap::Parser;
 use eframe::egui;
 use eframe::egui::ecolor::Hsva;
@@ -10,7 +8,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread;
 
-use nalgebra::{Isometry2, Point2}; // 追加
 
 use crate::cli::Cli;
 use crate::lidar::{start_lidar_thread, LidarInfo};
@@ -90,9 +87,7 @@ pub struct MyApp {
     pub(crate) user_command_history: Vec<String>, // ユーザーのコマンド入力履歴
     pub(crate) history_index: usize, // コマンド履歴のインデックス
     pub(crate) current_suggestions: Vec<String>, // 現在のサジェスト候補
-
-    // 複数Lidarの状態を管理
-    pub(crate) lidars: Vec<LidarState>,
+    pub(crate) lidars: Vec<LidarState>, // 複数Lidarの状態を管理
 
     // スレッドからのデータ/ステータス受信を統合
     pub(crate) lidar_message_receiver: mpsc::Receiver<LidarMessage>,
@@ -104,8 +99,6 @@ pub struct MyApp {
     pub(crate) command_output_receiver: mpsc::Receiver<String>,
 
     pub(crate) command_output_sender: mpsc::Sender<String>,
-
-    pub(crate) log_file_sender: mpsc::Sender<String>,
 
     pub(crate) lidar_draw_rect: Option<egui::Rect>, // 描画エリアは共通
 
@@ -191,16 +184,6 @@ impl MyApp {
         // コンソールコマンド出力用のチャネルを作成
         let (command_output_sender, command_output_receiver) = mpsc::channel();
 
-        // ファイルロギング用のチャネルとスレッドを作成
-        let (log_file_sender, log_file_receiver) = mpsc::channel();
-        thread::spawn(move || {
-            let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
-            let filename = format!("debug_log_{}.txt", timestamp);
-            let mut file = std::fs::File::create(&filename).expect("Failed to create log file");
-            while let Ok(message) = log_file_receiver.recv() {
-                writeln!(file, "{}", message).expect("Failed to write to log file");
-            }
-        });
 
         // 各Lidarに対してスレッドを起動
         for lidar_state in &lidars {
@@ -221,8 +204,6 @@ impl MyApp {
         // SLAMスレッドとの通信チャネル
         let (slam_command_sender, slam_command_receiver) = mpsc::channel();
         let (slam_result_sender, slam_result_receiver) = mpsc::channel();
-        let command_output_sender_for_slam = command_output_sender.clone(); // SLAMスレッド用にクローン
-        let log_file_sender_for_slam = log_file_sender.clone(); // SLAMスレッド用にクローン
         let is_slam_processing_for_thread = is_slam_processing.clone();
 
         // SLAMスレッドの起動
@@ -267,23 +248,9 @@ impl MyApp {
                                     >= SLAM_UPDATE_INTERVAL_DURATION
                                 {
                                     is_slam_processing_for_thread.store(true, Ordering::SeqCst);
-                                    let msg = format!("DEBUG: SLAM update triggered at {:?}", now);
-                                    command_output_sender_for_slam
-                                        .send(msg.clone())
-                                        .unwrap_or_default();
-                                    log_file_sender_for_slam.send(msg).unwrap_or_default();
 
                                     let slam_update_start = web_time::Instant::now();
                                     slam_manager.update(&scan);
-                                    let slam_update_duration = slam_update_start.elapsed();
-                                    let msg = format!(
-                                        "DEBUG: slam_manager.update() took {:?}",
-                                        slam_update_duration
-                                    );
-                                    command_output_sender_for_slam
-                                        .send(msg.clone())
-                                        .unwrap_or_default();
-                                    log_file_sender_for_slam.send(msg).unwrap_or_default();
 
                                     slam_result_sender
                                         .send(SlamThreadResult {
@@ -294,38 +261,16 @@ impl MyApp {
                                     last_slam_update_time = now; // 更新時間を記録
                                     is_slam_processing_for_thread.store(false, Ordering::SeqCst);
                                 } else {
-                                    let msg = format!(
-                                        "DEBUG: SLAM update skipped (too soon) at {:?}",
-                                        now
-                                    );
-                                    command_output_sender_for_slam
-                                        .send(msg.clone())
-                                        .unwrap_or_default();
-                                    log_file_sender_for_slam.send(msg).unwrap_or_default();
+                                    ;
                                 }
                             }
                         }
                         SlamThreadCommand::ProcessSingleScan { scan } => {
                             // 単一スキャン要求はモードに関わらずすぐに処理
                             is_slam_processing_for_thread.store(true, Ordering::SeqCst);
-                            let now = web_time::Instant::now();
-                            let msg = format!("DEBUG: SLAM single scan triggered at {:?}", now);
-                            command_output_sender_for_slam
-                                .send(msg.clone())
-                                .unwrap_or_default();
-                            log_file_sender_for_slam.send(msg).unwrap_or_default();
 
                             let slam_update_start = web_time::Instant::now();
                             slam_manager.update(&scan);
-                            let slam_update_duration = slam_update_start.elapsed();
-                            let msg = format!(
-                                "DEBUG: slam_manager.update() took {:?}",
-                                slam_update_duration
-                            );
-                            command_output_sender_for_slam
-                                .send(msg.clone())
-                                .unwrap_or_default();
-                            log_file_sender_for_slam.send(msg).unwrap_or_default();
 
                             slam_result_sender
                                 .send(SlamThreadResult {
@@ -372,7 +317,6 @@ impl MyApp {
             pending_scans: [None, None],
             command_output_receiver,
             command_output_sender,
-            log_file_sender,
             lidar_draw_rect: None,
             app_mode: AppMode::Lidar,
             demo_mode: DemoMode::RotatingScan,
@@ -458,14 +402,6 @@ impl eframe::App for MyApp {
                                     }
                                 }
                             }
-
-                            let integration_duration = integration_start_time.elapsed();
-                            let msg =
-                                format!("DEBUG: Scan integration took {:?}", integration_duration);
-                            self.command_output_sender
-                                .send(msg.clone())
-                                .unwrap_or_default();
-                            self.log_file_sender.send(msg).unwrap_or_default();
 
                             // 結合した点群をSLAMスレッドに送信
 
