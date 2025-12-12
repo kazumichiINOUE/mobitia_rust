@@ -134,6 +134,8 @@ impl MyApp {
                 115200,
                 Vec2::new(0.0, -0.25-0.095),
                 -std::f32::consts::FRAC_PI_2,
+                -90.0f32,  // data_filter_angle_min
+                135.0f32,  // data_filter_angle_max
             ), // - 90 deg
             (
                 1, // 進行方向左手のliar
@@ -141,16 +143,12 @@ impl MyApp {
                 115200,
                 Vec2::new(0.0, 0.25+0.095),
                 std::f32::consts::FRAC_PI_2,
+                -135.0f32, // data_filter_angle_min
+                90.0f32,   // data_filter_angle_max
             ), // 90 deg
         ];
         let mut lidars = Vec::new();
-        for (id, path, baud_rate, origin, rotation) in lidar_defs {
-            let (filter_min, filter_max) = match id {
-                0 => (-90.0f32, 135.0f32),
-                1 => (-135.0f32, 90.0f32),
-                _ => (-135.0f32, 135.0f32), // デフォルトまたはその他のLiDAR
-            };
-
+        for (id, path, baud_rate, origin, rotation, data_filter_angle_min, data_filter_angle_max) in lidar_defs {
             // eframe::Storageから対応するlidar_pathを読み込む試み
             let storage_key = format!("lidar_path_{}", id);
             let device_path = cc
@@ -167,8 +165,8 @@ impl MyApp {
                 status_messages: Vec::new(),
                 origin,
                 rotation,
-                data_filter_angle_min: filter_min,
-                data_filter_angle_max: filter_max,
+                data_filter_angle_min,
+                data_filter_angle_max,
             });
         }
 
