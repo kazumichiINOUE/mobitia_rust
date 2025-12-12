@@ -25,6 +25,9 @@ pub(crate) struct LidarState {
     pub(crate) origin: Vec2,
     // ワールド座標におけるこのLidarの回転オフセット (ラジアン)
     pub(crate) rotation: f32,
+    // Lidarごとのデータフィルタリング範囲
+    pub(crate) data_filter_angle_min: f32, // LiDARデータフィルタリングの最小角度 (度)
+    pub(crate) data_filter_angle_max: f32, // LiDARデータフィルタリングの最大角度 (度)
 }
 
 // アプリケーション全体のの状態を管理する構造体
@@ -129,19 +132,25 @@ impl MyApp {
                 0, // 進行方向右手のlidar
                 "/dev/cu.usbmodem1201",
                 115200,
-                Vec2::new(0.0, -0.14),
+                Vec2::new(0.0, -0.25-0.095),
                 -std::f32::consts::FRAC_PI_2,
             ), // - 90 deg
             (
                 1, // 進行方向左手のliar
                 "/dev/cu.usbmodem1301",
                 115200,
-                Vec2::new(0.0, 0.14),
+                Vec2::new(0.0, 0.25+0.095),
                 std::f32::consts::FRAC_PI_2,
             ), // 90 deg
         ];
         let mut lidars = Vec::new();
         for (id, path, baud_rate, origin, rotation) in lidar_defs {
+            let (filter_min, filter_max) = match id {
+                0 => (-90.0f32, 135.0f32),
+                1 => (-135.0f32, 90.0f32),
+                _ => (-135.0f32, 135.0f32), // デフォルトまたはその他のLiDAR
+            };
+
             // eframe::Storageから対応するlidar_pathを読み込む試み
             let storage_key = format!("lidar_path_{}", id);
             let device_path = cc
@@ -158,6 +167,8 @@ impl MyApp {
                 status_messages: Vec::new(),
                 origin,
                 rotation,
+                data_filter_angle_min: filter_min,
+                data_filter_angle_max: filter_max,
             });
         }
 
@@ -334,15 +345,35 @@ impl eframe::App for MyApp {
         while let Ok(lidar_message) = self.lidar_message_receiver.try_recv() {
             match lidar_message {
                 LidarMessage::ScanUpdate { id, scan } => {
-                    // UI用に点群を更新
-                    if let Some(lidar_state) = self.lidars.get_mut(id) {
-                        lidar_state.points = scan.clone();
+                    let mut filtered_scan = Vec::new();
+                    // 該当するLidarStateからフィルタリング角度を取得
+                    let (min_angle_rad, max_angle_rad) = if let Some(lidar_state_for_filter) = self.lidars.get(id) {
+                        (lidar_state_for_filter.data_filter_angle_min.to_radians(),
+                         lidar_state_for_filter.data_filter_angle_max.to_radians())
+                    } else {
+                        // LidarStateが見つからない場合はフィルタリングしない (またはエラー処理)
+                        (f32::NEG_INFINITY, f32::INFINITY)
+                    };
+
+                    for &(x, y) in &scan {
+                        // 角度を計算 (atan2はラジアンを返す)
+                        let angle_rad = y.atan2(x);
+
+                        // フィルタリング範囲内にあるかチェック
+                        if angle_rad >= min_angle_rad && angle_rad <= max_angle_rad {
+                            filtered_scan.push((x, y));
+                        }
                     }
 
-                    // SLAMモードの場合、スキャンデータを統合する
+                    // UI用に点群を更新 (フィルタリング済み)
+                    if let Some(lidar_state) = self.lidars.get_mut(id) {
+                        lidar_state.points = filtered_scan.clone();
+                    }
+
+                    // SLAMモードの場合、スキャンデータを統合する (フィルタリング済み)
                     if self.app_mode == AppMode::Slam {
                         if id < self.pending_scans.len() {
-                            self.pending_scans[id] = Some(scan);
+                            self.pending_scans[id] = Some(filtered_scan);
                         }
 
                         // 両方のLidarからスキャンデータが届いているか確認
