@@ -5,6 +5,7 @@ use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread;
+use std::collections::HashMap;
 
 use crate::cli::Cli;
 use crate::demo::DemoManager;
@@ -28,6 +29,17 @@ pub(crate) struct LidarState {
     // Lidarごとのデータフィルタリング範囲
     pub(crate) data_filter_angle_min: f32, // LiDARデータフィルタリングの最小角度 (度)
     pub(crate) data_filter_angle_max: f32, // LiDARデータフィルタリングの最大角度 (度)
+}
+
+// LiDARの初期設定を保持する構造体
+#[derive(Clone, Debug)] // Debugトレイトも追加しておくとデバッグに便利
+struct LidarConfigEntry {
+    path: String,
+    baud_rate: u32,
+    origin: Vec2,
+    rotation: f32,
+    data_filter_angle_min: f32,
+    data_filter_angle_max: f32,
 }
 
 // アプリケーション全体のの状態を管理する構造体
@@ -127,46 +139,51 @@ impl MyApp {
     pub fn new(cc: &eframe::CreationContext) -> Self {
         // 2台のLidarの初期設定
         // TODO: 将来的には設定ファイルなどから読み込む
-        let lidar_defs = vec![
+        let lidar_defs: HashMap<usize, LidarConfigEntry> = HashMap::from([
             (
                 0, // 進行方向右手のlidar
-                "/dev/cu.usbmodem1201",
-                115200,
-                Vec2::new(0.0, -0.25-0.095),
-                -std::f32::consts::FRAC_PI_2,
-                -90.0f32,  // data_filter_angle_min
-                135.0f32,  // data_filter_angle_max
-            ), // - 90 deg
+                LidarConfigEntry {
+                    path: "/dev/cu.usbmodem1201".to_string(),
+                    baud_rate: 115200,
+                    origin: Vec2::new(0.0, -0.25-0.095),
+                    rotation: -std::f32::consts::FRAC_PI_2,
+                    data_filter_angle_min: -90.0f32,
+                    data_filter_angle_max: 135.0f32,
+                }
+            ),
             (
                 1, // 進行方向左手のliar
-                "/dev/cu.usbmodem1301",
-                115200,
-                Vec2::new(0.0, 0.25+0.095),
-                std::f32::consts::FRAC_PI_2,
-                -135.0f32, // data_filter_angle_min
-                90.0f32,   // data_filter_angle_max
-            ), // 90 deg
-        ];
+                LidarConfigEntry {
+                    path: "/dev/cu.usbmodem1301".to_string(),
+                    baud_rate: 115200,
+                    origin: Vec2::new(0.0, 0.25+0.095),
+                    rotation: std::f32::consts::FRAC_PI_2,
+                    data_filter_angle_min: -135.0f32,
+                    data_filter_angle_max: 90.0f32,
+                }
+            ),
+        ]);
         let mut lidars = Vec::new();
-        for (id, path, baud_rate, origin, rotation, data_filter_angle_min, data_filter_angle_max) in lidar_defs {
+        // HashMapをイテレートし、各LiDARの設定を取得
+        for (&id, config_entry) in lidar_defs.iter() {
             // eframe::Storageから対応するlidar_pathを読み込む試み
             let storage_key = format!("lidar_path_{}", id);
             let device_path = cc
                 .storage
                 .and_then(|storage| storage.get_string(&storage_key))
-                .unwrap_or_else(|| path.to_string());
+                .unwrap_or_else(|| config_entry.path.clone()); // LidarConfigEntryからパスを取得
 
             lidars.push(LidarState {
                 id,
                 path: device_path,
-                baud_rate,
+                baud_rate: config_entry.baud_rate,
                 points: Vec::new(),
                 connection_status: "Connecting...".to_string(),
                 status_messages: Vec::new(),
-                origin,
-                rotation,
-                data_filter_angle_min,
-                data_filter_angle_max,
+                origin: config_entry.origin,
+                rotation: config_entry.rotation,
+                data_filter_angle_min: config_entry.data_filter_angle_min,
+                data_filter_angle_max: config_entry.data_filter_angle_max,
             });
         }
 
