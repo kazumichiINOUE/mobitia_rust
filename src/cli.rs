@@ -121,6 +121,8 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
         Commands::Help => {
             // clapのヘルプ文字列を生成
             let mut cmd = Cli::command();
+            // Usageを含まないようにヘルプのテンプレートをカスタマイズ
+            cmd = cmd.help_template("{about-with-newline}\n{all-args}");
             let help_text = cmd.render_help().to_string();
 
             // 生成されたヘルプ文字列をコンソールに1行ずつ追加
