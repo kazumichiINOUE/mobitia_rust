@@ -711,15 +711,15 @@ impl eframe::App for MyApp {
                                     self.current_suggestions = vec!["--detail".to_string(), "-d".to_string(), "<path>".to_string()];
                                 }
                                 ["serial", partial_subcommand] => {
-                                    let options = vec!["list", "ls"];
+                                    let options = vec![("list", "list (ls)")];
                                     self.current_suggestions = options
                                         .into_iter()
-                                        .filter(|opt| opt.starts_with(partial_subcommand))
-                                        .map(|s| s.to_string())
+                                        .filter(|(cmd, _)| cmd.starts_with(partial_subcommand) || "ls".starts_with(partial_subcommand))
+                                        .map(|(_, display)| display.to_string())
                                         .collect();
                                 }
                                 ["serial"] if ends_with_space => {
-                                    self.current_suggestions = vec!["list".to_string(), "ls".to_string()];
+                                    self.current_suggestions = vec!["list (ls)".to_string()];
                                 }
                                 ["save", _sub @ ("points" | "p"), partial_arg] => {
                                     let options = vec!["--output", "-o"];
@@ -733,19 +733,20 @@ impl eframe::App for MyApp {
                                     self.current_suggestions = vec!["--output".to_string(), "-o".to_string(), "<file path>".to_string()];
                                 }
                                 ["save", partial_subcommand] => {
-                                    let options = vec!["image", "i", "points", "p"];
+                                    let options = vec![
+                                        ("image", "image (i)"),
+                                        ("points", "points (p)"),
+                                    ];
                                     self.current_suggestions = options
                                         .into_iter()
-                                        .filter(|opt| opt.starts_with(partial_subcommand))
-                                        .map(|s| s.to_string())
+                                        .filter(|(cmd, _)| cmd.starts_with(partial_subcommand) || "i".starts_with(partial_subcommand) || "p".starts_with(partial_subcommand))
+                                        .map(|(_, display)| display.to_string())
                                         .collect();
                                 }
                                 ["save"] if ends_with_space => {
                                     self.current_suggestions = vec![
-                                        "image".to_string(),
-                                        "i".to_string(),
-                                        "points".to_string(),
-                                        "p".to_string(),
+                                        "image (i)".to_string(),
+                                        "points (p)".to_string(),
                                     ];
                                 }
                                 [partial_command] => {
