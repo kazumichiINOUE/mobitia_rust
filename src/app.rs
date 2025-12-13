@@ -758,6 +758,7 @@ impl eframe::App for MyApp {
                                         "set",
                                         "serial",
                                         "debug-storage",
+                                        "version",
                                         "quit", "q",
                                         "clear",
                                         "save",
