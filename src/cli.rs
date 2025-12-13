@@ -18,8 +18,10 @@ pub enum Commands {
     /// Show help for commands.
     Help,
     /// Manage LiDAR related commands and settings.
-    #[command(subcommand)]
-    Lidar(LidarCommands),
+    Lidar {
+        #[command(subcommand)]
+        command: Option<LidarCommands>,
+    },
     /// Enter SLAM mode.
     Slam {
         #[command(subcommand)]
@@ -27,9 +29,9 @@ pub enum Commands {
     },
     /// Enter demo mode.
     Demo {
-        /// Demo mode to set ("scan", "ripple", "breathing", or "table").
+        /// Demo mode to set ("scan", "ripple", "breathing", or "table"). Defaults to "scan" if omitted.
         #[arg(value_parser = ["scan", "ripple", "breathing", "table"])]
-        mode: String,
+        mode: Option<String>,
     },
     /// Manage serial port functions.
     Serial {
@@ -133,32 +135,43 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                 });
             }
         }
-        Commands::Lidar(lidar_command) => match lidar_command {
-            LidarCommands::EnterMode => {
+        Commands::Lidar { command } => {
+            if let Some(lidar_command) = command {
+                match lidar_command {
+                    LidarCommands::EnterMode => {
+                        app.app_mode = AppMode::Lidar;
+                        app.command_history.push(ConsoleOutputEntry {
+                            text: "Mode set to LiDAR.".to_string(),
+                            group_id: current_group_id,
+                        });
+                    }
+                    LidarCommands::Set(set_lidar_command) => match set_lidar_command {
+                        SetLidarCommands::Path { id, path } => {
+                            if let Some(lidar_state) = app.lidars.get_mut(id) {
+                                lidar_state.path = path.clone();
+                                app.command_output_sender
+                                    .send(format!("LiDAR {} path set to: {}", id, path))
+                                    .unwrap_or_default();
+                            } else {
+                                app.command_output_sender
+                                    .send(format!(
+                                        "ERROR: No LiDAR {} configured or found to set path for.",
+                                        id
+                                    ))
+                                    .unwrap_or_default();
+                            }
+                        }
+                    },
+                }
+            } else {
+                // If 'lidar' is run without subcommands, switch to Lidar mode.
                 app.app_mode = AppMode::Lidar;
                 app.command_history.push(ConsoleOutputEntry {
                     text: "Mode set to LiDAR.".to_string(),
                     group_id: current_group_id,
                 });
             }
-            LidarCommands::Set(set_lidar_command) => match set_lidar_command {
-                SetLidarCommands::Path { id, path } => {
-                    if let Some(lidar_state) = app.lidars.get_mut(id) {
-                        lidar_state.path = path.clone();
-                        app.command_output_sender
-                            .send(format!("LiDAR {} path set to: {}", id, path))
-                            .unwrap_or_default();
-                    } else {
-                        app.command_output_sender
-                            .send(format!(
-                                "ERROR: No LiDAR {} configured or found to set path for.",
-                                id
-                            ))
-                            .unwrap_or_default();
-                    }
-                }
-            },
-        },
+        }
         Commands::Slam { command } => {
             app.app_mode = AppMode::Slam;
             if let Some(slam_command) = command {
@@ -200,7 +213,8 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
         }
         Commands::Demo { mode } => {
             app.app_mode = AppMode::Demo;
-            match mode.as_str() {
+            let mode_str = mode.as_deref().unwrap_or("scan");
+            match mode_str {
                 "scan" => {
                     app.demo_manager.set_mode(DemoMode::RotatingScan);
                     app.command_history.push(ConsoleOutputEntry {
@@ -230,9 +244,10 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                     });
                 }
                 _ => {
+                    // This case should not be reached due to clap's value_parser
                     app.command_history.push(ConsoleOutputEntry {
                         text: format!("ERROR: Unknown demo mode: '{}'. Use 'scan', 'ripple', 'breathing', or 'table'.",
-                            mode), group_id: current_group_id });
+                            mode_str), group_id: current_group_id });
                 }
             }
         }
