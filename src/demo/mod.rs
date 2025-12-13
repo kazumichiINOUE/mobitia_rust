@@ -1,13 +1,13 @@
 use eframe::egui;
 
-pub mod rotating_scan;
-pub mod expanding_ripple;
 pub mod breathing_circle;
+pub mod expanding_ripple;
+pub mod rotating_scan;
 pub mod table;
 
-use rotating_scan::RotatingScanDemo;
-use expanding_ripple::ExpandingRippleDemo;
 use breathing_circle::BreathingCircleDemo;
+use expanding_ripple::ExpandingRippleDemo;
+use rotating_scan::RotatingScanDemo;
 use table::TableDemo;
 
 #[derive(PartialEq, Clone, Copy, Debug)]

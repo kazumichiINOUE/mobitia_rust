@@ -22,8 +22,7 @@ impl ExpandingRippleDemo {
     }
 
     pub fn update_and_draw(&mut self, ui: &mut egui::Ui) {
-        let (response, painter) =
-            ui.allocate_painter(ui.available_size(), egui::Sense::hover());
+        let (response, painter) = ui.allocate_painter(ui.available_size(), egui::Sense::hover());
         let rect = response.rect;
 
         let time = ui.input(|i| i.time);
@@ -58,8 +57,7 @@ impl ExpandingRippleDemo {
                 let alpha = (1.0 - progress).powf(2.0) * 1.0;
                 let stroke_alpha = (alpha * 255.0) as u8;
 
-                let color =
-                    egui::Color32::from_rgba_unmultiplied(0, 200, 255, stroke_alpha);
+                let color = egui::Color32::from_rgba_unmultiplied(0, 200, 255, stroke_alpha);
 
                 let stroke_width = (1.0 - progress) * 3.5 + 0.5;
 

@@ -1,6 +1,6 @@
 use crate::app::{AppMode, ConsoleOutputEntry, DemoMode, MyApp};
 use chrono::Local;
-use clap::{Parser, Subcommand, CommandFactory};
+use clap::{CommandFactory, Parser, Subcommand};
 use dirs;
 use eframe::egui;
 use std::thread;
@@ -111,8 +111,6 @@ pub enum SerialCommands {
         detail: bool,
     },
 }
-
-
 
 pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
     // 新しいコマンド実行のグループIDを生成

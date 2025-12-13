@@ -1,11 +1,11 @@
 use clap::Parser;
 use eframe::egui;
 use egui::Vec2;
+use std::collections::HashMap;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread;
-use std::collections::HashMap;
 
 use crate::cli::Cli;
 use crate::demo::DemoManager;
@@ -145,22 +145,22 @@ impl MyApp {
                 LidarConfigEntry {
                     path: "/dev/cu.usbmodem1201".to_string(),
                     baud_rate: 115200,
-                    origin: Vec2::new(0.0, -0.25-0.095),
+                    origin: Vec2::new(0.0, -0.25 - 0.095),
                     rotation: -std::f32::consts::FRAC_PI_2,
                     data_filter_angle_min: -90.0f32,
                     data_filter_angle_max: 135.0f32,
-                }
+                },
             ),
             (
                 1, // 進行方向左手のliar
                 LidarConfigEntry {
                     path: "/dev/cu.usbmodem1301".to_string(),
                     baud_rate: 115200,
-                    origin: Vec2::new(0.0, 0.25+0.095),
+                    origin: Vec2::new(0.0, 0.25 + 0.095),
                     rotation: std::f32::consts::FRAC_PI_2,
                     data_filter_angle_min: -135.0f32,
                     data_filter_angle_max: 90.0f32,
-                }
+                },
             ),
         ]);
         let mut lidars = Vec::new();
@@ -362,13 +362,16 @@ impl eframe::App for MyApp {
                 LidarMessage::ScanUpdate { id, scan } => {
                     let mut filtered_scan = Vec::new();
                     // 該当するLidarStateからフィルタリング角度を取得
-                    let (min_angle_rad, max_angle_rad) = if let Some(lidar_state_for_filter) = self.lidars.get(id) {
-                        (lidar_state_for_filter.data_filter_angle_min.to_radians(),
-                         lidar_state_for_filter.data_filter_angle_max.to_radians())
-                    } else {
-                        // LidarStateが見つからない場合はフィルタリングしない (またはエラー処理)
-                        (f32::NEG_INFINITY, f32::INFINITY)
-                    };
+                    let (min_angle_rad, max_angle_rad) =
+                        if let Some(lidar_state_for_filter) = self.lidars.get(id) {
+                            (
+                                lidar_state_for_filter.data_filter_angle_min.to_radians(),
+                                lidar_state_for_filter.data_filter_angle_max.to_radians(),
+                            )
+                        } else {
+                            // LidarStateが見つからない場合はフィルタリングしない (またはエラー処理)
+                            (f32::NEG_INFINITY, f32::INFINITY)
+                        };
 
                     for &(x, y) in &scan {
                         // 角度を計算 (atan2はラジアンを返す)
@@ -693,7 +696,11 @@ impl eframe::App for MyApp {
                                         .collect();
                                 }
                                 ["lidar"] if ends_with_space => {
-                                    self.current_suggestions = vec!["entermode".to_string(), "mode".to_string(), "set".to_string()];
+                                    self.current_suggestions = vec![
+                                        "entermode".to_string(),
+                                        "mode".to_string(),
+                                        "set".to_string(),
+                                    ];
                                 }
                                 ["slam"] if ends_with_space => {
                                     self.current_suggestions = vec![
@@ -720,13 +727,20 @@ impl eframe::App for MyApp {
                                         .collect();
                                 }
                                 ["serial", _sub @ ("list" | "ls")] if ends_with_space => {
-                                    self.current_suggestions = vec!["--detail".to_string(), "-d".to_string(), "<path>".to_string()];
+                                    self.current_suggestions = vec![
+                                        "--detail".to_string(),
+                                        "-d".to_string(),
+                                        "<path>".to_string(),
+                                    ];
                                 }
                                 ["serial", partial_subcommand] => {
                                     let options = vec![("list", "list (ls)")];
                                     self.current_suggestions = options
                                         .into_iter()
-                                        .filter(|(cmd, _)| cmd.starts_with(partial_subcommand) || "ls".starts_with(partial_subcommand))
+                                        .filter(|(cmd, _)| {
+                                            cmd.starts_with(partial_subcommand)
+                                                || "ls".starts_with(partial_subcommand)
+                                        })
                                         .map(|(_, display)| display.to_string())
                                         .collect();
                                 }
@@ -742,28 +756,33 @@ impl eframe::App for MyApp {
                                         .collect();
                                 }
                                 ["save", _sub @ ("points" | "p")] if ends_with_space => {
-                                    self.current_suggestions = vec!["--output".to_string(), "-o".to_string(), "<file path>".to_string()];
+                                    self.current_suggestions = vec![
+                                        "--output".to_string(),
+                                        "-o".to_string(),
+                                        "<file path>".to_string(),
+                                    ];
                                 }
                                 ["save", partial_subcommand] => {
-                                    let options = vec![
-                                        ("image", "image (i)"),
-                                        ("points", "points (p)"),
-                                    ];
+                                    let options =
+                                        vec![("image", "image (i)"), ("points", "points (p)")];
                                     self.current_suggestions = options
                                         .into_iter()
-                                        .filter(|(cmd, _)| cmd.starts_with(partial_subcommand) || "i".starts_with(partial_subcommand) || "p".starts_with(partial_subcommand))
+                                        .filter(|(cmd, _)| {
+                                            cmd.starts_with(partial_subcommand)
+                                                || "i".starts_with(partial_subcommand)
+                                                || "p".starts_with(partial_subcommand)
+                                        })
                                         .map(|(_, display)| display.to_string())
                                         .collect();
                                 }
                                 ["save"] if ends_with_space => {
-                                    self.current_suggestions = vec![
-                                        "image (i)".to_string(),
-                                        "points (p)".to_string(),
-                                    ];
+                                    self.current_suggestions =
+                                        vec!["image (i)".to_string(), "points (p)".to_string()];
                                 }
                                 [partial_command] => {
                                     let all_commands = vec![
-                                        "help", "h",
+                                        "help",
+                                        "h",
                                         "lidar",
                                         "slam",
                                         "demo",
@@ -771,7 +790,8 @@ impl eframe::App for MyApp {
                                         "serial",
                                         "debug-storage",
                                         "version",
-                                        "quit", "q",
+                                        "quit",
+                                        "q",
                                         "clear",
                                         "save",
                                     ];
