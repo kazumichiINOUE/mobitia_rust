@@ -1,13 +1,13 @@
 use crate::app::{AppMode, ConsoleOutputEntry, DemoMode, MyApp};
 use chrono::Local;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, CommandFactory};
 use dirs;
 use eframe::egui;
 use std::thread;
 
 /// CLI Commands for Mobitia application
 #[derive(Parser, Debug)]
-#[command(name = "mobitia", no_binary_name(true), version, about, long_about = None, disable_help_flag = true, disable_help_subcommand = true)]
+#[command(name = "mobitia", no_binary_name(true), about, long_about = None, disable_version_flag = true, disable_help_flag = true, disable_help_subcommand = true)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
@@ -16,7 +16,6 @@ pub struct Cli {
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Show help for commands.
-    #[command(alias = "h")]
     Help,
     /// Enter LiDAR visualization mode.
     Lidar,
@@ -44,6 +43,8 @@ pub enum Commands {
     /// Show the path of the storage file.
     #[command(name = "debug-storage")] // Explicitly set name for hyphenated command
     DebugStorage,
+    /// Show the application version.
+    Version,
     /// Quit the application.
     #[command(alias = "q")]
     Quit,
@@ -111,71 +112,17 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
 
     match cli.command {
         Commands::Help => {
-            app.command_history.push(ConsoleOutputEntry {
-                text: "Available commands:".to_string(),
-                group_id: current_group_id,
-            });
-            app.command_history.push(ConsoleOutputEntry {
-                text: "  help (or h)                  - Show this help message".to_string(),
-                group_id: current_group_id,
-            });
-            app.command_history.push(ConsoleOutputEntry {
-                text: "  lidar                        - Enter LiDAR visualization mode".to_string(),
-                group_id: current_group_id,
-            });
-            app.command_history.push(ConsoleOutputEntry {
-                text: "  slam                         - Enter SLAM mode".to_string(),
-                group_id: current_group_id,
-            });
-            app.command_history.push(ConsoleOutputEntry {
-                text: "  slam getlidar                - Capture a scan in SLAM mode".to_string(),
-                group_id: current_group_id,
-            });
-            app.command_history.push(ConsoleOutputEntry {
-                text: "  slam continuous              - Start continuous SLAM updates".to_string(),
-                group_id: current_group_id,
-            });
-            app.command_history.push(ConsoleOutputEntry {
-                text: "  slam pause                   - Pause continuous SLAM updates".to_string(),
-                group_id: current_group_id,
-            });
-            app.command_history.push(ConsoleOutputEntry {
-                text:
-                    "  demo <scan|ripple|breathing|table> - Enter demo mode with a specific pattern"
-                        .to_string(),
-                group_id: current_group_id,
-            });
-            app.command_history.push(ConsoleOutputEntry {
-                text: "  set path <id> <path>         - Set the LiDAR device path for a specific Lidar ID".to_string(),
-                group_id: current_group_id,
-            });
-            app.command_history.push(ConsoleOutputEntry {
-                text: "  serial list [--detail] [path] - List available serial ports".to_string(),
-                group_id: current_group_id,
-            });
-            app.command_history.push(ConsoleOutputEntry {
-                text: "  debug-storage                - Show the path of the storage file"
-                    .to_string(),
-                group_id: current_group_id,
-            });
-            app.command_history.push(ConsoleOutputEntry {
-                text: "  quit (or q)                  - Quit the application".to_string(),
-                group_id: current_group_id,
-            });
-            app.command_history.push(ConsoleOutputEntry {
-                text: "  clear                        - Clear console history (or Ctrl+L/Cmd+L)"
-                    .to_string(),
-                group_id: current_group_id,
-            });
-            app.command_history.push(ConsoleOutputEntry {
-                text:
-                    "  save image                   - Save current LiDAR visualization as an image"
-                        .to_string(),
-                group_id: current_group_id,
-            });
-            app.command_history.push(ConsoleOutputEntry {
-                text: "  save points (or p) [--output <file>] - Save current LiDAR point cloud to a file (.lsp format)"
-                    .to_string(), group_id: current_group_id });
+            // clapのヘルプ文字列を生成
+            let mut cmd = Cli::command();
+            let help_text = cmd.render_help().to_string();
+
+            // 生成されたヘルプ文字列をコンソールに1行ずつ追加
+            for line in help_text.lines() {
+                app.command_history.push(ConsoleOutputEntry {
+                    text: line.to_string(),
+                    group_id: current_group_id,
+                });
+            }
         }
         Commands::Lidar => {
             app.app_mode = AppMode::Lidar;
@@ -284,6 +231,12 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                     group_id: current_group_id,
                 });
             }
+        }
+        Commands::Version => {
+            app.command_history.push(ConsoleOutputEntry {
+                text: format!("Mobitia Version: {}", env!("CARGO_PKG_VERSION")),
+                group_id: current_group_id,
+            });
         }
         Commands::Set { command } => match command {
             SetCommands::Path { id, path } => {
