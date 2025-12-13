@@ -667,6 +667,34 @@ impl eframe::App for MyApp {
                                         .map(|s| s.to_string())
                                         .collect();
                                 }
+                                ["lidar", "set", "path", _id_str] if ends_with_space => {
+                                    self.current_suggestions = vec!["<path>".to_string()];
+                                }
+                                ["lidar", "set", "path"] if ends_with_space => {
+                                    self.current_suggestions = vec!["<id>".to_string()];
+                                }
+                                ["lidar", "set", partial_subcommand] => {
+                                    let options = vec!["path"];
+                                    self.current_suggestions = options
+                                        .into_iter()
+                                        .filter(|opt| opt.starts_with(partial_subcommand))
+                                        .map(|s| s.to_string())
+                                        .collect();
+                                }
+                                ["lidar", "set"] if ends_with_space => {
+                                    self.current_suggestions = vec!["path".to_string()];
+                                }
+                                ["lidar", partial_subcommand] => {
+                                    let options = vec!["entermode", "mode", "set"];
+                                    self.current_suggestions = options
+                                        .into_iter()
+                                        .filter(|opt| opt.starts_with(partial_subcommand))
+                                        .map(|s| s.to_string())
+                                        .collect();
+                                }
+                                ["lidar"] if ends_with_space => {
+                                    self.current_suggestions = vec!["entermode".to_string(), "mode".to_string(), "set".to_string()];
+                                }
                                 ["slam"] if ends_with_space => {
                                     self.current_suggestions = vec![
                                         "getlidar".to_string(),
@@ -682,23 +710,7 @@ impl eframe::App for MyApp {
                                         .map(|s| s.to_string())
                                         .collect();
                                 }
-                                ["set", "path", _id_str] if ends_with_space => {
-                                    self.current_suggestions = vec!["<path>".to_string()];
-                                }
-                                ["set", "path"] if ends_with_space => {
-                                    self.current_suggestions = vec!["<id>".to_string()];
-                                }
-                                ["set", partial_subcommand] => {
-                                    let options = vec!["path"];
-                                    self.current_suggestions = options
-                                        .into_iter()
-                                        .filter(|opt| opt.starts_with(partial_subcommand))
-                                        .map(|s| s.to_string())
-                                        .collect();
-                                }
-                                ["set"] if ends_with_space => {
-                                    self.current_suggestions = vec!["path".to_string()];
-                                }
+
                                 ["serial", _sub @ ("list" | "ls"), partial_arg] => {
                                     let options = vec!["--detail", "-d"];
                                     self.current_suggestions = options

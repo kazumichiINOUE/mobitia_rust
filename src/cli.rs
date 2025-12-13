@@ -17,8 +17,9 @@ pub struct Cli {
 pub enum Commands {
     /// Show help for commands.
     Help,
-    /// Enter LiDAR visualization mode.
-    Lidar,
+    /// Manage LiDAR related commands and settings.
+    #[command(subcommand)]
+    Lidar(LidarCommands),
     /// Enter SLAM mode.
     Slam {
         #[command(subcommand)]
@@ -29,11 +30,6 @@ pub enum Commands {
         /// Demo mode to set ("scan", "ripple", "breathing", or "table").
         #[arg(value_parser = ["scan", "ripple", "breathing", "table"])]
         mode: String,
-    },
-    /// Set a configuration value.
-    Set {
-        #[command(subcommand)]
-        command: SetCommands,
     },
     /// Manage serial port functions.
     Serial {
@@ -55,6 +51,28 @@ pub enum Commands {
         #[command(subcommand)]
         command: SaveCommands,
     },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum LidarCommands {
+    /// Enter LiDAR visualization mode.
+    #[command(alias = "mode")]
+    EnterMode,
+    /// Set LiDAR related configurations.
+    #[command(subcommand)]
+    Set(SetLidarCommands),
+}
+
+#[derive(Subcommand, Debug)]
+pub enum SetLidarCommands {
+    /// Set the LiDAR device path for a specific Lidar ID.
+    Path {
+        /// Lidar ID (e.g., 0, 1).
+        id: usize,
+        /// New LiDAR device path.
+        path: String,
+    },
+    // ここに将来的にbaudrateなどの設定を追加できる
 }
 
 #[derive(Subcommand, Debug)]
@@ -94,16 +112,7 @@ pub enum SerialCommands {
     },
 }
 
-#[derive(Subcommand, Debug)]
-pub enum SetCommands {
-    /// Set the LiDAR device path for a specific Lidar ID.
-    Path {
-        /// Lidar ID (e.g., 0, 1).
-        id: usize,
-        /// New LiDAR device path.
-        path: String,
-    },
-}
+
 
 pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
     // 新しいコマンド実行のグループIDを生成
@@ -124,13 +133,32 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                 });
             }
         }
-        Commands::Lidar => {
-            app.app_mode = AppMode::Lidar;
-            app.command_history.push(ConsoleOutputEntry {
-                text: "Mode set to LiDAR.".to_string(),
-                group_id: current_group_id,
-            });
-        }
+        Commands::Lidar(lidar_command) => match lidar_command {
+            LidarCommands::EnterMode => {
+                app.app_mode = AppMode::Lidar;
+                app.command_history.push(ConsoleOutputEntry {
+                    text: "Mode set to LiDAR.".to_string(),
+                    group_id: current_group_id,
+                });
+            }
+            LidarCommands::Set(set_lidar_command) => match set_lidar_command {
+                SetLidarCommands::Path { id, path } => {
+                    if let Some(lidar_state) = app.lidars.get_mut(id) {
+                        lidar_state.path = path.clone();
+                        app.command_output_sender
+                            .send(format!("LiDAR {} path set to: {}", id, path))
+                            .unwrap_or_default();
+                    } else {
+                        app.command_output_sender
+                            .send(format!(
+                                "ERROR: No LiDAR {} configured or found to set path for.",
+                                id
+                            ))
+                            .unwrap_or_default();
+                    }
+                }
+            },
+        },
         Commands::Slam { command } => {
             app.app_mode = AppMode::Slam;
             if let Some(slam_command) = command {
@@ -238,23 +266,7 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                 group_id: current_group_id,
             });
         }
-        Commands::Set { command } => match command {
-            SetCommands::Path { id, path } => {
-                if let Some(lidar_state) = app.lidars.get_mut(id) {
-                    lidar_state.path = path.clone();
-                    app.command_output_sender
-                        .send(format!("LiDAR {} path set to: {}", id, path))
-                        .unwrap_or_default();
-                } else {
-                    app.command_output_sender
-                        .send(format!(
-                            "ERROR: No LiDAR {} configured or found to set path for.",
-                            id
-                        ))
-                        .unwrap_or_default();
-                }
-            }
-        },
+
         Commands::Serial { command } => match command {
             SerialCommands::List { path, detail } => {
                 app.command_history.push(ConsoleOutputEntry {
