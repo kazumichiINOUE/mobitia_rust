@@ -651,7 +651,7 @@ impl eframe::App for MyApp {
                             let ends_with_space = input.ends_with(' ');
 
                             match parts.as_slice() {
-                                ["set", "demo"] if ends_with_space => {
+                                ["demo"] if ends_with_space => {
                                     self.current_suggestions = vec![
                                         "scan".to_string(),
                                         "ripple".to_string(),
@@ -659,7 +659,7 @@ impl eframe::App for MyApp {
                                         "table".to_string(),
                                     ];
                                 }
-                                ["set", "demo", partial_arg] => {
+                                ["demo", partial_arg] => {
                                     let options = vec!["scan", "ripple", "breathing", "table"];
                                     self.current_suggestions = options
                                         .into_iter()
@@ -667,12 +667,51 @@ impl eframe::App for MyApp {
                                         .map(|s| s.to_string())
                                         .collect();
                                 }
-                                ["set"] if ends_with_space => {
-                                    self.current_suggestions =
-                                        vec!["path".to_string(), "demo".to_string()];
+                                ["slam"] if ends_with_space => {
+                                    self.current_suggestions = vec![
+                                        "getlidar".to_string(),
+                                        "continuous".to_string(),
+                                        "pause".to_string(),
+                                    ];
+                                }
+                                ["slam", partial_subcommand] => {
+                                    let options = vec!["getlidar", "continuous", "pause"];
+                                    self.current_suggestions = options
+                                        .into_iter()
+                                        .filter(|opt| opt.starts_with(partial_subcommand))
+                                        .map(|s| s.to_string())
+                                        .collect();
+                                }
+                                ["set", "path", _id_str] if ends_with_space => {
+                                    self.current_suggestions = vec!["<path>".to_string()];
+                                }
+                                ["set", "path"] if ends_with_space => {
+                                    self.current_suggestions = vec!["<id>".to_string()];
                                 }
                                 ["set", partial_subcommand] => {
-                                    let options = vec!["path", "demo"];
+                                    let options = vec!["path"];
+                                    self.current_suggestions = options
+                                        .into_iter()
+                                        .filter(|opt| opt.starts_with(partial_subcommand))
+                                        .map(|s| s.to_string())
+                                        .collect();
+                                }
+                                ["set"] if ends_with_space => {
+                                    self.current_suggestions = vec!["path".to_string()];
+                                }
+                                ["serial", _sub @ ("list" | "ls"), partial_arg] => {
+                                    let options = vec!["--detail", "-d"];
+                                    self.current_suggestions = options
+                                        .into_iter()
+                                        .filter(|opt| opt.starts_with(partial_arg))
+                                        .map(|s| s.to_string())
+                                        .collect();
+                                }
+                                ["serial", _sub @ ("list" | "ls")] if ends_with_space => {
+                                    self.current_suggestions = vec!["--detail".to_string(), "-d".to_string(), "<path>".to_string()];
+                                }
+                                ["serial", partial_subcommand] => {
+                                    let options = vec!["list", "ls"];
                                     self.current_suggestions = options
                                         .into_iter()
                                         .filter(|opt| opt.starts_with(partial_subcommand))
@@ -680,10 +719,21 @@ impl eframe::App for MyApp {
                                         .collect();
                                 }
                                 ["serial"] if ends_with_space => {
-                                    self.current_suggestions = vec!["list".to_string()];
+                                    self.current_suggestions = vec!["list".to_string(), "ls".to_string()];
                                 }
-                                ["serial", partial_subcommand] => {
-                                    let options = vec!["list"];
+                                ["save", _sub @ ("points" | "p"), partial_arg] => {
+                                    let options = vec!["--output", "-o"];
+                                    self.current_suggestions = options
+                                        .into_iter()
+                                        .filter(|opt| opt.starts_with(partial_arg))
+                                        .map(|s| s.to_string())
+                                        .collect();
+                                }
+                                ["save", _sub @ ("points" | "p")] if ends_with_space => {
+                                    self.current_suggestions = vec!["--output".to_string(), "-o".to_string(), "<file path>".to_string()];
+                                }
+                                ["save", partial_subcommand] => {
+                                    let options = vec!["image", "i", "points", "p"];
                                     self.current_suggestions = options
                                         .into_iter()
                                         .filter(|opt| opt.starts_with(partial_subcommand))
@@ -691,26 +741,24 @@ impl eframe::App for MyApp {
                                         .collect();
                                 }
                                 ["save"] if ends_with_space => {
-                                    self.current_suggestions =
-                                        vec!["image".to_string(), "points".to_string()];
-                                }
-                                ["save", partial_subcommand] => {
-                                    let options = vec!["image", "points"];
-                                    self.current_suggestions = options
-                                        .into_iter()
-                                        .filter(|opt| opt.starts_with(partial_subcommand))
-                                        .map(|s| s.to_string())
-                                        .collect();
+                                    self.current_suggestions = vec![
+                                        "image".to_string(),
+                                        "i".to_string(),
+                                        "points".to_string(),
+                                        "p".to_string(),
+                                    ];
                                 }
                                 [partial_command] => {
                                     let all_commands = vec![
-                                        "help",
+                                        "help", "h",
+                                        "lidar",
+                                        "slam",
+                                        "demo",
                                         "set",
-                                        "debug-storage",
-                                        "quit",
-                                        "q",
-                                        "clear",
                                         "serial",
+                                        "debug-storage",
+                                        "quit", "q",
+                                        "clear",
                                         "save",
                                     ];
                                     self.current_suggestions = all_commands
