@@ -202,6 +202,9 @@ impl MyApp {
             });
         }
 
+        // IDでソートして、常に安定した順序を保証する
+        lidars.sort_by_key(|l| l.id);
+
         // pending_scansベクターをLidarの総数で初期化
         let pending_scans = vec![None; lidars.len()];
 
