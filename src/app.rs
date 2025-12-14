@@ -29,6 +29,8 @@ pub(crate) struct LidarState {
     // Lidarごとのデータフィルタリング範囲
     pub(crate) data_filter_angle_min: f32, // LiDARデータフィルタリングの最小角度 (度)
     pub(crate) data_filter_angle_max: f32, // LiDARデータフィルタリングの最大角度 (度)
+    // SLAM計算にこのLidarを含めるか
+    pub(crate) is_active_for_slam: bool,
 }
 
 // LiDARの初期設定を保持する構造体
@@ -95,7 +97,7 @@ pub struct MyApp {
     pub(crate) lidar_message_receiver: mpsc::Receiver<LidarMessage>,
 
     // SLAM用に各Lidarの最新スキャンを保持
-    pub(crate) pending_scans: [Option<Vec<(f32, f32)>>; 2],
+    pub(crate) pending_scans: Vec<Option<Vec<(f32, f32)>>>,
 
     // UI関連
     pub(crate) command_output_receiver: mpsc::Receiver<String>,
@@ -162,6 +164,17 @@ impl MyApp {
                     data_filter_angle_max: 90.0f32,
                 },
             ),
+            (
+                2, // 予備のliar
+                LidarConfigEntry {
+                    path: "/dev/cu.usbmodem2101".to_string(),
+                    baud_rate: 115200,
+                    origin: Vec2::new(0.0, 0.0),
+                    rotation: 0.0,
+                    data_filter_angle_min: -135.0f32,
+                    data_filter_angle_max:  135.0f32,
+                },
+            ),
         ]);
         let mut lidars = Vec::new();
         // HashMapをイテレートし、各LiDARの設定を取得
@@ -184,8 +197,13 @@ impl MyApp {
                 rotation: config_entry.rotation,
                 data_filter_angle_min: config_entry.data_filter_angle_min,
                 data_filter_angle_max: config_entry.data_filter_angle_max,
+                // IDが0または1のLidarのみ、デフォルトでSLAMを有効にする
+                is_active_for_slam: id == 0 || id == 1,
             });
         }
+
+        // pending_scansベクターをLidarの総数で初期化
+        let pending_scans = vec![None; lidars.len()];
 
         // Lidarメッセージング用の単一チャネルを作成
         let (lidar_message_sender, lidar_message_receiver) = mpsc::channel();
@@ -320,7 +338,7 @@ impl MyApp {
             current_suggestions: Vec::new(),
             lidars,                 // 新しいlidarsフィールドを初期化
             lidar_message_receiver, // 単一のLidarメッセージ受信
-            pending_scans: [None, None],
+            pending_scans,
             command_output_receiver,
             command_output_sender,
             lidar_draw_rect: None,
@@ -394,45 +412,51 @@ impl eframe::App for MyApp {
                             self.pending_scans[id] = Some(filtered_scan);
                         }
 
-                        // 両方のLidarからスキャンデータが届いているか確認
-                        if self.pending_scans.iter().all(Option::is_some) {
+                        // SLAMが有効なLidarがすべてデータを受信したか確認
+                        let active_lidars: Vec<_> = self
+                            .lidars
+                            .iter()
+                            .filter(|l| l.is_active_for_slam)
+                            .collect();
+
+                        let all_active_scans_received = active_lidars
+                            .iter()
+                            .all(|l| self.pending_scans.get(l.id).and_then(|o| o.as_ref()).is_some());
+
+                        if all_active_scans_received {
                             let mut combined_scan = Vec::new();
 
-                            // 各Lidarのスキャンをロボット座標系に変換して結合
-                            for (lidar_id, scan_option) in self.pending_scans.iter().enumerate() {
-                                if let Some(points) = scan_option {
-                                    if let Some(lidar_state) = self.lidars.get(lidar_id) {
-                                        let rotation = lidar_state.rotation;
-                                        let origin = lidar_state.origin;
+                            // SLAMが有効な各Lidarのスキャンをロボット座標系に変換して結合
+                            for lidar_state in active_lidars {
+                                if let Some(Some(points)) =
+                                    self.pending_scans.get(lidar_state.id)
+                                {
+                                    let rotation = lidar_state.rotation;
+                                    let origin = lidar_state.origin;
 
-                                        for point in points {
-                                            // Lidar座標系での点 (px, py)
-                                            let pxx = point.0;
-                                            let pyy = point.1;
-                                            let px_raw = pxx;
-                                            let py_raw = pyy;
+                                    for point in points {
+                                        // Lidar座標系での点 (px, py)
+                                        let pxx = point.0;
+                                        let pyy = point.1;
+                                        let px_raw = pxx;
+                                        let py_raw = pyy;
 
-                                            // Lidarの回転を適用
-                                            let px_rotated =
-                                                px_raw * rotation.cos() - py_raw * rotation.sin();
-                                            let py_rotated =
-                                                px_raw * rotation.sin() + py_raw * rotation.cos();
+                                        // Lidarの回転を適用
+                                        let px_rotated =
+                                            px_raw * rotation.cos() - py_raw * rotation.sin();
+                                        let py_rotated =
+                                            px_raw * rotation.sin() + py_raw * rotation.cos();
 
-                                            // ワールド座標に変換 (Lidarの原点オフセットを加える)
-                                            // SLAMマネージャーは (f32, f32) を期待しているので、egui::Pos2にはしない
-                                            let world_x = px_rotated + origin.x;
-                                            let world_y = py_rotated + origin.y;
+                                        // ワールド座標に変換 (Lidarの原点オフセットを加える)
+                                        let world_x = px_rotated + origin.x;
+                                        let world_y = py_rotated + origin.y;
 
-                                            combined_scan.push((world_x, world_y));
-                                        }
+                                        combined_scan.push((world_x, world_y));
                                     }
                                 }
                             }
 
                             // 結合した点群をSLAMスレッドに送信
-
-                            // SLAMが処理中でない場合のみ送信
-
                             if !self.is_slam_processing.load(Ordering::SeqCst) {
                                 if self.slam_mode == SlamMode::Continuous {
                                     self.slam_command_sender
@@ -446,13 +470,20 @@ impl eframe::App for MyApp {
                                             scan: combined_scan,
                                         })
                                         .unwrap_or_default();
-
                                     self.single_scan_requested_by_ui = false; // フラグをリセット
                                 }
                             }
 
-                            // 統合後は保留中のスキャンをクリア
-                            self.pending_scans = [None, None];
+                            // 統合後は処理したLidarの保留中スキャンをクリア
+                            for lidar_state in &self.lidars {
+                                if lidar_state.is_active_for_slam {
+                                    if let Some(scan_option) =
+                                        self.pending_scans.get_mut(lidar_state.id)
+                                    {
+                                        *scan_option = None;
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -919,6 +950,17 @@ impl eframe::App for MyApp {
                             egui::Color32::RED
                         };
                         ui.label(egui::RichText::new(status_text).color(status_color));
+                        let slam_status_text = if lidar_state.is_active_for_slam {
+                            "  SLAM: Active"
+                        } else {
+                            "  SLAM: Inactive"
+                        };
+                        let slam_status_color = if lidar_state.is_active_for_slam {
+                            egui::Color32::GREEN
+                        } else {
+                            egui::Color32::GRAY
+                        };
+                        ui.label(egui::RichText::new(slam_status_text).color(slam_status_color));
                     });
 
                     ui.group(|ui| {
@@ -980,10 +1022,11 @@ impl eframe::App for MyApp {
                         any_lidar_connected = true;
 
                         let lidar_origin_world = lidar_state.origin;
-                        let lidar_color = if i == 0 {
-                            egui::Color32::GREEN
-                        } else {
-                            egui::Color32::YELLOW
+                        let lidar_color = match i {
+                            0 => egui::Color32::GREEN,
+                            1 => egui::Color32::YELLOW,
+                            2 => egui::Color32::BLUE,
+                            _ => egui::Color32::WHITE,
                         };
 
                         // Lidarの原点を描画

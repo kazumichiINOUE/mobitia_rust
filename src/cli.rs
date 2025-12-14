@@ -60,6 +60,11 @@ pub enum LidarCommands {
     /// Enter LiDAR visualization mode.
     #[command(alias = "mode")]
     EnterMode,
+    /// Toggle whether a Lidar is used for SLAM.
+    SlamToggle {
+        /// Lidar ID (e.g., 0, 1).
+        id: usize,
+    },
     /// Set LiDAR related configurations.
     #[command(subcommand)]
     Set(SetLidarCommands),
@@ -144,6 +149,26 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                             text: "Mode set to LiDAR.".to_string(),
                             group_id: current_group_id,
                         });
+                    }
+                    LidarCommands::SlamToggle { id } => {
+                        if let Some(lidar_state) = app.lidars.get_mut(id) {
+                            lidar_state.is_active_for_slam = !lidar_state.is_active_for_slam;
+                            let status = if lidar_state.is_active_for_slam {
+                                "active"
+                            } else {
+                                "inactive"
+                            };
+                            app.command_output_sender
+                                .send(format!(
+                                    "LiDAR {} is now {} for SLAM.",
+                                    id, status
+                                ))
+                                .unwrap_or_default();
+                        } else {
+                            app.command_output_sender
+                                .send(format!("ERROR: LiDAR ID {} not found.", id))
+                                .unwrap_or_default();
+                        }
                     }
                     LidarCommands::Set(set_lidar_command) => match set_lidar_command {
                         SetLidarCommands::Path { id, path } => {
