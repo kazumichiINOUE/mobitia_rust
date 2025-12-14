@@ -172,7 +172,7 @@ impl MyApp {
                     origin: Vec2::new(0.0, 0.0),
                     rotation: 0.0,
                     data_filter_angle_min: -135.0f32,
-                    data_filter_angle_max:  135.0f32,
+                    data_filter_angle_max: 135.0f32,
                 },
             ),
         ]);
@@ -422,18 +422,19 @@ impl eframe::App for MyApp {
                             .filter(|l| l.is_active_for_slam)
                             .collect();
 
-                        let all_active_scans_received = active_lidars
-                            .iter()
-                            .all(|l| self.pending_scans.get(l.id).and_then(|o| o.as_ref()).is_some());
+                        let all_active_scans_received = active_lidars.iter().all(|l| {
+                            self.pending_scans
+                                .get(l.id)
+                                .and_then(|o| o.as_ref())
+                                .is_some()
+                        });
 
                         if all_active_scans_received {
                             let mut combined_scan = Vec::new();
 
                             // SLAMが有効な各Lidarのスキャンをロボット座標系に変換して結合
                             for lidar_state in active_lidars {
-                                if let Some(Some(points)) =
-                                    self.pending_scans.get(lidar_state.id)
-                                {
+                                if let Some(Some(points)) = self.pending_scans.get(lidar_state.id) {
                                     let rotation = lidar_state.rotation;
                                     let origin = lidar_state.origin;
 

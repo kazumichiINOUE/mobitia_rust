@@ -159,10 +159,7 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                                 "inactive"
                             };
                             app.command_output_sender
-                                .send(format!(
-                                    "LiDAR {} is now {} for SLAM.",
-                                    id, status
-                                ))
+                                .send(format!("LiDAR {} is now {} for SLAM.", id, status))
                                 .unwrap_or_default();
                         } else {
                             app.command_output_sender
