@@ -718,8 +718,14 @@ impl eframe::App for MyApp {
                                 ["lidar", "set"] if ends_with_space => {
                                     self.current_suggestions = vec!["path".to_string()];
                                 }
+                                ["lidar", "slam-toggle"] if ends_with_space => {
+                                    self.current_suggestions = vec!["<id>".to_string()];
+                                }
+                                ["lidar", "slam-toggle", _id_str] if ends_with_space => {
+                                    self.current_suggestions.clear();
+                                }
                                 ["lidar", partial_subcommand] => {
-                                    let options = vec!["entermode", "mode", "set"];
+                                    let options = vec!["entermode", "mode", "set", "slam-toggle"];
                                     self.current_suggestions = options
                                         .into_iter()
                                         .filter(|opt| opt.starts_with(partial_subcommand))
@@ -731,6 +737,7 @@ impl eframe::App for MyApp {
                                         "entermode".to_string(),
                                         "mode".to_string(),
                                         "set".to_string(),
+                                        "slam-toggle".to_string(),
                                     ];
                                 }
                                 ["slam"] if ends_with_space => {
