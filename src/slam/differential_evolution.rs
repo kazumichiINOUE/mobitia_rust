@@ -1,4 +1,4 @@
-use super::{CSIZE, MAP_ORIGIN_X, MAP_ORIGIN_Y, OccupancyGrid};
+use super::{OccupancyGrid, CSIZE, MAP_ORIGIN_X, MAP_ORIGIN_Y};
 use nalgebra::{Isometry2, Point2, Rotation2, Translation2, Vector3};
 use rand::seq::SliceRandom;
 use rand::Rng;
@@ -75,7 +75,8 @@ impl DifferentialEvolutionSolver {
 
             let mut point_score = 0.0;
             for dy in -kernel_radius..=kernel_radius {
-                for dx in -kernel_radius..=kernel_radius { // Corrected bug here
+                for dx in -kernel_radius..=kernel_radius {
+                    // Corrected bug here
                     let map_x = gx + dx;
                     let map_y = gy + dy;
 
@@ -136,7 +137,12 @@ impl DifferentialEvolutionSolver {
             let translation = Translation2::new(current_x, current_y);
             let pose = Isometry2::from_parts(translation, rotation.into());
 
-            scores.push(Self::gaussian_match_count(gmap, points, &pose, &self.gaussian_kernel)); // Changed call
+            scores.push(Self::gaussian_match_count(
+                gmap,
+                points,
+                &pose,
+                &self.gaussian_kernel,
+            )); // Changed call
         }
 
         let mut best_idx = 0;
@@ -153,7 +159,8 @@ impl DifferentialEvolutionSolver {
         for _gen in 0..GENERATIONS {
             for i in 0..POPULATION_SIZE {
                 // Mutation
-                let mut candidates: Vec<usize> = (0..POPULATION_SIZE).filter(|&idx| idx != i).collect();
+                let mut candidates: Vec<usize> =
+                    (0..POPULATION_SIZE).filter(|&idx| idx != i).collect();
                 candidates.shuffle(&mut rng);
                 let r1 = candidates[0];
                 let r2 = candidates[1];
@@ -197,7 +204,8 @@ impl DifferentialEvolutionSolver {
                 let rotation_trial = Rotation2::new(trial_pose.z);
                 let translation_trial = Translation2::new(trial_pose.x, trial_pose.y);
                 let pose_trial = Isometry2::from_parts(translation_trial, rotation_trial.into());
-                let eval_trial = Self::gaussian_match_count(gmap, points, &pose_trial, &self.gaussian_kernel); // Changed call
+                let eval_trial =
+                    Self::gaussian_match_count(gmap, points, &pose_trial, &self.gaussian_kernel); // Changed call
 
                 if eval_trial > scores[i] {
                     population[i] = trial_pose;

@@ -58,11 +58,9 @@ impl SlamManager {
             self.is_initial_scan = false;
         } else {
             // Subsequent scans: perform scan matching
-            let (best_pose, _score) = self.de_solver.optimize_de(
-                &self.map_gmap,
-                &current_scan,
-                self.robot_pose,
-            );
+            let (best_pose, _score) =
+                self.de_solver
+                    .optimize_de(&self.map_gmap, &current_scan, self.robot_pose);
             self.robot_pose = best_pose;
 
             // Add the new scan to the map, transformed by the new pose
