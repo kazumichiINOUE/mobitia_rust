@@ -147,7 +147,7 @@ impl MyApp {
                 LidarConfigEntry {
                     path: "/dev/cu.usbmodem1201".to_string(),
                     baud_rate: 115200,
-                    origin: Vec2::new(0.0, -0.25 - 0.095),
+                    origin: Vec2::new(0.0, -0.26),
                     rotation: -std::f32::consts::FRAC_PI_2,
                     data_filter_angle_min: -90.0f32,
                     data_filter_angle_max: 135.0f32,
@@ -158,7 +158,7 @@ impl MyApp {
                 LidarConfigEntry {
                     path: "/dev/cu.usbmodem1301".to_string(),
                     baud_rate: 115200,
-                    origin: Vec2::new(0.0, 0.25 + 0.095),
+                    origin: Vec2::new(0.0, 0.26),
                     rotation: std::f32::consts::FRAC_PI_2,
                     data_filter_angle_min: -135.0f32,
                     data_filter_angle_max: 90.0f32,
