@@ -77,6 +77,7 @@ pub enum SlamThreadCommand {
 pub struct SlamThreadResult {
     pub map_points: Vec<nalgebra::Point2<f32>>,
     pub robot_pose: nalgebra::Isometry2<f32>,
+    pub scan_used: Vec<(f32, f32)>,
 }
 
 // アプリケーション全体の状態を管理する構造体
@@ -134,6 +135,8 @@ pub struct MyApp {
     pub(crate) current_robot_pose: nalgebra::Isometry2<f32>,
 
     pub(crate) single_scan_requested_by_ui: bool, // 追加
+
+    pub(crate) latest_scan_for_draw: Vec<(f32, f32)>, // 描画用の最新スキャン
 }
 
 impl MyApp {
@@ -249,11 +252,11 @@ impl MyApp {
                     match cmd {
                         SlamThreadCommand::StartContinuous => {
                             current_slam_mode = SlamMode::Continuous;
-                            last_slam_update_time = web_time::Instant::now(); // モード切り替え時にリセット
                             slam_result_sender
                                 .send(SlamThreadResult {
                                     map_points: slam_manager.get_map_points().clone(),
                                     robot_pose: *slam_manager.get_robot_pose(),
+                                    scan_used: Vec::new(),
                                 })
                                 .unwrap_or_default();
                         }
@@ -266,6 +269,7 @@ impl MyApp {
                                 .send(SlamThreadResult {
                                     map_points: slam_manager.get_map_points().clone(),
                                     robot_pose: *slam_manager.get_robot_pose(),
+                                    scan_used: Vec::new(),
                                 })
                                 .unwrap_or_default();
                         }
@@ -284,6 +288,7 @@ impl MyApp {
                                         .send(SlamThreadResult {
                                             map_points: slam_manager.get_map_points().clone(),
                                             robot_pose: *slam_manager.get_robot_pose(),
+                                            scan_used: scan.clone(),
                                         })
                                         .unwrap_or_default();
                                     last_slam_update_time = now; // 更新時間を記録
@@ -303,6 +308,7 @@ impl MyApp {
                                 .send(SlamThreadResult {
                                     map_points: slam_manager.get_map_points().clone(),
                                     robot_pose: *slam_manager.get_robot_pose(),
+                                    scan_used: scan.clone(),
                                 })
                                 .unwrap_or_default();
                             is_slam_processing_for_thread.store(false, Ordering::SeqCst);
@@ -358,6 +364,7 @@ impl MyApp {
             current_map_points: Vec::new(),
             current_robot_pose: nalgebra::Isometry2::identity(),
             single_scan_requested_by_ui: false,
+            latest_scan_for_draw: Vec::new(),
         }
     }
 
@@ -535,6 +542,7 @@ impl eframe::App for MyApp {
         while let Ok(slam_result) = self.slam_result_receiver.try_recv() {
             self.current_map_points = slam_result.map_points;
             self.current_robot_pose = slam_result.robot_pose;
+            self.latest_scan_for_draw = slam_result.scan_used;
             ctx.request_repaint();
         }
         while let Ok(msg) = self.command_output_receiver.try_recv() {
@@ -1113,7 +1121,7 @@ impl eframe::App for MyApp {
 
                 // 描画エリアのワールド座標の範囲 (例: 中心から±5メートル)
                 // この範囲の中心をロボットの現在位置に設定
-                let map_view_size = 30.0; // ワールド座標で表示する領域のサイズ (例: 30m x 30m)
+                let map_view_size = 10.0; // ワールド座標で表示する領域のサイズ (例: 30m x 30m)
                 let map_view_rect = egui::Rect::from_center_size(
                     robot_center_world,
                     egui::vec2(map_view_size, map_view_size),
@@ -1137,6 +1145,21 @@ impl eframe::App for MyApp {
                             screen_pos,
                             2.0,
                             egui::Color32::from_rgb(100, 100, 255),
+                        );
+                    }
+                }
+
+                // 最新のスキャンデータを別の色で描画
+                for point in &self.latest_scan_for_draw {
+                    let local_point = nalgebra::Point2::new(point.0, point.1);
+                    let world_point = self.current_robot_pose * local_point;
+                    let screen_pos =
+                        to_screen.transform_pos(egui::pos2(world_point.x, world_point.y));
+                    if rect.contains(screen_pos) {
+                        painter.circle_filled(
+                            screen_pos,
+                            2.5, // 少し大きくして目立たせる
+                            egui::Color32::YELLOW,
                         );
                     }
                 }
