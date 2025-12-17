@@ -221,9 +221,22 @@ pub fn start_lidar_thread(
             return;
         }
 
+        let mut was_connected = true; // 接続状態を追跡
+
         loop {
             match driver.get_distance_data() {
                 Ok(points) => {
+                    if !was_connected {
+                        // エラー状態から回復した場合、ステータスを更新
+                        message_sender
+                            .send(LidarMessage::StatusUpdate {
+                                id: lidar_id,
+                                message: "INFO: LiDAR initialized. Laser is ON.".to_string(), // 接続成功を示すメッセージ
+                            })
+                            .unwrap_or_default();
+                        was_connected = true;
+                    }
+
                     if message_sender
                         .send(LidarMessage::ScanUpdate {
                             id: lidar_id,
@@ -231,17 +244,19 @@ pub fn start_lidar_thread(
                         })
                         .is_err()
                     {
-                        // Main thread has likely closed, exit loop
+                        // メインスレッドが閉じられた可能性
                         break;
                     }
                 }
                 Err(e) => {
+                    // データ取得に失敗
                     message_sender
                         .send(LidarMessage::StatusUpdate {
                             id: lidar_id,
                             message: format!("ERROR: Failed to get distance data: {}", e),
                         })
                         .unwrap_or_default();
+                    was_connected = false;
                 }
             }
             thread::sleep(Duration::from_millis(100));
