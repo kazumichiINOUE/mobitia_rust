@@ -87,6 +87,7 @@ pub enum SlamCommands {
     /// Get a single LiDAR scan for the SLAM map.
     GetLidar,
     /// Start continuous SLAM updates.
+    #[command(alias = "c")]
     Continuous,
     /// Pause continuous SLAM updates.
     Pause,
