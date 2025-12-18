@@ -58,11 +58,13 @@ pub struct SlamManager {
     num_scans_per_submap: usize, // 1つのサブマップを構成するスキャン数
     current_submap_scan_buffer: Vec<Vec<Point2<f32>>>, // 現在構築中のサブマップのスキャンデータ
     current_submap_robot_poses: Vec<Isometry2<f32>>, // 現在構築中のサブマップ中のロボットポーズ
+    current_submap_timestamps_buffer: Vec<u128>, // 追加: 各スキャンのタイムスタンプ
     submaps: HashMap<usize, Submap>, // 完成したサブマップのリスト (IDでアクセスできるようにHashMapに)
+    output_base_dir: std::path::PathBuf, // 追加: 結果を保存するルートディレクトリ
 }
 
 impl SlamManager {
-    pub fn new() -> Self {
+    pub fn new(output_base_dir: std::path::PathBuf) -> Self {
         Self {
             is_initial_scan: true,
             map_gmap: OccupancyGrid::new(MAP_WIDTH, MAP_HEIGHT),
@@ -73,20 +75,28 @@ impl SlamManager {
             num_scans_per_submap: 20, // 暫定的に20スキャンで1つのサブマップを生成
             current_submap_scan_buffer: Vec::new(),
             current_submap_robot_poses: Vec::new(),
+            current_submap_timestamps_buffer: Vec::new(),
             submaps: HashMap::new(),
+            output_base_dir,
         }
     }
     /// Processes a new LiDAR scan and updates the map and pose.
-    pub fn update(&mut self, lidar_points: &[(f32, f32)]) {
+    pub fn update(&mut self, lidar_points: &[(f32, f32)], timestamp: u128) {
         let current_scan: Vec<Point2<f32>> =
             lidar_points.iter().map(|p| Point2::new(p.0, p.1)).collect();
 
         if self.is_initial_scan {
             // First scan: use it as the initial map
             self.robot_pose = Isometry2::identity();
-            self.map_scans_in_world = current_scan;
+            self.map_scans_in_world = current_scan.clone();
             self.map_gmap = create_occupancy_grid(&self.map_scans_in_world);
             self.is_initial_scan = false;
+            
+            // 最初のスキャンもバッファに追加
+            self.current_submap_scan_buffer.push(current_scan);
+            self.current_submap_robot_poses.push(self.robot_pose);
+            self.current_submap_timestamps_buffer.push(timestamp);
+
         } else {
             // Subsequent scans: perform scan matching
             let (best_pose, _score) =
@@ -102,6 +112,7 @@ impl SlamManager {
             // 現在のスキャンとポーズをサブマップバッファに追加
             self.current_submap_scan_buffer.push(current_scan.clone()); // current_scanの所有権が移動するのでcloneする
             self.current_submap_robot_poses.push(self.robot_pose);
+            self.current_submap_timestamps_buffer.push(timestamp);
 
             // サブマップバッファが一定数に達したらサブマップを生成・保存
             if self.current_submap_scan_buffer.len() >= self.num_scans_per_submap {
@@ -124,11 +135,29 @@ impl SlamManager {
 
                 let submap_id = self.submap_counter;
                 let submap_dir_name = format!("submap_{:03}", submap_id); // submap_000, submap_001...
-                let base_dir = std::path::PathBuf::from("./slam_results/submaps"); // 結果を保存するルートディレクトリ
-                let submap_path = base_dir.join(&submap_dir_name);
+                let submap_path = self.output_base_dir.join("submaps").join(&submap_dir_name);
 
                 // ディレクトリ作成
                 fs::create_dir_all(&submap_path).expect("Failed to create submap directory");
+
+                // 軌跡ファイルパス
+                let trajectory_file_name = "trajectory.txt";
+                let trajectory_file_path = submap_path.join(trajectory_file_name);
+
+                // 軌跡データを保存 (trajectory.txt)
+                let mut traj_file =
+                    fs::File::create(&trajectory_file_path).expect("Failed to create trajectory.txt");
+                for (pose, timestamp) in self
+                    .current_submap_robot_poses
+                    .iter()
+                    .zip(self.current_submap_timestamps_buffer.iter())
+                {
+                    let x = pose.translation.x;
+                    let y = pose.translation.y;
+                    let angle = pose.rotation.angle();
+                    writeln!(traj_file, "{} {} {} {}", timestamp, x, y, angle)
+                        .expect("Failed to write trajectory data");
+                }
 
                 // 点群ファイルパス
                 let points_file_name = "points.txt";
@@ -146,10 +175,7 @@ impl SlamManager {
                 }
 
                 // サブマップメタデータを構築
-                let current_timestamp = SystemTime::now()
-                    .duration_since(SystemTime::UNIX_EPOCH)
-                    .expect("Time went backwards")
-                    .as_millis();
+                let submap_creation_timestamp = self.current_submap_timestamps_buffer.last().cloned().unwrap_or(0);
 
                 let submap_info = Submap {
                     id: submap_id,
@@ -157,7 +183,7 @@ impl SlamManager {
                     pose_x: submap_global_pose.translation.x,
                     pose_y: submap_global_pose.translation.y,
                     pose_theta: submap_global_pose.rotation.angle(),
-                    timestamp_ms: current_timestamp,
+                    timestamp_ms: submap_creation_timestamp,
                     points_file: points_file_name.to_string(),
                     info_file: info_file_name.to_string(),
                 };
@@ -173,6 +199,7 @@ impl SlamManager {
                 // バッファをクリア
                 self.current_submap_scan_buffer.clear();
                 self.current_submap_robot_poses.clear();
+                self.current_submap_timestamps_buffer.clear();
                 self.submap_counter += 1;
             }
         }

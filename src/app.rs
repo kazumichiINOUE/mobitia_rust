@@ -10,6 +10,9 @@ use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread;
+use chrono::Local; // 追加
+use std::path::PathBuf; // 追加
+use std::time::SystemTime;
 
 use crate::cli::Cli;
 use crate::demo::DemoManager;
@@ -73,8 +76,14 @@ pub enum SlamThreadCommand {
     StartContinuous,
     Pause,
     Resume,
-    UpdateScan { scan: Vec<(f32, f32)> }, // LiDARからの新しいスキャンデータ
-    ProcessSingleScan { scan: Vec<(f32, f32)> }, // 単一スキャン処理要求
+    UpdateScan {
+        scan: Vec<(f32, f32)>,
+        timestamp: u128,
+    }, // LiDARからの新しいスキャンデータ
+    ProcessSingleScan {
+        scan: Vec<(f32, f32)>,
+        timestamp: u128,
+    }, // 単一スキャン処理要求
     Shutdown,
 }
 
@@ -265,8 +274,20 @@ impl MyApp {
         let is_slam_processing_for_thread = is_slam_processing.clone();
 
         // SLAMスレッドの起動
+        // タイムスタンプに基づいたSLAM結果保存ディレクトリを作成
+        let now = Local::now();
+        let timestamp_str = now.format("%Y%m%d-%H%M%S").to_string();
+        let slam_results_base_path = PathBuf::from("./slam_results");
+        let slam_results_path = slam_results_base_path.join(format!("slam_result_{}", timestamp_str));
+
+        // ディレクトリを作成
+        if !slam_results_path.exists() {
+            fs::create_dir_all(&slam_results_path)
+                .expect(&format!("Failed to create SLAM results directory: {:?}", slam_results_path));
+        }
+
         thread::spawn(move || {
-            let mut slam_manager = SlamManager::new();
+            let mut slam_manager = SlamManager::new(slam_results_path);
             let mut current_slam_mode = SlamMode::Manual;
             let mut last_slam_update_time = web_time::Instant::now(); // std::time::Instant の代わりにweb_time::Instantを使用
             const SLAM_UPDATE_INTERVAL_DURATION: web_time::Duration =
@@ -299,7 +320,7 @@ impl MyApp {
                                 })
                                 .unwrap_or_default();
                         }
-                        SlamThreadCommand::UpdateScan { scan } => {
+                        SlamThreadCommand::UpdateScan { scan, timestamp } => {
                             // UIからLiDARデータが届いたら、モードとタイマーをチェックして更新
                             if current_slam_mode == SlamMode::Continuous {
                                 let now = web_time::Instant::now();
@@ -308,7 +329,7 @@ impl MyApp {
                                 {
                                     is_slam_processing_for_thread.store(true, Ordering::SeqCst);
 
-                                    slam_manager.update(&scan);
+                                    slam_manager.update(&scan, timestamp);
 
                                     slam_result_sender
                                         .send(SlamThreadResult {
@@ -324,11 +345,11 @@ impl MyApp {
                                 }
                             }
                         }
-                        SlamThreadCommand::ProcessSingleScan { scan } => {
+                        SlamThreadCommand::ProcessSingleScan { scan, timestamp } => {
                             // 単一スキャン要求はモードに関わらずすぐに処理
                             is_slam_processing_for_thread.store(true, Ordering::SeqCst);
 
-                            slam_manager.update(&scan);
+                            slam_manager.update(&scan, timestamp);
 
                             slam_result_sender
                                 .send(SlamThreadResult {
@@ -578,16 +599,23 @@ impl eframe::App for MyApp {
 
                             // 結合した点群をSLAMスレッドに送信
                             if !self.is_slam_processing.load(Ordering::SeqCst) {
+                                let current_timestamp = SystemTime::now()
+                                    .duration_since(SystemTime::UNIX_EPOCH)
+                                    .expect("Time went backwards")
+                                    .as_millis();
+
                                 if self.slam_mode == SlamMode::Continuous {
                                     self.slam_command_sender
                                         .send(SlamThreadCommand::UpdateScan {
                                             scan: combined_scan,
+                                            timestamp: current_timestamp,
                                         })
                                         .unwrap_or_default();
                                 } else if self.single_scan_requested_by_ui {
                                     self.slam_command_sender
                                         .send(SlamThreadCommand::ProcessSingleScan {
                                             scan: combined_scan,
+                                            timestamp: current_timestamp,
                                         })
                                         .unwrap_or_default();
                                     self.single_scan_requested_by_ui = false; // フラグをリセット
