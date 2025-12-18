@@ -137,6 +137,8 @@ pub struct MyApp {
     pub(crate) single_scan_requested_by_ui: bool, // 追加
 
     pub(crate) latest_scan_for_draw: Vec<(f32, f32)>, // 描画用の最新スキャン
+
+    pub(crate) robot_trajectory: Vec<(egui::Pos2, f32)>, // ロボットの軌跡 (位置, 角度)
 }
 
 impl MyApp {
@@ -162,7 +164,7 @@ impl MyApp {
                     path: "/dev/cu.usbmodem1301".to_string(),
                     baud_rate: 115200,
                     origin: Vec2::new(0.0, 0.26),
-                    rotation: std::f32::consts::FRAC_PI_2,
+                    rotation: std::f32::consts::FRAC_PI_2 - std::f32::consts::PI*1.0/180.0,
                     data_filter_angle_min: -135.0f32,
                     data_filter_angle_max: 90.0f32,
                 },
@@ -365,6 +367,7 @@ impl MyApp {
             current_robot_pose: nalgebra::Isometry2::identity(),
             single_scan_requested_by_ui: false,
             latest_scan_for_draw: Vec::new(),
+            robot_trajectory: Vec::new(),
         }
     }
 
@@ -543,6 +546,15 @@ impl eframe::App for MyApp {
             self.current_map_points = slam_result.map_points;
             self.current_robot_pose = slam_result.robot_pose;
             self.latest_scan_for_draw = slam_result.scan_used;
+
+            // 軌跡に新しい位置と向きを追加
+            let new_pos = egui::pos2(
+                self.current_robot_pose.translation.x,
+                self.current_robot_pose.translation.y,
+            );
+            let new_angle = self.current_robot_pose.rotation.angle();
+            self.robot_trajectory.push((new_pos, new_angle));
+
             ctx.request_repaint();
         }
         while let Ok(msg) = self.command_output_receiver.try_recv() {
@@ -1135,6 +1147,39 @@ impl eframe::App for MyApp {
                     inverted_map_view_rect,
                     rect, // 実際の描画エリア
                 );
+
+                // 軌跡の線と向き（三角形）を描画
+                if self.robot_trajectory.len() > 1 {
+                    // 軌跡の線
+                    let trajectory_line_points: Vec<egui::Pos2> = self.robot_trajectory
+                        .iter()
+                        .map(|(world_pos, _angle)| to_screen.transform_pos(*world_pos))
+                        .collect();
+                    let line_stroke = egui::Stroke::new(1.0, egui::Color32::DARK_GRAY);
+                    painter.add(egui::Shape::line(trajectory_line_points, line_stroke));
+
+                    // 向きを示す三角形
+                    let triangle_color = egui::Color32::GRAY;
+                    for (i, (world_pos, angle)) in self.robot_trajectory.iter().enumerate() {
+                        if i > 0 { // 始点を除くすべての点で描画
+                            let center_screen = to_screen.transform_pos(*world_pos);
+                            
+                            // 三角形の頂点を定義
+                            let triangle_size = 20.0; // 三角形の大きさ
+                            let p1 = center_screen + egui::vec2(angle.cos(), -angle.sin()) * triangle_size; // 先端
+                            let angle_left = *angle + (150.0f32).to_radians();
+                            let p2 = center_screen + egui::vec2(angle_left.cos(), -angle_left.sin()) * triangle_size * 0.7;
+                            let angle_right = *angle - (150.0f32).to_radians();
+                            let p3 = center_screen + egui::vec2(angle_right.cos(), -angle_right.sin()) * triangle_size * 0.7;
+
+                            painter.add(egui::Shape::convex_polygon(
+                                vec![p1, p2, p3],
+                                triangle_color,
+                                egui::Stroke::NONE,
+                            ));
+                        }
+                    }
+                }
 
                 // Draw the map points
                 for point in &self.current_map_points {

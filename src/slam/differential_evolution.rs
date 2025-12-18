@@ -104,7 +104,7 @@ impl DifferentialEvolutionSolver {
     ) -> (Isometry2<f32>, f64) {
         // DE Parameters
         const WXY: f32 = 0.8; // Search range for x, y [m]
-        const WA: f32 = std::f32::consts::PI / 8.0; // Search range for angle [rad], 22.5 deg = PI / 8
+        const WA: f32 = std::f32::consts::PI * 25.0/180.0; // Search range for angle [rad]
         const POPULATION_SIZE: usize = 200; // Increased for better search
         const GENERATIONS: usize = 100; // Increased for better search
         const F: f32 = 0.5; // Mutation factor
