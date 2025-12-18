@@ -1,7 +1,11 @@
+use anyhow::Result;
 use clap::Parser;
 use eframe::egui;
 use egui::Vec2;
+use nalgebra::{Isometry2, Point2};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fs;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
@@ -11,7 +15,7 @@ use crate::cli::Cli;
 use crate::demo::DemoManager;
 pub use crate::demo::DemoMode;
 use crate::lidar::{start_lidar_thread, LidarInfo};
-use crate::slam::SlamManager;
+use crate::slam::{create_occupancy_grid, SlamManager};
 
 // Lidar一台分の状態を保持する構造体
 #[derive(Clone)]
@@ -80,6 +84,18 @@ pub struct SlamThreadResult {
     pub scan_used: Vec<(f32, f32)>,
 }
 
+/// サブマップのメタデータ構造体 (app.rsに移動)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Submap {
+    pub id: usize,
+    pub pose_x: f32,
+    pub pose_y: f32,
+    pub pose_theta: f32,
+    pub timestamp_ms: u128,
+    pub points_file: String,
+    pub info_file: String,
+}
+
 // アプリケーション全体の状態を管理する構造体
 pub struct ConsoleOutputEntry {
     pub text: String,
@@ -134,11 +150,19 @@ pub struct MyApp {
 
     pub(crate) current_robot_pose: nalgebra::Isometry2<f32>,
 
-    pub(crate) single_scan_requested_by_ui: bool, // 追加
+    pub(crate) single_scan_requested_by_ui: bool,
 
-    pub(crate) latest_scan_for_draw: Vec<(f32, f32)>, // 描画用の最新スキャン
+    pub(crate) latest_scan_for_draw: Vec<(f32, f32)>,
 
-    pub(crate) robot_trajectory: Vec<(egui::Pos2, f32)>, // ロボットの軌跡 (位置, 角度)
+    pub(crate) robot_trajectory: Vec<(egui::Pos2, f32)>,
+
+    // --- サブマップ関連のフィールド (MyAppに移行) ---
+    pub(crate) submap_counter: usize,
+    pub(crate) num_scans_per_submap: usize,
+    pub(crate) current_submap_scan_buffer: Vec<Vec<(f32, f32)>>,
+    pub(crate) current_submap_robot_poses: Vec<nalgebra::Isometry2<f32>>,
+    pub(crate) submaps: HashMap<usize, Submap>,
+    pub(crate) slam_map_bounding_box: Option<egui::Rect>,
 }
 
 impl MyApp {
@@ -368,11 +392,93 @@ impl MyApp {
             single_scan_requested_by_ui: false,
             latest_scan_for_draw: Vec::new(),
             robot_trajectory: Vec::new(),
+
+            // --- サブマップ関連のフィールド (MyAppに移行) ---
+            submap_counter: 0,
+            num_scans_per_submap: 20, // 暫定的に20スキャンで1つのサブマップを生成
+            current_submap_scan_buffer: Vec::new(),
+            current_submap_robot_poses: Vec::new(),
+            submaps: HashMap::new(),
+            slam_map_bounding_box: None,
         }
     }
 
     pub fn request_save_points(&mut self, path: String) {
         self.requested_point_save_path = Some(path);
+    }
+
+    pub fn load_map_from_directory(&mut self, base_path_str: &str) -> Result<()> {
+        let base_path = std::path::PathBuf::from(base_path_str);
+        let submaps_path = base_path.join("submaps");
+
+        if !submaps_path.exists() || !submaps_path.is_dir() {
+            return Err(anyhow::anyhow!("Submaps directory not found at: {}", submaps_path.display()));
+        }
+
+        // マップをクリア
+        self.current_map_points.clear();
+        self.submaps.clear();
+        self.robot_trajectory.clear();
+
+        let mut loaded_points: Vec<Point2<f32>> = Vec::new();
+
+        // サブマップディレクトリを読み込んでソートする (submap_000, submap_001 ...)
+        let mut submap_dirs: Vec<_> = fs::read_dir(submaps_path)?
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.path().is_dir())
+            .collect();
+        submap_dirs.sort_by_key(|dir| dir.path());
+
+
+        for entry in submap_dirs {
+            let path = entry.path();
+            let info_path = path.join("info.yaml");
+            let points_path = path.join("points.txt");
+
+            if info_path.exists() && points_path.exists() {
+                // メタデータを読み込み
+                let info_file = fs::File::open(info_path)?;
+                let submap_info: Submap = serde_yaml::from_reader(info_file)?;
+                
+                // Isometry2を復元
+                let global_pose = Isometry2::new(
+                    nalgebra::Vector2::new(submap_info.pose_x, submap_info.pose_y),
+                    submap_info.pose_theta,
+                );
+
+                // 点群データを読み込み
+                let points_data = fs::read_to_string(points_path)?;
+                let submap_points_local: Vec<Point2<f32>> = points_data
+                    .lines()
+                    .filter_map(|line| {
+                        let mut parts = line.split_whitespace();
+                        let x = parts.next()?.parse::<f32>().ok()?;
+                        let y = parts.next()?.parse::<f32>().ok()?;
+                        Some(Point2::new(x, y))
+                    })
+                    .collect();
+
+                // ワールド座標に変換して追加
+                let transformed_points = submap_points_local.into_iter().map(|p| global_pose * p);
+                loaded_points.extend(transformed_points);
+                
+                // サブマップリストと軌跡リストに追加
+                self.submaps.insert(submap_info.id, submap_info.clone());
+                self.robot_trajectory.push((egui::pos2(global_pose.translation.x, global_pose.translation.y), global_pose.rotation.angle()));
+            }
+        }
+        
+        if !loaded_points.is_empty() {
+            // バウンディングボックスを計算して保存
+            let egui_points: Vec<egui::Pos2> = loaded_points.iter().map(|p| egui::pos2(p.x, p.y)).collect();
+            self.slam_map_bounding_box = Some(egui::Rect::from_points(&egui_points));
+            
+            self.current_map_points = loaded_points;
+            // TODO: 占有格子地図の再生成も必要に応じて行う
+            self.slam_mode = SlamMode::Paused; // ロード後はPausedモードにする
+        }
+
+        Ok(())
     }
 }
 
@@ -1127,17 +1233,36 @@ impl eframe::App for MyApp {
 
                 // Draw robot pose
                 let robot_pose = &self.current_robot_pose;
-                // ロボットの現在のXY座標を取得 (方向は無視)
-                let robot_center_world =
-                    egui::pos2(robot_pose.translation.x, robot_pose.translation.y);
-
-                // 描画エリアのワールド座標の範囲 (例: 中心から±5メートル)
-                // この範囲の中心をロボットの現在位置に設定
-                let map_view_size = 10.0; // ワールド座標で表示する領域のサイズ (例: 30m x 30m)
-                let map_view_rect = egui::Rect::from_center_size(
-                    robot_center_world,
-                    egui::vec2(map_view_size, map_view_size),
-                );
+                // 描画範囲を決定
+                let map_view_rect = if let Some(bounds) = self.slam_map_bounding_box {
+                    // ロードした地図がある場合、そのバウンディングボックスを表示範囲とする
+                    let mut new_bounds = bounds.expand(bounds.width() * 0.1); // 先に少しマージンを追加
+                    
+                    let screen_aspect = rect.width() / rect.height();
+                    if !screen_aspect.is_nan() {
+                        let bounds_aspect = new_bounds.width() / new_bounds.height();
+                        let center = new_bounds.center();
+                        let (width, height) = if bounds_aspect > screen_aspect {
+                            // バウンディングボックスの方が横長 -> 高さを増やす
+                            (new_bounds.width(), new_bounds.width() / screen_aspect)
+                        } else {
+                            // バウンディングボックスの方が縦長 -> 幅を増やす
+                            (new_bounds.height() * screen_aspect, new_bounds.height())
+                        };
+                        egui::Rect::from_center_size(center, egui::vec2(width, height))
+                    } else {
+                        new_bounds
+                    }
+                } else {
+                    // オンラインSLAM中の場合、これまで通りロボットを中心に表示
+                    let robot_center_world =
+                        egui::pos2(robot_pose.translation.x, robot_pose.translation.y);
+                    let map_view_size = 30.0; // 追従時の表示サイズ
+                    egui::Rect::from_center_size(
+                        robot_center_world,
+                        egui::vec2(map_view_size, map_view_size),
+                    )
+                };
 
                 // Y軸を反転させるため、map_view_rectのYのmin/maxを入れ替える
                 let mut inverted_map_view_rect = map_view_rect;

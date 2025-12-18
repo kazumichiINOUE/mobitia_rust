@@ -188,7 +188,7 @@ impl SlamManager {
 }
 
 /// Creates an occupancy grid from a point cloud.
-fn create_occupancy_grid(points: &[Point2<f32>]) -> OccupancyGrid {
+pub fn create_occupancy_grid(points: &[Point2<f32>]) -> OccupancyGrid {
     let mut gmap = OccupancyGrid::new(MAP_WIDTH, MAP_HEIGHT);
     for p in points {
         let ix = (p.x / CSIZE) as i32 + MAP_ORIGIN_X as i32;

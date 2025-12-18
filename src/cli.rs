@@ -53,6 +53,20 @@ pub enum Commands {
         #[command(subcommand)]
         command: SaveCommands,
     },
+    /// Manage map data.
+    Map {
+        #[command(subcommand)]
+        command: MapCommands,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum MapCommands {
+    /// Load a map from a specified directory.
+    Load {
+        /// Path to the directory containing map data (e.g., ./slam_results).
+        path: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -200,6 +214,7 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
             if let Some(slam_command) = command {
                 match slam_command {
                     SlamCommands::GetLidar => {
+                        app.slam_map_bounding_box = None; // 表示範囲をリセット
                         app.single_scan_requested_by_ui = true;
                         app.command_history.push(ConsoleOutputEntry {
                             text: "Requesting single scan for SLAM.".to_string(),
@@ -207,6 +222,7 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                         });
                     }
                     SlamCommands::Continuous => {
+                        app.slam_map_bounding_box = None; // 表示範囲をリセット
                         app.slam_mode = crate::app::SlamMode::Continuous;
                         app.slam_command_sender
                             .send(crate::app::SlamThreadCommand::StartContinuous)
@@ -548,6 +564,31 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                 });
                 app.request_save_points(path_to_save);
                 ctx.request_repaint(); // ファイル保存リクエストのために再描画
+            }
+        },
+        Commands::Map { command } => match command {
+            MapCommands::Load { path } => {
+                app.command_history.push(ConsoleOutputEntry {
+                    text: format!("Loading map from '{}'...", path),
+                    group_id: current_group_id,
+                });
+                
+                match app.load_map_from_directory(&path) {
+                    Ok(_) => {
+                        app.command_history.push(ConsoleOutputEntry {
+                            text: "Map loaded successfully.".to_string(),
+                            group_id: current_group_id,
+                        });
+                        // マップ表示に切り替え
+                        app.app_mode = AppMode::Slam; 
+                    }
+                    Err(e) => {
+                        app.command_history.push(ConsoleOutputEntry {
+                            text: format!("ERROR: Failed to load map: {}", e),
+                            group_id: current_group_id,
+                        });
+                    }
+                }
             }
         },
     }
