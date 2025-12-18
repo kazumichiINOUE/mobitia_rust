@@ -164,7 +164,7 @@ impl MyApp {
                     path: "/dev/cu.usbmodem1301".to_string(),
                     baud_rate: 115200,
                     origin: Vec2::new(0.0, 0.26),
-                    rotation: std::f32::consts::FRAC_PI_2 - std::f32::consts::PI*1.0/180.0,
+                    rotation: std::f32::consts::FRAC_PI_2 - std::f32::consts::PI * 1.0 / 180.0,
                     data_filter_angle_min: -135.0f32,
                     data_filter_angle_max: 90.0f32,
                 },
@@ -1151,7 +1151,8 @@ impl eframe::App for MyApp {
                 // 軌跡の線と向き（三角形）を描画
                 if self.robot_trajectory.len() > 1 {
                     // 軌跡の線
-                    let trajectory_line_points: Vec<egui::Pos2> = self.robot_trajectory
+                    let trajectory_line_points: Vec<egui::Pos2> = self
+                        .robot_trajectory
                         .iter()
                         .map(|(world_pos, _angle)| to_screen.transform_pos(*world_pos))
                         .collect();
@@ -1161,16 +1162,24 @@ impl eframe::App for MyApp {
                     // 向きを示す三角形
                     let triangle_color = egui::Color32::GRAY;
                     for (i, (world_pos, angle)) in self.robot_trajectory.iter().enumerate() {
-                        if i > 0 { // 始点を除くすべての点で描画
+                        if i > 0 {
+                            // 始点を除くすべての点で描画
                             let center_screen = to_screen.transform_pos(*world_pos);
-                            
+
                             // 三角形の頂点を定義
                             let triangle_size = 20.0; // 三角形の大きさ
-                            let p1 = center_screen + egui::vec2(angle.cos(), -angle.sin()) * triangle_size; // 先端
+                            let p1 = center_screen
+                                + egui::vec2(angle.cos(), -angle.sin()) * triangle_size; // 先端
                             let angle_left = *angle + (150.0f32).to_radians();
-                            let p2 = center_screen + egui::vec2(angle_left.cos(), -angle_left.sin()) * triangle_size * 0.7;
+                            let p2 = center_screen
+                                + egui::vec2(angle_left.cos(), -angle_left.sin())
+                                    * triangle_size
+                                    * 0.7;
                             let angle_right = *angle - (150.0f32).to_radians();
-                            let p3 = center_screen + egui::vec2(angle_right.cos(), -angle_right.sin()) * triangle_size * 0.7;
+                            let p3 = center_screen
+                                + egui::vec2(angle_right.cos(), -angle_right.sin())
+                                    * triangle_size
+                                    * 0.7;
 
                             painter.add(egui::Shape::convex_polygon(
                                 vec![p1, p2, p3],

@@ -1,6 +1,11 @@
 pub mod differential_evolution;
 
 use nalgebra::{Isometry2, Point2};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::fs; // 追加
+use std::io::Write; // 追加
+use std::time::SystemTime; // 追加
 
 const CSIZE: f32 = 0.025;
 const MAP_WIDTH: usize = 3200;
@@ -25,6 +30,21 @@ impl OccupancyGrid {
     }
 }
 
+/// サブマップのメタデータ構造体
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Submap {
+    pub id: usize,
+    #[serde(skip)] // nalgebraのIsometry2はSerialize/Deserializeを実装していないのでスキップ
+    pub global_pose: Isometry2<f32>, // サブマップ中心のグローバルポーズ
+    pub pose_x: f32,         // シリアライズ用
+    pub pose_y: f32,         // シリアライズ用
+    pub pose_theta: f32,     // シリアライズ用
+    pub timestamp_ms: u128,  // 作成時のUnixエポックタイム (ミリ秒)
+    pub points_file: String, // 点群データが保存されているファイルパス (submap_XXX/points.txt)
+    pub info_file: String,   // このSubmap情報YAMLファイル自身のパス (submap_XXX/info.yaml)
+                             // その他、特徴記述子などを追加予定
+}
+
 /// The main SLAM state manager.
 pub struct SlamManager {
     is_initial_scan: bool,
@@ -32,6 +52,13 @@ pub struct SlamManager {
     robot_pose: Isometry2<f32>,
     map_scans_in_world: Vec<Point2<f32>>,
     de_solver: differential_evolution::DifferentialEvolutionSolver,
+
+    // サブマップ関連のフィールド
+    submap_counter: usize,       // 次に作成するサブマップのID
+    num_scans_per_submap: usize, // 1つのサブマップを構成するスキャン数
+    current_submap_scan_buffer: Vec<Vec<Point2<f32>>>, // 現在構築中のサブマップのスキャンデータ
+    current_submap_robot_poses: Vec<Isometry2<f32>>, // 現在構築中のサブマップ中のロボットポーズ
+    submaps: HashMap<usize, Submap>, // 完成したサブマップのリスト (IDでアクセスできるようにHashMapに)
 }
 
 impl SlamManager {
@@ -42,9 +69,13 @@ impl SlamManager {
             robot_pose: Isometry2::identity(),
             map_scans_in_world: Vec::new(),
             de_solver: differential_evolution::DifferentialEvolutionSolver::new(),
+            submap_counter: 0,
+            num_scans_per_submap: 20, // 暫定的に20スキャンで1つのサブマップを生成
+            current_submap_scan_buffer: Vec::new(),
+            current_submap_robot_poses: Vec::new(),
+            submaps: HashMap::new(),
         }
     }
-
     /// Processes a new LiDAR scan and updates the map and pose.
     pub fn update(&mut self, lidar_points: &[(f32, f32)]) {
         let current_scan: Vec<Point2<f32>> =
@@ -64,9 +95,86 @@ impl SlamManager {
             self.robot_pose = best_pose;
 
             // Add the new scan to the map, transformed by the new pose
-            let transformed_scan = current_scan.into_iter().map(|p| best_pose * p);
+            let transformed_scan = current_scan.clone().into_iter().map(|p| best_pose * p);
             self.map_scans_in_world.extend(transformed_scan);
             self.map_gmap = create_occupancy_grid(&self.map_scans_in_world);
+
+            // 現在のスキャンとポーズをサブマップバッファに追加
+            self.current_submap_scan_buffer.push(current_scan.clone()); // current_scanの所有権が移動するのでcloneする
+            self.current_submap_robot_poses.push(self.robot_pose);
+
+            // サブマップバッファが一定数に達したらサブマップを生成・保存
+            if self.current_submap_scan_buffer.len() >= self.num_scans_per_submap {
+                // サブマップのグローバルポーズを推定 (バッファ内のポーズの中央値など)
+                // 簡単のため、バッファの最初のポーズを使う
+                let submap_global_pose = self.current_submap_robot_poses[0];
+
+                // サブマップ用の点群を統合 (ローカル座標系)
+                let mut submap_points_local: Vec<Point2<f32>> = Vec::new();
+                for (scan_local, pose_local_to_global) in self
+                    .current_submap_scan_buffer
+                    .iter()
+                    .zip(self.current_submap_robot_poses.iter())
+                {
+                    // 各スキャンをサブマップの原点（最初のポーズ）からの相対位置に変換
+                    let relative_pose = submap_global_pose.inverse() * pose_local_to_global;
+                    let transformed_scan = scan_local.iter().map(|p| relative_pose * p);
+                    submap_points_local.extend(transformed_scan);
+                }
+
+                let submap_id = self.submap_counter;
+                let submap_dir_name = format!("submap_{:03}", submap_id); // submap_000, submap_001...
+                let base_dir = std::path::PathBuf::from("./slam_results/submaps"); // 結果を保存するルートディレクトリ
+                let submap_path = base_dir.join(&submap_dir_name);
+
+                // ディレクトリ作成
+                fs::create_dir_all(&submap_path).expect("Failed to create submap directory");
+
+                // 点群ファイルパス
+                let points_file_name = "points.txt";
+                let points_file_path = submap_path.join(points_file_name);
+
+                // メタデータファイルパス
+                let info_file_name = "info.yaml";
+                let info_file_path = submap_path.join(info_file_name);
+
+                // 点群データを保存 (points.txt)
+                let mut file =
+                    fs::File::create(&points_file_path).expect("Failed to create points.txt");
+                for p in &submap_points_local {
+                    writeln!(file, "{} {}", p.x, p.y).expect("Failed to write point");
+                }
+
+                // サブマップメタデータを構築
+                let current_timestamp = SystemTime::now()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .expect("Time went backwards")
+                    .as_millis();
+
+                let submap_info = Submap {
+                    id: submap_id,
+                    global_pose: submap_global_pose,
+                    pose_x: submap_global_pose.translation.x,
+                    pose_y: submap_global_pose.translation.y,
+                    pose_theta: submap_global_pose.rotation.angle(),
+                    timestamp_ms: current_timestamp,
+                    points_file: points_file_name.to_string(),
+                    info_file: info_file_name.to_string(),
+                };
+
+                // メタデータをYAML形式で保存 (info.yaml)
+                let yaml_string = serde_yaml::to_string(&submap_info)
+                    .expect("Failed to serialize submap info to YAML");
+                fs::write(&info_file_path, yaml_string).expect("Failed to write info.yaml");
+
+                // サブマップリストに追加
+                self.submaps.insert(submap_id, submap_info);
+
+                // バッファをクリア
+                self.current_submap_scan_buffer.clear();
+                self.current_submap_robot_poses.clear();
+                self.submap_counter += 1;
+            }
         }
     }
 
