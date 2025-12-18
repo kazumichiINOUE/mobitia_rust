@@ -572,7 +572,7 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                     text: format!("Loading map from '{}'...", path),
                     group_id: current_group_id,
                 });
-                
+
                 match app.load_map_from_directory(&path) {
                     Ok(_) => {
                         app.command_history.push(ConsoleOutputEntry {
@@ -580,7 +580,7 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                             group_id: current_group_id,
                         });
                         // マップ表示に切り替え
-                        app.app_mode = AppMode::Slam; 
+                        app.app_mode = AppMode::Slam;
                     }
                     Err(e) => {
                         app.command_history.push(ConsoleOutputEntry {

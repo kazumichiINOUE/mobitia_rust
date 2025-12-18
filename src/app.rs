@@ -1,4 +1,5 @@
 use anyhow::Result;
+use chrono::Local; // 追加
 use clap::Parser;
 use eframe::egui;
 use egui::Vec2;
@@ -7,11 +8,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
+use std::path::PathBuf; // 追加
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread;
-use chrono::Local; // 追加
-use std::path::PathBuf; // 追加
 use std::time::SystemTime;
 
 use crate::cli::Cli;
@@ -278,12 +278,15 @@ impl MyApp {
         let now = Local::now();
         let timestamp_str = now.format("%Y%m%d-%H%M%S").to_string();
         let slam_results_base_path = PathBuf::from("./slam_results");
-        let slam_results_path = slam_results_base_path.join(format!("slam_result_{}", timestamp_str));
+        let slam_results_path =
+            slam_results_base_path.join(format!("slam_result_{}", timestamp_str));
 
         // ディレクトリを作成
         if !slam_results_path.exists() {
-            fs::create_dir_all(&slam_results_path)
-                .expect(&format!("Failed to create SLAM results directory: {:?}", slam_results_path));
+            fs::create_dir_all(&slam_results_path).expect(&format!(
+                "Failed to create SLAM results directory: {:?}",
+                slam_results_path
+            ));
         }
 
         thread::spawn(move || {
@@ -433,7 +436,10 @@ impl MyApp {
         let submaps_path = base_path.join("submaps");
 
         if !submaps_path.exists() || !submaps_path.is_dir() {
-            return Err(anyhow::anyhow!("Submaps directory not found at: {}", submaps_path.display()));
+            return Err(anyhow::anyhow!(
+                "Submaps directory not found at: {}",
+                submaps_path.display()
+            ));
         }
 
         // マップをクリア
@@ -450,7 +456,6 @@ impl MyApp {
             .collect();
         submap_dirs.sort_by_key(|dir| dir.path());
 
-
         for entry in submap_dirs {
             let path = entry.path();
             let info_path = path.join("info.yaml");
@@ -460,7 +465,7 @@ impl MyApp {
                 // メタデータを読み込み
                 let info_file = fs::File::open(info_path)?;
                 let submap_info: Submap = serde_yaml::from_reader(info_file)?;
-                
+
                 // Isometry2を復元
                 let global_pose = Isometry2::new(
                     nalgebra::Vector2::new(submap_info.pose_x, submap_info.pose_y),
@@ -482,18 +487,22 @@ impl MyApp {
                 // ワールド座標に変換して追加
                 let transformed_points = submap_points_local.into_iter().map(|p| global_pose * p);
                 loaded_points.extend(transformed_points);
-                
+
                 // サブマップリストと軌跡リストに追加
                 self.submaps.insert(submap_info.id, submap_info.clone());
-                self.robot_trajectory.push((egui::pos2(global_pose.translation.x, global_pose.translation.y), global_pose.rotation.angle()));
+                self.robot_trajectory.push((
+                    egui::pos2(global_pose.translation.x, global_pose.translation.y),
+                    global_pose.rotation.angle(),
+                ));
             }
         }
-        
+
         if !loaded_points.is_empty() {
             // バウンディングボックスを計算して保存
-            let egui_points: Vec<egui::Pos2> = loaded_points.iter().map(|p| egui::pos2(p.x, p.y)).collect();
+            let egui_points: Vec<egui::Pos2> =
+                loaded_points.iter().map(|p| egui::pos2(p.x, p.y)).collect();
             self.slam_map_bounding_box = Some(egui::Rect::from_points(&egui_points));
-            
+
             self.current_map_points = loaded_points;
             // TODO: 占有格子地図の再生成も必要に応じて行う
             self.slam_mode = SlamMode::Paused; // ロード後はPausedモードにする
@@ -1265,7 +1274,7 @@ impl eframe::App for MyApp {
                 let map_view_rect = if let Some(bounds) = self.slam_map_bounding_box {
                     // ロードした地図がある場合、そのバウンディングボックスを表示範囲とする
                     let mut new_bounds = bounds.expand(bounds.width() * 0.1); // 先に少しマージンを追加
-                    
+
                     let screen_aspect = rect.width() / rect.height();
                     if !screen_aspect.is_nan() {
                         let bounds_aspect = new_bounds.width() / new_bounds.height();

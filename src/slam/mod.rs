@@ -91,12 +91,11 @@ impl SlamManager {
             self.map_scans_in_world = current_scan.clone();
             self.map_gmap = create_occupancy_grid(&self.map_scans_in_world);
             self.is_initial_scan = false;
-            
+
             // 最初のスキャンもバッファに追加
             self.current_submap_scan_buffer.push(current_scan);
             self.current_submap_robot_poses.push(self.robot_pose);
             self.current_submap_timestamps_buffer.push(timestamp);
-
         } else {
             // Subsequent scans: perform scan matching
             let (best_pose, _score) =
@@ -145,8 +144,8 @@ impl SlamManager {
                 let trajectory_file_path = submap_path.join(trajectory_file_name);
 
                 // 軌跡データを保存 (trajectory.txt)
-                let mut traj_file =
-                    fs::File::create(&trajectory_file_path).expect("Failed to create trajectory.txt");
+                let mut traj_file = fs::File::create(&trajectory_file_path)
+                    .expect("Failed to create trajectory.txt");
                 for (pose, timestamp) in self
                     .current_submap_robot_poses
                     .iter()
@@ -175,7 +174,11 @@ impl SlamManager {
                 }
 
                 // サブマップメタデータを構築
-                let submap_creation_timestamp = self.current_submap_timestamps_buffer.last().cloned().unwrap_or(0);
+                let submap_creation_timestamp = self
+                    .current_submap_timestamps_buffer
+                    .last()
+                    .cloned()
+                    .unwrap_or(0);
 
                 let submap_info = Submap {
                     id: submap_id,
