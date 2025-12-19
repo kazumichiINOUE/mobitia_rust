@@ -117,6 +117,7 @@ pub struct MyApp {
     pub(crate) user_command_history: Vec<String>, // ユーザーのコマンド入力履歴
     pub(crate) history_index: usize, // コマンド履歴のインデックス
     pub(crate) current_suggestions: Vec<String>, // 現在のサジェスト候補
+    pub(crate) suggestion_selection_index: Option<usize>, // サジェスト候補の選択インデックス
     pub(crate) lidars: Vec<LidarState>, // 複数Lidarの状態を管理
 
     // スレッドからのデータ/ステータス受信を統合
@@ -387,6 +388,7 @@ impl MyApp {
             user_command_history,
             history_index,
             current_suggestions: Vec::new(),
+            suggestion_selection_index: None,
             lidars,                 // 新しいlidarsフィールドを初期化
             lidar_message_receiver, // 単一のLidarメッセージ受信
             pending_scans,
@@ -838,6 +840,7 @@ impl eframe::App for MyApp {
                     if text_edit_response.changed() || self.input_string.is_empty() {
                         let input = self.input_string.trim_start();
                         self.current_suggestions.clear(); // 毎回クリアしてから再計算
+                        self.suggestion_selection_index = None; // 選択もリセット
 
                         if !input.is_empty() {
                             let parts: Vec<&str> = input.split_whitespace().collect();
@@ -1040,40 +1043,158 @@ impl eframe::App for MyApp {
 
                     // --- サジェスト候補の表示 ---
                     if !self.current_suggestions.is_empty() {
-                        let suggestion_text =
-                            format!("Suggestions: {}", self.current_suggestions.join(", "));
                         egui::Frame::none()
                             .fill(egui::Color32::from_rgb(40, 40, 40))
                             .inner_margin(egui::Margin::symmetric(5.0, 2.0))
                             .show(ui, |ui| {
                                 ui.set_width(ui.available_width());
-                                ui.monospace(suggestion_text);
+                                ui.label("Suggestions:");
+                                ui.separator();
+                                for (i, suggestion) in self.current_suggestions.iter().enumerate() {
+                                    let is_selected = self.suggestion_selection_index == Some(i);
+                                    let label = egui::SelectableLabel::new(
+                                        is_selected,
+                                        egui::RichText::new(suggestion).monospace(),
+                                    );
+                                    if ui.add(label).clicked() {
+                                        self.suggestion_selection_index = Some(i);
+                                        // Optional: complete on click
+                                    }
+                                }
                             });
                     }
 
-                    // --- コマンド履歴ナビゲーション ---
+                    // --- コマンド履歴ナビゲーション & サジェスト選択 ---
                     if text_edit_response.has_focus() {
-                        let up_pressed = ctx.input(|i| i.key_pressed(egui::Key::ArrowUp));
-                        if up_pressed && self.history_index > 0 {
-                            self.history_index -= 1;
-                            self.input_string = self
-                                .user_command_history
-                                .get(self.history_index)
-                                .cloned()
-                                .unwrap_or_default();
+                        let i = ctx.input(|i| i.clone()); // Capture input state
+
+                        let ctrl_n_pressed = i.modifiers.ctrl && i.key_pressed(egui::Key::N);
+                        let ctrl_p_pressed = i.modifiers.ctrl && i.key_pressed(egui::Key::P);
+                        let tab_pressed = i.key_pressed(egui::Key::Tab);
+                        let up_pressed = i.key_pressed(egui::Key::ArrowUp);
+                        let down_pressed = i.key_pressed(egui::Key::ArrowDown);
+
+                        // Suggestion navigation (Ctrl+n/p)
+                        if !self.current_suggestions.is_empty() {
+                            if ctrl_n_pressed || ctrl_p_pressed {
+                                let num_suggestions = self.current_suggestions.len();
+                                if num_suggestions > 0 {
+                                    // Ensure there are suggestions to navigate
+                                    let mut current_index =
+                                        self.suggestion_selection_index.unwrap_or(usize::MAX);
+
+                                    if ctrl_n_pressed {
+                                        // Next
+                                        current_index = (current_index + 1) % num_suggestions;
+                                    }
+                                    if ctrl_p_pressed {
+                                        // Previous
+                                        current_index =
+                                            if current_index == 0 || current_index == usize::MAX {
+                                                num_suggestions - 1
+                                            } else {
+                                                current_index - 1
+                                            };
+                                    }
+                                    self.suggestion_selection_index = Some(current_index);
+
+                                    // Consume the key to prevent character input
+                                    if ctrl_n_pressed {
+                                        ctx.input_mut(|i| {
+                                            i.consume_key(egui::Modifiers::CTRL, egui::Key::N)
+                                        });
+                                    }
+                                    if ctrl_p_pressed {
+                                        ctx.input_mut(|i| {
+                                            i.consume_key(egui::Modifiers::CTRL, egui::Key::P)
+                                        });
+                                    }
+                                }
+                            }
                         }
-                        let down_pressed = ctx.input(|i| i.key_pressed(egui::Key::ArrowDown));
-                        if down_pressed && self.history_index < self.user_command_history.len() {
-                            self.history_index += 1;
-                            if self.history_index == self.user_command_history.len() {
-                                self.input_string.clear();
-                            } else {
+
+                        // Tab completion
+
+                        if tab_pressed {
+                            if !self.current_suggestions.is_empty() {
+                                if let Some(selected_index) = self.suggestion_selection_index {
+                                    if let Some(selected_suggestion) =
+                                        self.current_suggestions.get(selected_index).cloned()
+                                    {
+                                        let last_space_idx = self
+                                            .input_string
+                                            .rfind(char::is_whitespace)
+                                            .map(|i| i + 1)
+                                            .unwrap_or(0);
+
+                                        let last_slash_idx = self
+                                            .input_string
+                                            .rfind('/')
+                                            .map(|i| i + 1)
+                                            .unwrap_or(0);
+
+                                        let replace_from_idx =
+                                            std::cmp::max(last_space_idx, last_slash_idx);
+
+                                        self.input_string = format!(
+                                            "{}{}",
+                                            &self.input_string[..replace_from_idx],
+                                            selected_suggestion
+                                        );
+
+                                        let id = text_edit_response.id;
+
+                                        if let Some(mut state) =
+                                            egui::widgets::text_edit::TextEditState::load(ctx, id)
+                                        {
+                                            let new_cursor_pos = self.input_string.len();
+
+                                            state.set_ccursor_range(Some(
+                                                egui::widgets::text_edit::CCursorRange::one(
+                                                    egui::text::CCursor::new(new_cursor_pos),
+                                                ),
+                                            ));
+
+                                            state.store(ctx, id);
+                                        }
+
+                                        ctx.input_mut(|i| {
+                                            i.consume_key(egui::Modifiers::NONE, egui::Key::Tab)
+                                        });
+                                    }
+                                }
+                            }
+                        }
+
+                        // History navigation (ArrowUp/Down) - separate from suggestions
+                        if up_pressed {
+                            if self.history_index > 0 {
+                                self.history_index -= 1;
                                 self.input_string = self
                                     .user_command_history
                                     .get(self.history_index)
                                     .cloned()
                                     .unwrap_or_default();
                             }
+                            ctx.input_mut(|i| {
+                                i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp)
+                            });
+                        } else if down_pressed {
+                            if self.history_index < self.user_command_history.len() {
+                                self.history_index += 1;
+                                if self.history_index == self.user_command_history.len() {
+                                    self.input_string.clear();
+                                } else {
+                                    self.input_string = self
+                                        .user_command_history
+                                        .get(self.history_index)
+                                        .cloned()
+                                        .unwrap_or_default();
+                                }
+                            }
+                            ctx.input_mut(|i| {
+                                i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown)
+                            });
                         }
                     }
 
@@ -1445,10 +1566,7 @@ fn get_path_suggestions(dir_path: &str, prefix: &str) -> Vec<String> {
         for entry in entries.filter_map(|e| e.ok()) {
             if let Some(file_name_os) = entry.file_name().to_str() {
                 if file_name_os.starts_with(prefix) {
-                    let mut path_buf = dir_to_read.to_path_buf();
-                    path_buf.push(file_name_os);
-
-                    let mut suggestion_str = path_buf.to_string_lossy().to_string();
+                    let mut suggestion_str = file_name_os.to_string();
                     if entry.path().is_dir() {
                         suggestion_str.push('/');
                     }
