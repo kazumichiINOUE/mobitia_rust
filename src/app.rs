@@ -274,20 +274,12 @@ impl MyApp {
         let is_slam_processing_for_thread = is_slam_processing.clone();
 
         // SLAMスレッドの起動
-        // タイムスタンプに基づいたSLAM結果保存ディレクトリを作成
+        // タイムスタンプに基づいたSLAM結果保存ディレクトリのパスを決定
         let now = Local::now();
         let timestamp_str = now.format("%Y%m%d-%H%M%S").to_string();
         let slam_results_base_path = PathBuf::from("./slam_results");
         let slam_results_path =
             slam_results_base_path.join(format!("slam_result_{}", timestamp_str));
-
-        // ディレクトリを作成
-        if !slam_results_path.exists() {
-            fs::create_dir_all(&slam_results_path).expect(&format!(
-                "Failed to create SLAM results directory: {:?}",
-                slam_results_path
-            ));
-        }
 
         thread::spawn(move || {
             let mut slam_manager = SlamManager::new(slam_results_path);
