@@ -923,6 +923,18 @@ impl eframe::App for MyApp {
                                         .collect();
                                 }
 
+                                ["map"] if ends_with_space => {
+                                    self.current_suggestions = vec!["load".to_string()];
+                                }
+                                ["map", partial_arg] => {
+                                    let options = vec!["load"];
+                                    self.current_suggestions = options
+                                        .into_iter()
+                                        .filter(|opt| opt.starts_with(partial_arg))
+                                        .map(|s| s.to_string())
+                                        .collect();
+                                }
+
                                 ["serial", _sub @ ("list" | "ls"), partial_arg] => {
                                     let options = vec!["--detail", "-d"];
                                     self.current_suggestions = options
