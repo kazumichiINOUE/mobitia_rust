@@ -504,6 +504,208 @@ impl MyApp {
 
         Ok(())
     }
+
+    /// Updates the suggestion list based on the current input string.
+    fn update_suggestions(&mut self) {
+        let input = self.input_string.trim_start();
+        self.current_suggestions.clear(); // 毎回クリアしてから再計算
+        self.suggestion_selection_index = None; // 選択もリセット
+
+        if !input.is_empty() {
+            let parts: Vec<&str> = input.split_whitespace().collect();
+            let ends_with_space = input.ends_with(' ');
+
+            match parts.as_slice() {
+                ["demo"] if ends_with_space => {
+                    self.current_suggestions = vec![
+                        "scan".to_string(),
+                        "ripple".to_string(),
+                        "breathing".to_string(),
+                        "table".to_string(),
+                    ];
+                }
+                ["demo", partial_arg] => {
+                    let options = vec!["scan", "ripple", "breathing", "table"];
+                    self.current_suggestions = options
+                        .into_iter()
+                        .filter(|opt| opt.starts_with(partial_arg))
+                        .map(|s| s.to_string())
+                        .collect();
+                }
+                ["lidar", "set", "path", _id_str] if ends_with_space => {
+                    self.current_suggestions = vec!["<path>".to_string()];
+                }
+                ["lidar", "set", "path"] if ends_with_space => {
+                    self.current_suggestions = vec!["<id>".to_string()];
+                }
+                ["lidar", "set", partial_subcommand] => {
+                    let options = vec!["path"];
+                    self.current_suggestions = options
+                        .into_iter()
+                        .filter(|opt| opt.starts_with(partial_subcommand))
+                        .map(|s| s.to_string())
+                        .collect();
+                }
+                ["lidar", "set"] if ends_with_space => {
+                    self.current_suggestions = vec!["path".to_string()];
+                }
+                ["lidar", "slam-toggle"] if ends_with_space => {
+                    self.current_suggestions = vec!["<id>".to_string()];
+                }
+                ["lidar", "slam-toggle", _id_str] if ends_with_space => {
+                    self.current_suggestions.clear();
+                }
+                ["lidar", partial_subcommand] => {
+                    let options = vec!["entermode", "mode", "set", "slam-toggle"];
+                    self.current_suggestions = options
+                        .into_iter()
+                        .filter(|opt| opt.starts_with(partial_subcommand))
+                        .map(|s| s.to_string())
+                        .collect();
+                }
+                ["lidar"] if ends_with_space => {
+                    self.current_suggestions = vec![
+                        "entermode".to_string(),
+                        "mode".to_string(),
+                        "set".to_string(),
+                        "slam-toggle".to_string(),
+                    ];
+                }
+                ["slam"] if ends_with_space => {
+                    self.current_suggestions = vec![
+                        "getlidar".to_string(),
+                        "continuous".to_string(),
+                        "pause".to_string(),
+                    ];
+                }
+                ["slam", partial_subcommand] => {
+                    let options = vec!["getlidar", "continuous", "pause"];
+                    self.current_suggestions = options
+                        .into_iter()
+                        .filter(|opt| opt.starts_with(partial_subcommand))
+                        .map(|s| s.to_string())
+                        .collect();
+                }
+
+                ["map", "load"] if ends_with_space => {
+                    self.current_suggestions = get_path_suggestions(".", "");
+                }
+                ["map", "load", partial_path] => {
+                    let path_buf = PathBuf::from(partial_path);
+                    let (dir_to_read, prefix) = if partial_path.ends_with('/')
+                        || (path_buf.is_dir() && path_buf.exists())
+                    {
+                        (path_buf, "".to_string())
+                    } else {
+                        let parent = path_buf.parent().unwrap_or(Path::new(""));
+                        let file_name = path_buf
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .to_string();
+                        (parent.to_path_buf(), file_name)
+                    };
+                    self.current_suggestions =
+                        get_path_suggestions(&dir_to_read.to_string_lossy(), &prefix);
+                }
+                ["map", partial_arg] => {
+                    let options = vec!["load"];
+                    self.current_suggestions = options
+                        .into_iter()
+                        .filter(|opt| opt.starts_with(partial_arg))
+                        .map(|s| s.to_string())
+                        .collect();
+                }
+                ["map"] if ends_with_space => {
+                    self.current_suggestions = vec!["load".to_string()];
+                }
+
+                ["serial", _sub @ ("list" | "ls"), partial_arg] => {
+                    let options = vec!["--detail", "-d"];
+                    self.current_suggestions = options
+                        .into_iter()
+                        .filter(|opt| opt.starts_with(partial_arg))
+                        .map(|s| s.to_string())
+                        .collect();
+                }
+                ["serial", _sub @ ("list" | "ls")] if ends_with_space => {
+                    self.current_suggestions = vec![
+                        "--detail".to_string(),
+                        "-d".to_string(),
+                        "<path>".to_string(),
+                    ];
+                }
+                ["serial", partial_subcommand] => {
+                    let options = vec![("list", "list (ls)")];
+                    self.current_suggestions = options
+                        .into_iter()
+                        .filter(|(cmd, _)| {
+                            cmd.starts_with(partial_subcommand)
+                                || "ls".starts_with(partial_subcommand)
+                        })
+                        .map(|(_, display)| display.to_string())
+                        .collect();
+                }
+                ["serial"] if ends_with_space => {
+                    self.current_suggestions = vec!["list (ls)".to_string()];
+                }
+                ["save", _sub @ ("points" | "p"), partial_arg] => {
+                    let options = vec!["--output", "-o"];
+                    self.current_suggestions = options
+                        .into_iter()
+                        .filter(|opt| opt.starts_with(partial_arg))
+                        .map(|s| s.to_string())
+                        .collect();
+                }
+                ["save", _sub @ ("points" | "p")] if ends_with_space => {
+                    self.current_suggestions = vec![
+                        "--output".to_string(),
+                        "-o".to_string(),
+                        "<file path>".to_string(),
+                    ];
+                }
+                ["save", partial_subcommand] => {
+                    let options = vec![("image", "image (i)"), ("points", "points (p)")];
+                    self.current_suggestions = options
+                        .into_iter()
+                        .filter(|(cmd, _)| {
+                            cmd.starts_with(partial_subcommand)
+                                || "i".starts_with(partial_subcommand)
+                                || "p".starts_with(partial_subcommand)
+                        })
+                        .map(|(_, display)| display.to_string())
+                        .collect();
+                }
+                ["save"] if ends_with_space => {
+                    self.current_suggestions =
+                        vec!["image (i)".to_string(), "points (p)".to_string()];
+                }
+                [partial_command] => {
+                    let all_commands = vec![
+                        "help",
+                        "h",
+                        "lidar",
+                        "slam",
+                        "demo",
+                        "set",
+                        "serial",
+                        "debug-storage",
+                        "version",
+                        "quit",
+                        "q",
+                        "clear",
+                        "save",
+                    ];
+                    self.current_suggestions = all_commands
+                        .into_iter()
+                        .filter(|cmd| cmd.starts_with(partial_command))
+                        .map(|s| s.to_string())
+                        .collect();
+                }
+                _ => {}
+            }
+        }
+    }
 }
 
 impl eframe::App for MyApp {
@@ -838,207 +1040,7 @@ impl eframe::App for MyApp {
 
                     // --- サジェスト候補の生成 ---
                     if text_edit_response.changed() || self.input_string.is_empty() {
-                        let input = self.input_string.trim_start();
-                        self.current_suggestions.clear(); // 毎回クリアしてから再計算
-                        self.suggestion_selection_index = None; // 選択もリセット
-
-                        if !input.is_empty() {
-                            let parts: Vec<&str> = input.split_whitespace().collect();
-                            let ends_with_space = input.ends_with(' ');
-
-                            match parts.as_slice() {
-                                ["demo"] if ends_with_space => {
-                                    self.current_suggestions = vec![
-                                        "scan".to_string(),
-                                        "ripple".to_string(),
-                                        "breathing".to_string(),
-                                        "table".to_string(),
-                                    ];
-                                }
-                                ["demo", partial_arg] => {
-                                    let options = vec!["scan", "ripple", "breathing", "table"];
-                                    self.current_suggestions = options
-                                        .into_iter()
-                                        .filter(|opt| opt.starts_with(partial_arg))
-                                        .map(|s| s.to_string())
-                                        .collect();
-                                }
-                                ["lidar", "set", "path", _id_str] if ends_with_space => {
-                                    self.current_suggestions = vec!["<path>".to_string()];
-                                }
-                                ["lidar", "set", "path"] if ends_with_space => {
-                                    self.current_suggestions = vec!["<id>".to_string()];
-                                }
-                                ["lidar", "set", partial_subcommand] => {
-                                    let options = vec!["path"];
-                                    self.current_suggestions = options
-                                        .into_iter()
-                                        .filter(|opt| opt.starts_with(partial_subcommand))
-                                        .map(|s| s.to_string())
-                                        .collect();
-                                }
-                                ["lidar", "set"] if ends_with_space => {
-                                    self.current_suggestions = vec!["path".to_string()];
-                                }
-                                ["lidar", "slam-toggle"] if ends_with_space => {
-                                    self.current_suggestions = vec!["<id>".to_string()];
-                                }
-                                ["lidar", "slam-toggle", _id_str] if ends_with_space => {
-                                    self.current_suggestions.clear();
-                                }
-                                ["lidar", partial_subcommand] => {
-                                    let options = vec!["entermode", "mode", "set", "slam-toggle"];
-                                    self.current_suggestions = options
-                                        .into_iter()
-                                        .filter(|opt| opt.starts_with(partial_subcommand))
-                                        .map(|s| s.to_string())
-                                        .collect();
-                                }
-                                ["lidar"] if ends_with_space => {
-                                    self.current_suggestions = vec![
-                                        "entermode".to_string(),
-                                        "mode".to_string(),
-                                        "set".to_string(),
-                                        "slam-toggle".to_string(),
-                                    ];
-                                }
-                                ["slam"] if ends_with_space => {
-                                    self.current_suggestions = vec![
-                                        "getlidar".to_string(),
-                                        "continuous".to_string(),
-                                        "pause".to_string(),
-                                    ];
-                                }
-                                ["slam", partial_subcommand] => {
-                                    let options = vec!["getlidar", "continuous", "pause"];
-                                    self.current_suggestions = options
-                                        .into_iter()
-                                        .filter(|opt| opt.starts_with(partial_subcommand))
-                                        .map(|s| s.to_string())
-                                        .collect();
-                                }
-
-                                ["map", "load"] if ends_with_space => {
-                                    self.current_suggestions = get_path_suggestions(".", "");
-                                }
-                                ["map", "load", partial_path] => {
-                                    let path_buf = PathBuf::from(partial_path);
-                                    let (dir_to_read, prefix) = if partial_path.ends_with('/')
-                                        || (path_buf.is_dir() && path_buf.exists())
-                                    {
-                                        (path_buf, "".to_string())
-                                    } else {
-                                        let parent = path_buf.parent().unwrap_or(Path::new(""));
-                                        let file_name = path_buf
-                                            .file_name()
-                                            .unwrap_or_default()
-                                            .to_string_lossy()
-                                            .to_string();
-                                        (parent.to_path_buf(), file_name)
-                                    };
-                                    self.current_suggestions = get_path_suggestions(
-                                        &dir_to_read.to_string_lossy(),
-                                        &prefix,
-                                    );
-                                }
-                                ["map", partial_arg] => {
-                                    let options = vec!["load"];
-                                    self.current_suggestions = options
-                                        .into_iter()
-                                        .filter(|opt| opt.starts_with(partial_arg))
-                                        .map(|s| s.to_string())
-                                        .collect();
-                                }
-                                ["map"] if ends_with_space => {
-                                    self.current_suggestions = vec!["load".to_string()];
-                                }
-
-                                ["serial", _sub @ ("list" | "ls"), partial_arg] => {
-                                    let options = vec!["--detail", "-d"];
-                                    self.current_suggestions = options
-                                        .into_iter()
-                                        .filter(|opt| opt.starts_with(partial_arg))
-                                        .map(|s| s.to_string())
-                                        .collect();
-                                }
-                                ["serial", _sub @ ("list" | "ls")] if ends_with_space => {
-                                    self.current_suggestions = vec![
-                                        "--detail".to_string(),
-                                        "-d".to_string(),
-                                        "<path>".to_string(),
-                                    ];
-                                }
-                                ["serial", partial_subcommand] => {
-                                    let options = vec![("list", "list (ls)")];
-                                    self.current_suggestions = options
-                                        .into_iter()
-                                        .filter(|(cmd, _)| {
-                                            cmd.starts_with(partial_subcommand)
-                                                || "ls".starts_with(partial_subcommand)
-                                        })
-                                        .map(|(_, display)| display.to_string())
-                                        .collect();
-                                }
-                                ["serial"] if ends_with_space => {
-                                    self.current_suggestions = vec!["list (ls)".to_string()];
-                                }
-                                ["save", _sub @ ("points" | "p"), partial_arg] => {
-                                    let options = vec!["--output", "-o"];
-                                    self.current_suggestions = options
-                                        .into_iter()
-                                        .filter(|opt| opt.starts_with(partial_arg))
-                                        .map(|s| s.to_string())
-                                        .collect();
-                                }
-                                ["save", _sub @ ("points" | "p")] if ends_with_space => {
-                                    self.current_suggestions = vec![
-                                        "--output".to_string(),
-                                        "-o".to_string(),
-                                        "<file path>".to_string(),
-                                    ];
-                                }
-                                ["save", partial_subcommand] => {
-                                    let options =
-                                        vec![("image", "image (i)"), ("points", "points (p)")];
-                                    self.current_suggestions = options
-                                        .into_iter()
-                                        .filter(|(cmd, _)| {
-                                            cmd.starts_with(partial_subcommand)
-                                                || "i".starts_with(partial_subcommand)
-                                                || "p".starts_with(partial_subcommand)
-                                        })
-                                        .map(|(_, display)| display.to_string())
-                                        .collect();
-                                }
-                                ["save"] if ends_with_space => {
-                                    self.current_suggestions =
-                                        vec!["image (i)".to_string(), "points (p)".to_string()];
-                                }
-                                [partial_command] => {
-                                    let all_commands = vec![
-                                        "help",
-                                        "h",
-                                        "lidar",
-                                        "slam",
-                                        "demo",
-                                        "set",
-                                        "serial",
-                                        "debug-storage",
-                                        "version",
-                                        "quit",
-                                        "q",
-                                        "clear",
-                                        "save",
-                                    ];
-                                    self.current_suggestions = all_commands
-                                        .into_iter()
-                                        .filter(|cmd| cmd.starts_with(partial_command))
-                                        .map(|s| s.to_string())
-                                        .collect();
-                                }
-                                _ => {}
-                            }
-                        }
+                        self.update_suggestions();
                     }
 
                     // --- サジェスト候補の表示 ---
@@ -1161,6 +1163,8 @@ impl eframe::App for MyApp {
                                         ctx.input_mut(|i| {
                                             i.consume_key(egui::Modifiers::NONE, egui::Key::Tab)
                                         });
+
+                                        self.update_suggestions(); // Update suggestions immediately after completion
                                     }
                                 }
                             }
