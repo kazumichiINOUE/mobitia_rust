@@ -1075,6 +1075,7 @@ impl eframe::App for MyApp {
                         let up_pressed = i.key_pressed(egui::Key::ArrowUp);
                         let down_pressed = i.key_pressed(egui::Key::ArrowDown);
                         let enter_pressed = i.key_pressed(egui::Key::Enter);
+                        let tab_pressed = i.key_pressed(egui::Key::Tab);
 
                         // Suggestion navigation (Ctrl+n/p)
                         if !self.current_suggestions.is_empty() {
@@ -1113,8 +1114,8 @@ impl eframe::App for MyApp {
                             }
                         }
 
-                        // Enter key handling (completion or submission)
-                        if enter_pressed {
+                        // Tab key handling (completion)
+                        if tab_pressed {
                             if !self.current_suggestions.is_empty()
                                 && self.suggestion_selection_index.is_some()
                             {
@@ -1156,52 +1157,54 @@ impl eframe::App for MyApp {
                                         self.update_suggestions();
                                         self.suggestion_selection_index = None;
                                         ctx.input_mut(|i| {
-                                            i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
+                                            i.consume_key(egui::Modifiers::NONE, egui::Key::Tab)
                                         });
                                     }
                                 }
-                            } else {
-                                // Case 2: No suggestion selected. EXECUTE command.
-                                ctx.input_mut(|i| {
-                                    i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
+                            }
+                        }
+
+                        // Enter key handling (submission)
+                        if enter_pressed {
+                            ctx.input_mut(|i| {
+                                i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
+                            });
+                            let full_command_line_owned = self.input_string.trim().to_owned();
+                            if !full_command_line_owned.is_empty() {
+                                self.command_history.push(ConsoleOutputEntry {
+                                    text: format!("> {}", full_command_line_owned),
+                                    group_id: self.next_group_id,
                                 });
-                                let full_command_line_owned = self.input_string.trim().to_owned();
-                                if !full_command_line_owned.is_empty() {
-                                    self.command_history.push(ConsoleOutputEntry {
-                                        text: format!("> {}", full_command_line_owned),
-                                        group_id: self.next_group_id,
-                                    });
-                                    self.user_command_history
-                                        .push(full_command_line_owned.clone());
-                                    self.history_index = self.user_command_history.len();
-                                    match shlex::split(&full_command_line_owned) {
-                                        Some(args) => match Cli::try_parse_from(args.into_iter()) {
-                                            Ok(cli_command) => {
-                                                crate::cli::handle_command(self, ctx, cli_command);
-                                            }
-                                            Err(e) => {
-                                                for line in e.to_string().lines() {
-                                                    self.command_history.push(ConsoleOutputEntry {
-                                                        text: line.to_string(),
-                                                        group_id: self.next_group_id,
-                                                    });
-                                                }
-                                            }
-                                        },
-                                        None => {
-                                            self.command_history.push(ConsoleOutputEntry {
-                                                text: "ERROR: Failed to parse command line."
-                                                    .to_string(),
-                                                group_id: self.next_group_id,
-                                            });
+                                self.user_command_history
+                                    .push(full_command_line_owned.clone());
+                                self.history_index = self.user_command_history.len();
+                                match shlex::split(&full_command_line_owned) {
+                                    Some(args) => match Cli::try_parse_from(args.into_iter()) {
+                                        Ok(cli_command) => {
+                                            crate::cli::handle_command(self, ctx, cli_command);
                                         }
+                                        Err(e) => {
+                                            for line in e.to_string().lines() {
+                                                self.command_history.push(ConsoleOutputEntry {
+                                                    text: line.to_string(),
+                                                    group_id: self.next_group_id,
+                                                });
+                                            }
+                                        }
+                                    },
+                                    None => {
+                                        self.command_history.push(ConsoleOutputEntry {
+                                            text: "ERROR: Failed to parse command line."
+                                                .to_string(),
+                                            group_id: self.next_group_id,
+                                        });
                                     }
                                 }
-                                self.input_string.clear();
-                                self.current_suggestions.clear();
-                                self.suggestion_selection_index = None;
-                                text_edit_response.request_focus();
                             }
+                            self.input_string.clear();
+                            self.current_suggestions.clear();
+                            self.suggestion_selection_index = None;
+                            text_edit_response.request_focus();
                         }
 
                         // History navigation (ArrowUp/Down) - separate from suggestions
