@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
-use std::path::PathBuf; // 追加
+use std::path::{Path, PathBuf}; // 追加
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread;
@@ -923,8 +923,28 @@ impl eframe::App for MyApp {
                                         .collect();
                                 }
 
-                                ["map"] if ends_with_space => {
-                                    self.current_suggestions = vec!["load".to_string()];
+                                ["map", "load"] if ends_with_space => {
+                                    self.current_suggestions = get_path_suggestions(".", "");
+                                }
+                                ["map", "load", partial_path] => {
+                                    let path_buf = PathBuf::from(partial_path);
+                                    let (dir_to_read, prefix) = if partial_path.ends_with('/')
+                                        || (path_buf.is_dir() && path_buf.exists())
+                                    {
+                                        (path_buf, "".to_string())
+                                    } else {
+                                        let parent = path_buf.parent().unwrap_or(Path::new(""));
+                                        let file_name = path_buf
+                                            .file_name()
+                                            .unwrap_or_default()
+                                            .to_string_lossy()
+                                            .to_string();
+                                        (parent.to_path_buf(), file_name)
+                                    };
+                                    self.current_suggestions = get_path_suggestions(
+                                        &dir_to_read.to_string_lossy(),
+                                        &prefix,
+                                    );
                                 }
                                 ["map", partial_arg] => {
                                     let options = vec!["load"];
@@ -933,6 +953,9 @@ impl eframe::App for MyApp {
                                         .filter(|opt| opt.starts_with(partial_arg))
                                         .map(|s| s.to_string())
                                         .collect();
+                                }
+                                ["map"] if ends_with_space => {
+                                    self.current_suggestions = vec!["load".to_string()];
                                 }
 
                                 ["serial", _sub @ ("list" | "ls"), partial_arg] => {
@@ -1414,4 +1437,34 @@ impl eframe::App for MyApp {
 
         ctx.request_repaint();
     }
+}
+
+/// Helper function for path suggestions.
+/// Lists entries in `dir_path` that start with `prefix`.
+fn get_path_suggestions(dir_path: &str, prefix: &str) -> Vec<String> {
+    let mut suggestions = Vec::new();
+    let dir_to_read = if dir_path.is_empty() {
+        Path::new(".")
+    } else {
+        Path::new(dir_path)
+    };
+
+    if let Ok(entries) = fs::read_dir(dir_to_read) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            if let Some(file_name_os) = entry.file_name().to_str() {
+                if file_name_os.starts_with(prefix) {
+                    let mut path_buf = dir_to_read.to_path_buf();
+                    path_buf.push(file_name_os);
+
+                    let mut suggestion_str = path_buf.to_string_lossy().to_string();
+                    if entry.path().is_dir() {
+                        suggestion_str.push('/');
+                    }
+                    suggestions.push(suggestion_str);
+                }
+            }
+        }
+    }
+    suggestions.sort();
+    suggestions
 }
