@@ -121,8 +121,8 @@ impl DifferentialEvolutionSolver {
         const WXY: f32 = 0.8;
         const WA: f32 = std::f32::consts::PI * 25.0 / 180.0;
         const POPULATION_SIZE: usize = 200;
-        const GENERATIONS: usize = 100;
-        const F: f32 = 0.5;
+        const GENERATIONS: usize = 20;     // Reduced for faster computation
+        const F: f32 = 0.5; // Mutation factor
         const CR: f32 = 0.2;
 
         let mut rng = rand::thread_rng();
