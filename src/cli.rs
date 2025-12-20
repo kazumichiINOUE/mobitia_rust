@@ -3,6 +3,7 @@ use chrono::Local;
 use clap::{CommandFactory, Parser, Subcommand};
 use dirs;
 use eframe::egui;
+use std::path::PathBuf;
 use std::thread;
 
 /// CLI Commands for Mobitia application
@@ -65,8 +66,13 @@ pub enum Commands {
 pub enum MapCommands {
     /// Load a map from a specified directory.
     Load {
-        /// Path to the directory containing map data (e.g., ./slam_results).
-        path: String,
+        /// Path to the directory containing map data (e.g., ./slam_results/slam_result_20251220-211047).
+        path: PathBuf,
+    },
+    /// List and sequentially load maps from a parent directory.
+    ListAndLoad {
+        /// Path to the parent directory containing multiple slam_result_YYYYMMDD-HHMMSS directories. (e.g., ./slam_results)
+        path: PathBuf,
     },
 }
 
@@ -570,11 +576,11 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
         Commands::Map { command } => match command {
             MapCommands::Load { path } => {
                 app.command_history.push(ConsoleOutputEntry {
-                    text: format!("Loading map from '{}'...", path),
+                    text: format!("Loading map from '{}'...", path.display()),
                     group_id: current_group_id,
                 });
 
-                match app.load_map_from_directory(&path) {
+                match app.load_map_from_directory(ctx, &path.to_string_lossy().into_owned()) {
                     Ok(_) => {
                         app.command_history.push(ConsoleOutputEntry {
                             text: "Map loaded successfully.".to_string(),
@@ -590,7 +596,144 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                         });
                     }
                 }
-            }
-        },
+            },
+            MapCommands::ListAndLoad { path } => {
+                let msg = format!("Loading individual submaps from '{}'...", path.display());
+                println!("{}", msg);
+                app.command_history.push(ConsoleOutputEntry {
+                    text: msg,
+                    group_id: current_group_id,
+                });
+
+                // ロード開始時にマップをクリア
+                app.current_map_points.clear();
+                app.submaps.clear();
+                app.robot_trajectory.clear();
+                app.slam_map_bounding_box = None;
+
+                let submaps_base_path = path.join("submaps");
+                if !submaps_base_path.exists() || !submaps_base_path.is_dir() {
+                    let msg_error = format!(
+                        "ERROR: Submaps directory not found at: {}",
+                        submaps_base_path.display()
+                    );
+                    println!("{}", msg_error);
+                    app.command_history.push(ConsoleOutputEntry {
+                        text: msg_error,
+                        group_id: current_group_id,
+                    });
+                    return;
+                }
+
+                let pattern = regex::Regex::new(r"submap_\d{3}").unwrap();
+                let mut found_submaps = Vec::new();
+
+                match std::fs::read_dir(&submaps_base_path) {
+                    Ok(entries) => {
+                        for entry in entries.filter_map(|entry| entry.ok()) {
+                            if entry.file_type().map_or(false, |ft| ft.is_dir()) {
+                                let file_name = entry.file_name();
+                                if let Some(name) = file_name.to_str() {
+                                    if pattern.is_match(name) {
+                                        found_submaps.push(entry.path());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        let msg_error = format!("ERROR: Failed to read submaps directory '{}': {}", submaps_base_path.display(), e);
+                        println!("{}", msg_error);
+                        app.command_history.push(ConsoleOutputEntry {
+                            text: msg_error,
+                            group_id: current_group_id,
+                        });
+                        return;
+                    }
+                }
+
+                if found_submaps.is_empty() {
+                    let msg = format!(
+                        "No submaps found matching 'submap_NNN' in '{}'.",
+                        submaps_base_path.display()
+                    );
+                    println!("{}", msg);
+                    app.command_history.push(ConsoleOutputEntry {
+                        text: msg,
+                        group_id: current_group_id,
+                    });
+                    return;
+                }
+
+                found_submaps.sort(); // 名前順にソート (submap_000, submap_001, ...)
+
+                let msg_found_count = format!("Found {} submaps:", found_submaps.len());
+                println!("{}", msg_found_count);
+                app.command_history.push(ConsoleOutputEntry {
+                    text: msg_found_count,
+                    group_id: current_group_id,
+                });
+                for submap_path in &found_submaps {
+                    let msg_submap_path = format!("  - {}", submap_path.display());
+                    println!("{}", msg_submap_path);
+                    app.command_history.push(ConsoleOutputEntry {
+                        text: msg_submap_path,
+                        group_id: current_group_id,
+                    });
+                }
+
+                let mut loaded_any = false;
+                for submap_path in found_submaps {
+                    let msg_loading = format!("  Loading submap from '{}'...", submap_path.display());
+                    println!("{}", msg_loading);
+                    app.command_history.push(ConsoleOutputEntry {
+                        text: msg_loading,
+                        group_id: current_group_id,
+                    });
+                    match app.load_single_submap(ctx, &submap_path.to_string_lossy().into_owned()) {
+                        Ok(_) => {
+                            let msg_success = format!("  Successfully loaded submap from '{}'.", submap_path.display());
+                            println!("{}", msg_success);
+                            app.command_history.push(ConsoleOutputEntry {
+                                text: msg_success,
+                                group_id: current_group_id,
+                            });
+                            loaded_any = true;
+                        }
+                        Err(e) => {
+                            let msg_error = format!("  ERROR: Failed to load submap from '{}': {}", submap_path.display(), e);
+                            println!("{}", msg_error);
+                            app.command_history.push(ConsoleOutputEntry {
+                                text: msg_error,
+                                group_id: current_group_id,
+                            });
+                        }
+                    }
+                }
+
+                // すべてのサブマップがロードされた後にバウンディングボックスを計算 (app.rsで実施済みだが念のため)
+                if !app.current_map_points.is_empty() {
+                    let egui_points: Vec<egui::Pos2> =
+                        app.current_map_points.iter().map(|p| egui::pos2(p.x, p.y)).collect();
+                    app.slam_map_bounding_box = Some(egui::Rect::from_points(&egui_points));
+                }
+
+                if loaded_any {
+                    let msg = "All submap loading attempts completed.".to_string();
+                    println!("{}", msg);
+                    app.command_history.push(ConsoleOutputEntry {
+                        text: msg,
+                        group_id: current_group_id,
+                    });
+                    app.app_mode = AppMode::Slam; // マップ表示に切り替え
+                } else {
+                    let msg = "No submaps were loaded successfully.".to_string();
+                    println!("{}", msg);
+                    app.command_history.push(ConsoleOutputEntry {
+                        text: msg,
+                        group_id: current_group_id,
+                    });
+                }
+            },        },
     }
 }

@@ -122,12 +122,12 @@ impl DifferentialEvolutionSolver {
         map_update_method: MapUpdateMethod, // 引数を追加
     ) -> (Isometry2<f32>, f64) {
         // DE Parameters
-        const WXY: f32 = 1.5;
-        const WA: f32 = std::f32::consts::PI * 25.0 / 180.0;
+        const WXY: f32 = 0.8;
+        const WA: f32 = std::f32::consts::PI * 35.0 / 180.0;
         const POPULATION_SIZE: usize = 200;
         const GENERATIONS: usize = 100; // Reduced for faster computation
-        const F: f32 = 0.5; // Mutation factor
-        const CR: f32 = 0.2;
+        const F: f32 = 0.1; // Mutation factor
+        const CR: f32 = 0.6;
 
         let mut rng = rand::thread_rng();
 

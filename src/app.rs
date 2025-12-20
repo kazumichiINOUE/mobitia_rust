@@ -430,7 +430,62 @@ impl MyApp {
         self.requested_point_save_path = Some(path);
     }
 
-    pub fn load_map_from_directory(&mut self, base_path_str: &str) -> Result<()> {
+    pub fn load_single_submap(&mut self, ctx: &egui::Context, submap_path_str: &str) -> Result<()> {
+        let path = std::path::PathBuf::from(submap_path_str);
+        let info_path = path.join("info.yaml");
+        let points_path = path.join("points.txt");
+
+        if !info_path.exists() || !points_path.exists() {
+            return Err(anyhow::anyhow!(
+                "Submap info.yaml or points.txt not found in: {}",
+                path.display()
+            ));
+        }
+
+        // メタデータを読み込み
+        let info_file = fs::File::open(info_path)?;
+        let submap_info: Submap = serde_yaml::from_reader(info_file)?;
+
+        // Isometry2を復元
+        let global_pose = Isometry2::new(
+            nalgebra::Vector2::new(submap_info.pose_x, submap_info.pose_y),
+            submap_info.pose_theta,
+        );
+
+        // 点群データを読み込み
+        let points_data = fs::read_to_string(points_path)?;
+        let submap_points_local: Vec<Point2<f32>> = points_data
+            .lines()
+            .filter_map(|line| {
+                let mut parts = line.split_whitespace();
+                let x = parts.next()?.parse::<f32>().ok()?;
+                let y = parts.next()?.parse::<f32>().ok()?;
+                Some(Point2::new(x, y))
+            })
+            .collect();
+
+        // ワールド座標に変換
+        let transformed_points: Vec<Point2<f32>> = submap_points_local.into_iter().map(|p| global_pose * p).collect();
+
+        // 描画用のcurrent_map_pointsに現在のサブマップの点群を追加
+        self.current_map_points.extend(transformed_points);
+
+        // サブマップリストと軌跡リストに追加
+        self.submaps.insert(submap_info.id, submap_info.clone());
+        self.robot_trajectory.push((
+            egui::pos2(global_pose.translation.x, global_pose.translation.y),
+            global_pose.rotation.angle(),
+        ));
+
+        // UIの更新をリクエスト
+        ctx.request_repaint();
+        // 視覚的な確認のため、短い遅延を入れる (UIフリーズを避けるため、本来は非同期化が必要)
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        Ok(())
+    }
+
+    pub fn load_map_from_directory(&mut self, ctx: &egui::Context, base_path_str: &str) -> Result<()> {
         let base_path = std::path::PathBuf::from(base_path_str);
         let submaps_path = base_path.join("submaps");
 
@@ -445,65 +500,28 @@ impl MyApp {
         self.current_map_points.clear();
         self.submaps.clear();
         self.robot_trajectory.clear();
+        self.slam_map_bounding_box = None; // ロード開始時にバウンディングボックスもクリア
 
-        let mut loaded_points: Vec<Point2<f32>> = Vec::new();
+        // 読み込み済みの点群を一時的に保持 (バウンディングボックス計算用)
+        let mut all_loaded_points_for_bounding_box: Vec<Point2<f32>> = Vec::new();
 
         // サブマップディレクトリを読み込んでソートする (submap_000, submap_001 ...)
-        let mut submap_dirs: Vec<_> = fs::read_dir(submaps_path)?
+        let mut submap_dirs: Vec<_> = fs::read_dir(&submaps_path)?
             .filter_map(|entry| entry.ok())
             .filter(|entry| entry.path().is_dir())
             .collect();
         submap_dirs.sort_by_key(|dir| dir.path());
 
         for entry in submap_dirs {
-            let path = entry.path();
-            let info_path = path.join("info.yaml");
-            let points_path = path.join("points.txt");
-
-            if info_path.exists() && points_path.exists() {
-                // メタデータを読み込み
-                let info_file = fs::File::open(info_path)?;
-                let submap_info: Submap = serde_yaml::from_reader(info_file)?;
-
-                // Isometry2を復元
-                let global_pose = Isometry2::new(
-                    nalgebra::Vector2::new(submap_info.pose_x, submap_info.pose_y),
-                    submap_info.pose_theta,
-                );
-
-                // 点群データを読み込み
-                let points_data = fs::read_to_string(points_path)?;
-                let submap_points_local: Vec<Point2<f32>> = points_data
-                    .lines()
-                    .filter_map(|line| {
-                        let mut parts = line.split_whitespace();
-                        let x = parts.next()?.parse::<f32>().ok()?;
-                        let y = parts.next()?.parse::<f32>().ok()?;
-                        Some(Point2::new(x, y))
-                    })
-                    .collect();
-
-                // ワールド座標に変換して追加
-                let transformed_points = submap_points_local.into_iter().map(|p| global_pose * p);
-                loaded_points.extend(transformed_points);
-
-                // サブマップリストと軌跡リストに追加
-                self.submaps.insert(submap_info.id, submap_info.clone());
-                self.robot_trajectory.push((
-                    egui::pos2(global_pose.translation.x, global_pose.translation.y),
-                    global_pose.rotation.angle(),
-                ));
-            }
+            let submap_path = entry.path();
+            self.load_single_submap(ctx, &submap_path.to_string_lossy().into_owned())?;
         }
 
-        if !loaded_points.is_empty() {
-            // バウンディングボックスを計算して保存
+        // すべてのサブマップがロードされた後にバウンディングボックスを計算
+        if !self.current_map_points.is_empty() {
             let egui_points: Vec<egui::Pos2> =
-                loaded_points.iter().map(|p| egui::pos2(p.x, p.y)).collect();
+                self.current_map_points.iter().map(|p| egui::pos2(p.x, p.y)).collect();
             self.slam_map_bounding_box = Some(egui::Rect::from_points(&egui_points));
-
-            self.current_map_points = loaded_points;
-            // TODO: 占有格子地図の再生成も必要に応じて行う
             self.slam_mode = SlamMode::Paused; // ロード後はPausedモードにする
         }
 
@@ -592,6 +610,30 @@ impl MyApp {
                         .collect();
                 }
 
+                ["map", "list-and-load"] if ends_with_space => {
+                    // map list-and-load の場合、デフォルトで ./slam_results/ をサジェスト
+                    self.current_suggestions = vec!["./slam_results/".to_string()];
+                    // もしカレントディレクトリにslam_resultsがない場合のために、一般的なパスも追加するかもしれない
+                    // for now, just suggest the common parent
+                }
+                ["map", "list-and-load", partial_path] => {
+                    let path_buf = PathBuf::from(partial_path);
+                    let (dir_to_read, prefix) = if partial_path.ends_with('/')
+                        || (path_buf.is_dir() && path_buf.exists())
+                    {
+                        (path_buf, "".to_string())
+                    } else {
+                        let parent = path_buf.parent().unwrap_or(Path::new(""));
+                        let file_name = path_buf
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .to_string();
+                        (parent.to_path_buf(), file_name)
+                    };
+                    self.current_suggestions =
+                        get_path_suggestions(&dir_to_read.to_string_lossy(), &prefix);
+                }
                 ["map", "load"] if ends_with_space => {
                     self.current_suggestions = get_path_suggestions(".", "");
                 }
@@ -614,7 +656,7 @@ impl MyApp {
                         get_path_suggestions(&dir_to_read.to_string_lossy(), &prefix);
                 }
                 ["map", partial_arg] => {
-                    let options = vec!["load"];
+                    let options = vec!["load", "list-and-load"];
                     self.current_suggestions = options
                         .into_iter()
                         .filter(|opt| opt.starts_with(partial_arg))
@@ -622,7 +664,7 @@ impl MyApp {
                         .collect();
                 }
                 ["map"] if ends_with_space => {
-                    self.current_suggestions = vec!["load".to_string()];
+                    self.current_suggestions = vec!["load".to_string(), "list-and-load".to_string()];
                 }
 
                 ["serial", _sub @ ("list" | "ls"), partial_arg] => {
@@ -902,6 +944,7 @@ impl eframe::App for MyApp {
             ctx.request_repaint();
         }
         while let Ok(msg) = self.command_output_receiver.try_recv() {
+            println!("{}", msg); // ここで標準出力にメッセージを出力
             self.command_history.push(ConsoleOutputEntry {
                 text: msg,
                 group_id: self.next_group_id,

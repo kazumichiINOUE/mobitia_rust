@@ -19,6 +19,7 @@ dirs = "5.0.1"
 chrono = "0.4.31" # For timestamps, etc.
 serde = { version = "1.0", features = ["derive"] } # Added for serialization
 serde_yaml = "0.9" # Added for YAML serialization
+regex = "1.10.2" # Added for regex matching
 anyhow = "1.0" # Added
 rand = "0.8" # Added
 bresenham = "0.1.1"
