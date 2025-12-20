@@ -1,12 +1,12 @@
 pub mod differential_evolution;
 
+use bresenham::Bresenham;
 use lazy_static::lazy_static;
 use nalgebra::{Isometry2, Point2};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
-use bresenham::Bresenham;
 
 // --- Map Configuration ---
 pub const CSIZE: f32 = 0.025;
@@ -21,11 +21,12 @@ const DECAY_RATE: f64 = 0.5; // For map decay
 pub enum MapUpdateMethod {
     Binary,
     Probabilistic,
+    Hybrid,
 }
 
 // --- Constants for Probabilistic Update ---
 const PROB_OCCUPIED: f64 = 0.6; // Probability of a cell being occupied upon a "hit"
-const PROB_FREE: f64 = 0.4;     // Probability of a cell being free upon a "miss"
+const PROB_FREE: f64 = 0.4; // Probability of a cell being free upon a "miss"
 
 lazy_static! {
     static ref LOG_ODDS_OCC: f64 = (PROB_OCCUPIED / (1.0 - PROB_OCCUPIED)).ln();
@@ -35,8 +36,6 @@ lazy_static! {
 // Clamp limits for log-odds to prevent infinite values and allow for unlearning
 const LOG_ODDS_CLAMP_MAX: f64 = 5.0;
 const LOG_ODDS_CLAMP_MIN: f64 = -5.0;
-
-
 
 /// Represents a 2D occupancy grid map where each cell holds a log-odds value.
 pub struct OccupancyGrid {
@@ -85,7 +84,7 @@ pub struct SlamManager {
     current_submap_timestamps_buffer: Vec<u128>,
     submaps: HashMap<usize, Submap>,
     output_base_dir: std::path::PathBuf,
-    
+
     // キャッシュされた点群
     cached_map_points: Vec<Point2<f32>>,
     is_map_dirty: bool, // 地図が更新されたかを示すフラグ
@@ -116,7 +115,9 @@ impl SlamManager {
         // --- Map Decay ---
         // Decay the entire map slightly to forget old, unobserved areas.
         // This helps prevent matching against stale parts of the map.
-        if self.map_update_method == MapUpdateMethod::Probabilistic {
+        if self.map_update_method == MapUpdateMethod::Probabilistic
+            || self.map_update_method == MapUpdateMethod::Hybrid
+        {
             for cell in self.map_gmap.data.iter_mut() {
                 *cell *= DECAY_RATE;
             }
@@ -130,9 +131,12 @@ impl SlamManager {
             self.is_initial_scan = false;
         } else {
             // NOTE: DE評価関数の修正が次のステップで必要
-            let (best_pose, _score) =
-                self.de_solver
-                    .optimize_de(&self.map_gmap, &current_scan, self.robot_pose, self.map_update_method);
+            let (best_pose, _score) = self.de_solver.optimize_de(
+                &self.map_gmap,
+                &current_scan,
+                self.robot_pose,
+                self.map_update_method,
+            );
             self.robot_pose = best_pose;
         }
 
@@ -140,7 +144,7 @@ impl SlamManager {
 
         // Update the occupancy grid based on the selected method
         match self.map_update_method {
-            MapUpdateMethod::Probabilistic => {
+            MapUpdateMethod::Probabilistic | MapUpdateMethod::Hybrid => {
                 self.update_grid_probabilistic(&current_scan, &pose);
             }
             MapUpdateMethod::Binary => {
@@ -150,7 +154,7 @@ impl SlamManager {
         self.is_map_dirty = true;
 
         // --- Submap generation logic (unchanged for now) ---
-        // TODO: This part might need refactoring as it relies on storing scans, 
+        // TODO: This part might need refactoring as it relies on storing scans,
         // which is not ideal for long-term probabilistic mapping.
         self.current_submap_scan_buffer.push(current_scan.clone());
         self.current_submap_robot_poses.push(self.robot_pose);
@@ -172,7 +176,7 @@ impl SlamManager {
         // This part updates the cells where the laser beams are considered to have hit an obstacle.
         self.update_occupied_space(scan, pose);
     }
-    
+
     /// Updates the cells that are considered free space based on the laser scan.
     fn update_free_space(&mut self, scan: &[Point2<f32>], pose: &Isometry2<f32>) {
         let robot_pos_map = world_to_map_coords(pose.translation.x, pose.translation.y);
@@ -183,18 +187,23 @@ impl SlamManager {
 
             // Use Bresenham's algorithm to trace the laser beam
             for (px, py) in Bresenham::new(robot_pos_map, endpoint_map) {
-                if px < 0 || px as usize >= MAP_WIDTH || py < 0 || py as usize >= MAP_HEIGHT { continue; }
+                if px < 0 || px as usize >= MAP_WIDTH || py < 0 || py as usize >= MAP_HEIGHT {
+                    continue;
+                }
                 let index = py as usize * MAP_WIDTH + px as usize;
-                
+
                 // Don't update the endpoint itself as free space
-                if (px, py) == endpoint_map { break; }
+                if (px, py) == endpoint_map {
+                    break;
+                }
 
                 // Update cell as free
-                self.map_gmap.data[index] = (self.map_gmap.data[index] + *LOG_ODDS_FREE).clamp(LOG_ODDS_CLAMP_MIN, LOG_ODDS_CLAMP_MAX);
+                self.map_gmap.data[index] = (self.map_gmap.data[index] + *LOG_ODDS_FREE)
+                    .clamp(LOG_ODDS_CLAMP_MIN, LOG_ODDS_CLAMP_MAX);
             }
         }
     }
-    
+
     /// Updates the cells that are considered occupied space based on the laser scan.
     fn update_occupied_space(&mut self, scan: &[Point2<f32>], pose: &Isometry2<f32>) {
         for endpoint_local in scan.iter() {
@@ -204,7 +213,8 @@ impl SlamManager {
             if ix >= 0 && (ix as usize) < MAP_WIDTH && iy >= 0 && (iy as usize) < MAP_HEIGHT {
                 let index = (iy as usize) * MAP_WIDTH + (ix as usize);
                 // Update cell as occupied
-                self.map_gmap.data[index] = (self.map_gmap.data[index] + *LOG_ODDS_OCC).clamp(LOG_ODDS_CLAMP_MIN, LOG_ODDS_CLAMP_MAX);
+                self.map_gmap.data[index] = (self.map_gmap.data[index] + *LOG_ODDS_OCC)
+                    .clamp(LOG_ODDS_CLAMP_MIN, LOG_ODDS_CLAMP_MAX);
             }
         }
     }
@@ -232,8 +242,8 @@ impl SlamManager {
         self.cached_map_points.clear();
         // Determine the threshold based on the map update method
         let threshold = match self.map_update_method {
-            MapUpdateMethod::Probabilistic => 0.0, // log-odds > 0 means P > 0.5
-            MapUpdateMethod::Binary => 0.5,         // binary map uses 1.0 for occupied
+            MapUpdateMethod::Probabilistic | MapUpdateMethod::Hybrid => 0.0, // log-odds > 0 means P > 0.5
+            MapUpdateMethod::Binary => 0.5, // binary map uses 1.0 for occupied
         };
 
         for y in 0..self.map_gmap.height {
@@ -250,7 +260,7 @@ impl SlamManager {
         self.is_map_dirty = false;
         &self.cached_map_points
     }
-    
+
     fn generate_and_save_submap(&mut self) {
         let submap_global_pose = self.current_submap_robot_poses[0];
 
@@ -270,13 +280,26 @@ impl SlamManager {
         let submap_path = self.output_base_dir.join("submaps").join(&submap_dir_name);
 
         fs::create_dir_all(&submap_path).expect("Failed to create submap directory");
-        
+
         let trajectory_file_name = "trajectory.txt";
         let trajectory_file_path = submap_path.join(trajectory_file_name);
 
-        let mut traj_file = fs::File::create(&trajectory_file_path).expect("Failed to create trajectory.txt");
-        for (pose, timestamp) in self.current_submap_robot_poses.iter().zip(self.current_submap_timestamps_buffer.iter()) {
-            writeln!(traj_file, "{} {} {} {}", timestamp, pose.translation.x, pose.translation.y, pose.rotation.angle()).expect("Failed to write trajectory data");
+        let mut traj_file =
+            fs::File::create(&trajectory_file_path).expect("Failed to create trajectory.txt");
+        for (pose, timestamp) in self
+            .current_submap_robot_poses
+            .iter()
+            .zip(self.current_submap_timestamps_buffer.iter())
+        {
+            writeln!(
+                traj_file,
+                "{} {} {} {}",
+                timestamp,
+                pose.translation.x,
+                pose.translation.y,
+                pose.rotation.angle()
+            )
+            .expect("Failed to write trajectory data");
         }
 
         let points_file_name = "points.txt";
@@ -289,7 +312,11 @@ impl SlamManager {
             writeln!(file, "{} {}", p.x, p.y).expect("Failed to write point");
         }
 
-        let submap_creation_timestamp = self.current_submap_timestamps_buffer.last().cloned().unwrap_or(0);
+        let submap_creation_timestamp = self
+            .current_submap_timestamps_buffer
+            .last()
+            .cloned()
+            .unwrap_or(0);
         let submap_info = Submap {
             id: submap_id,
             global_pose: submap_global_pose,
@@ -301,7 +328,8 @@ impl SlamManager {
             info_file: info_file_name.to_string(),
         };
 
-        let yaml_string = serde_yaml::to_string(&submap_info).expect("Failed to serialize submap info to YAML");
+        let yaml_string =
+            serde_yaml::to_string(&submap_info).expect("Failed to serialize submap info to YAML");
         fs::write(&info_file_path, yaml_string).expect("Failed to write info.yaml");
 
         self.submaps.insert(submap_id, submap_info);

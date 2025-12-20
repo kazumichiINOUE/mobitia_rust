@@ -18,7 +18,7 @@ use crate::cli::Cli;
 use crate::demo::DemoManager;
 pub use crate::demo::DemoMode;
 use crate::lidar::{start_lidar_thread, LidarInfo};
-use crate::slam::{SlamManager, MapUpdateMethod};
+use crate::slam::{MapUpdateMethod, SlamManager};
 
 // Lidar一台分の状態を保持する構造体
 #[derive(Clone)]
@@ -283,12 +283,13 @@ impl MyApp {
             slam_results_base_path.join(format!("slam_result_{}", timestamp_str));
 
         thread::spawn(move || {
+            let mut slam_manager = SlamManager::new(slam_results_path, MapUpdateMethod::Hybrid);
             //let mut slam_manager = SlamManager::new(slam_results_path, MapUpdateMethod::Binary);
-            let mut slam_manager = SlamManager::new(slam_results_path, MapUpdateMethod::Probabilistic);
+            //let mut slam_manager = SlamManager::new(slam_results_path, MapUpdateMethod::Probabilistic);
             let mut current_slam_mode = SlamMode::Manual;
             let mut last_slam_update_time = web_time::Instant::now(); // std::time::Instant の代わりにweb_time::Instantを使用
             const SLAM_UPDATE_INTERVAL_DURATION: web_time::Duration =
-                web_time::Duration::from_millis(500); // 500ミリ秒に変更
+                web_time::Duration::from_millis(1500); // 500ミリ秒に変更
 
             loop {
                 // UIスレッドからのコマンドを処理

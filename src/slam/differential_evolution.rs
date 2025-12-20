@@ -81,7 +81,7 @@ impl DifferentialEvolutionSolver {
                     if map_x >= 0 && map_x < width && map_y >= 0 && map_y < height {
                         let map_idx = (map_y as usize) * gmap.width + (map_x as usize);
                         let log_odds = gmap.data[map_idx];
-                        
+
                         // Calculate cell score based on map update method
                         let cell_score = match map_update_method {
                             MapUpdateMethod::Probabilistic => {
@@ -91,13 +91,17 @@ impl DifferentialEvolutionSolver {
                                     0.0
                                 }
                             }
-                            MapUpdateMethod::Binary => {
-                                if log_odds > 0.0 { 1.0 } else { 0.0 }
+                            MapUpdateMethod::Binary | MapUpdateMethod::Hybrid => {
+                                if log_odds > 0.0 {
+                                    1.0
+                                } else {
+                                    0.0
+                                }
                             }
                         };
 
                         if cell_score > 0.0 {
-                             let kernel_idx = ((dy + kernel_radius) as usize) * kernel_size
+                            let kernel_idx = ((dy + kernel_radius) as usize) * kernel_size
                                 + ((dx + kernel_radius) as usize);
                             point_score += cell_score * kernel_obj.kernel[kernel_idx];
                         }
@@ -118,10 +122,10 @@ impl DifferentialEvolutionSolver {
         map_update_method: MapUpdateMethod, // 引数を追加
     ) -> (Isometry2<f32>, f64) {
         // DE Parameters
-        const WXY: f32 = 0.8;
+        const WXY: f32 = 1.5;
         const WA: f32 = std::f32::consts::PI * 25.0 / 180.0;
         const POPULATION_SIZE: usize = 200;
-        const GENERATIONS: usize = 20;     // Reduced for faster computation
+        const GENERATIONS: usize = 100; // Reduced for faster computation
         const F: f32 = 0.5; // Mutation factor
         const CR: f32 = 0.2;
 
@@ -198,15 +202,26 @@ impl DifferentialEvolutionSolver {
                 let mut trial_pose = population[i];
                 let j_rand = rng.gen_range(0..3);
 
-                if rng.gen::<f32>() < CR || j_rand == 0 { trial_pose.x = vx; }
-                if rng.gen::<f32>() < CR || j_rand == 1 { trial_pose.y = vy; }
-                if rng.gen::<f32>() < CR || j_rand == 2 { trial_pose.z = va; }
+                if rng.gen::<f32>() < CR || j_rand == 0 {
+                    trial_pose.x = vx;
+                }
+                if rng.gen::<f32>() < CR || j_rand == 1 {
+                    trial_pose.y = vy;
+                }
+                if rng.gen::<f32>() < CR || j_rand == 2 {
+                    trial_pose.z = va;
+                }
 
                 let rotation_trial = Rotation2::new(trial_pose.z);
                 let translation_trial = Translation2::new(trial_pose.x, trial_pose.y);
                 let pose_trial = Isometry2::from_parts(translation_trial, rotation_trial.into());
-                let eval_trial =
-                    Self::gaussian_match_count(gmap, points, &pose_trial, &self.gaussian_kernel, map_update_method);
+                let eval_trial = Self::gaussian_match_count(
+                    gmap,
+                    points,
+                    &pose_trial,
+                    &self.gaussian_kernel,
+                    map_update_method,
+                );
 
                 if eval_trial > scores[i] {
                     population[i] = trial_pose;
