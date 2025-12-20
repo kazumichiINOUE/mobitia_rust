@@ -573,6 +573,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "bresenham"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bfc1116225f66d2ea341a26503f83a6b1205070a6f7199ce1f1550ead91f6fd7"
+
+[[package]]
 name = "bstr"
 version = "1.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2052,6 +2058,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
+ "bresenham",
  "chrono",
  "clap",
  "dirs",
@@ -2059,6 +2066,7 @@ dependencies = [
  "egui",
  "egui_extras",
  "image",
+ "lazy_static",
  "libloading 0.8.9",
  "nalgebra",
  "predicates 2.1.5",

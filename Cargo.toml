@@ -21,6 +21,8 @@ serde = { version = "1.0", features = ["derive"] } # Added for serialization
 serde_yaml = "0.9" # Added for YAML serialization
 anyhow = "1.0" # Added
 rand = "0.8" # Added
+bresenham = "0.1.1"
+lazy_static = "1.5.0"
 
 [dev-dependencies]
 assert_cmd = "2"

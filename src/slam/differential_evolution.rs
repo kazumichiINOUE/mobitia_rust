@@ -1,4 +1,4 @@
-use super::{OccupancyGrid, CSIZE, MAP_ORIGIN_X, MAP_ORIGIN_Y};
+use super::{MapUpdateMethod, OccupancyGrid, CSIZE, MAP_ORIGIN_X, MAP_ORIGIN_Y};
 use nalgebra::{Isometry2, Point2, Rotation2, Translation2, Vector3};
 use rand::seq::SliceRandom;
 use rand::Rng;
@@ -57,6 +57,7 @@ impl DifferentialEvolutionSolver {
         points: &[Point2<f32>],
         pose: &Isometry2<f32>,
         kernel_obj: &GaussianKernel,
+        map_update_method: MapUpdateMethod, // 引数を追加
     ) -> f64 {
         let mut total_score = 0.0;
 
@@ -64,28 +65,41 @@ impl DifferentialEvolutionSolver {
         let width = gmap.width as i32;
 
         let kernel_radius = kernel_obj.radius;
-        let kernel_size = (2 * kernel_radius + 1) as usize; // kernel_obj.kernel は一次元配列なのでサイズが必要
+        let kernel_size = (2 * kernel_radius + 1) as usize;
 
         for p in points {
-            // Transform the point using the pose
-            let transformed_p = pose * p; // nalgebraのIsometry2はPoint2を直接変換できる
-
+            let transformed_p = pose * p;
             let gx = (transformed_p.x / CSIZE) as i32 + MAP_ORIGIN_X as i32;
             let gy = (-transformed_p.y / CSIZE) as i32 + MAP_ORIGIN_Y as i32;
 
             let mut point_score = 0.0;
             for dy in -kernel_radius..=kernel_radius {
                 for dx in -kernel_radius..=kernel_radius {
-                    // Corrected bug here
                     let map_x = gx + dx;
                     let map_y = gy + dy;
 
                     if map_x >= 0 && map_x < width && map_y >= 0 && map_y < height {
                         let map_idx = (map_y as usize) * gmap.width + (map_x as usize);
-                        if gmap.data[map_idx] > 0.0 {
-                            let kernel_idx = ((dy + kernel_radius) as usize) * kernel_size
+                        let log_odds = gmap.data[map_idx];
+                        
+                        // Calculate cell score based on map update method
+                        let cell_score = match map_update_method {
+                            MapUpdateMethod::Probabilistic => {
+                                if log_odds > 0.0 {
+                                    1.0 - 1.0 / (1.0 + log_odds.exp())
+                                } else {
+                                    0.0
+                                }
+                            }
+                            MapUpdateMethod::Binary => {
+                                if log_odds > 0.0 { 1.0 } else { 0.0 }
+                            }
+                        };
+
+                        if cell_score > 0.0 {
+                             let kernel_idx = ((dy + kernel_radius) as usize) * kernel_size
                                 + ((dx + kernel_radius) as usize);
-                            point_score += kernel_obj.kernel[kernel_idx];
+                            point_score += cell_score * kernel_obj.kernel[kernel_idx];
                         }
                     }
                 }
@@ -97,27 +111,26 @@ impl DifferentialEvolutionSolver {
 
     /// Optimizes the robot's pose using Differential Evolution.
     pub fn optimize_de(
-        &self, // changed to method call
+        &self,
         gmap: &OccupancyGrid,
         points: &[Point2<f32>],
         initial_pose: Isometry2<f32>,
+        map_update_method: MapUpdateMethod, // 引数を追加
     ) -> (Isometry2<f32>, f64) {
         // DE Parameters
-        const WXY: f32 = 0.8; // Search range for x, y [m]
-        const WA: f32 = std::f32::consts::PI * 25.0 / 180.0; // Search range for angle [rad]
-        const POPULATION_SIZE: usize = 200; // Increased for better search
-        const GENERATIONS: usize = 100; // Increased for better search
-        const F: f32 = 0.5; // Mutation factor
-        const CR: f32 = 0.2; // Crossover rate
+        const WXY: f32 = 0.8;
+        const WA: f32 = std::f32::consts::PI * 25.0 / 180.0;
+        const POPULATION_SIZE: usize = 200;
+        const GENERATIONS: usize = 100;
+        const F: f32 = 0.5;
+        const CR: f32 = 0.2;
 
         let mut rng = rand::thread_rng();
 
-        // Extract initial pose parameters
         let initial_x = initial_pose.translation.x;
         let initial_y = initial_pose.translation.y;
         let initial_a = initial_pose.rotation.angle();
 
-        // 1. Initialize population around initial_pose_params
         let mut population: Vec<Vector3<f32>> = Vec::with_capacity(POPULATION_SIZE);
         for _ in 0..POPULATION_SIZE {
             let x = rng.gen_range(-WXY..=WXY) + initial_x;
@@ -126,12 +139,11 @@ impl DifferentialEvolutionSolver {
             population.push(Vector3::new(x, y, a));
         }
 
-        // Evaluate initial population
         let mut scores: Vec<f64> = Vec::with_capacity(POPULATION_SIZE);
         for i in 0..POPULATION_SIZE {
             let current_x = population[i].x;
             let current_y = population[i].y;
-            let current_a = population[i].z; // angle is in z component
+            let current_a = population[i].z;
 
             let rotation = Rotation2::new(current_a);
             let translation = Translation2::new(current_x, current_y);
@@ -142,7 +154,8 @@ impl DifferentialEvolutionSolver {
                 points,
                 &pose,
                 &self.gaussian_kernel,
-            )); // Changed call
+                map_update_method,
+            ));
         }
 
         let mut best_idx = 0;
@@ -155,10 +168,8 @@ impl DifferentialEvolutionSolver {
         }
         let mut best_pose_params = population[best_idx];
 
-        // 2. Generation loop
         for _gen in 0..GENERATIONS {
             for i in 0..POPULATION_SIZE {
-                // Mutation
                 let mut candidates: Vec<usize> =
                     (0..POPULATION_SIZE).filter(|&idx| idx != i).collect();
                 candidates.shuffle(&mut rng);
@@ -170,11 +181,9 @@ impl DifferentialEvolutionSolver {
                 let p_r2 = &population[r2];
                 let p_r3 = &population[r3];
 
-                // v = p_r1 + F * (p_r2 - p_r3)
                 let vx = p_r1.x + F * (p_r2.x - p_r3.x);
                 let vy = p_r1.y + F * (p_r2.y - p_r3.y);
 
-                // Angle mutation with wrap-around handling
                 let ax1 = p_r1.z.cos();
                 let ay1 = p_r1.z.sin();
                 let ax2 = p_r2.z.cos();
@@ -186,26 +195,18 @@ impl DifferentialEvolutionSolver {
                 let vay = ay1 + F * (ay2 - ay3);
                 let va = vay.atan2(vax);
 
-                // Crossover
                 let mut trial_pose = population[i];
                 let j_rand = rng.gen_range(0..3);
 
-                if rng.gen::<f32>() < CR || j_rand == 0 {
-                    trial_pose.x = vx;
-                }
-                if rng.gen::<f32>() < CR || j_rand == 1 {
-                    trial_pose.y = vy;
-                }
-                if rng.gen::<f32>() < CR || j_rand == 2 {
-                    trial_pose.z = va;
-                }
+                if rng.gen::<f32>() < CR || j_rand == 0 { trial_pose.x = vx; }
+                if rng.gen::<f32>() < CR || j_rand == 1 { trial_pose.y = vy; }
+                if rng.gen::<f32>() < CR || j_rand == 2 { trial_pose.z = va; }
 
-                // Selection
                 let rotation_trial = Rotation2::new(trial_pose.z);
                 let translation_trial = Translation2::new(trial_pose.x, trial_pose.y);
                 let pose_trial = Isometry2::from_parts(translation_trial, rotation_trial.into());
                 let eval_trial =
-                    Self::gaussian_match_count(gmap, points, &pose_trial, &self.gaussian_kernel); // Changed call
+                    Self::gaussian_match_count(gmap, points, &pose_trial, &self.gaussian_kernel, map_update_method);
 
                 if eval_trial > scores[i] {
                     population[i] = trial_pose;
@@ -218,7 +219,6 @@ impl DifferentialEvolutionSolver {
             }
         }
 
-        // Create final transformation matrix
         let x = best_pose_params.x;
         let y = best_pose_params.y;
         let a = best_pose_params.z;
