@@ -16,6 +16,7 @@ pub struct Cli {
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Show help for commands.
+    #[command(alias = "h")]
     Help,
     /// Manage LiDAR related commands and settings.
     Lidar {
