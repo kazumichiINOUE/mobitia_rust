@@ -1,7 +1,6 @@
 use super::{
-    MapUpdateMethod, OccupancyGrid, CSIZE, MAP_ORIGIN_X, MAP_ORIGIN_Y,
-    TRANSLATION_PENALTY_WEIGHT, ROTATION_PENALTY_WEIGHT,
-    POSITION_SCORE_WEIGHT, FEATURE_SCORE_WEIGHT,
+    MapUpdateMethod, OccupancyGrid, CSIZE, FEATURE_SCORE_WEIGHT, MAP_ORIGIN_X, MAP_ORIGIN_Y,
+    POSITION_SCORE_WEIGHT, ROTATION_PENALTY_WEIGHT, TRANSLATION_PENALTY_WEIGHT,
 };
 use nalgebra::{Isometry2, Point2, Rotation2, Translation2, Vector3};
 use rand::seq::SliceRandom;
@@ -95,7 +94,9 @@ impl DifferentialEvolutionSolver {
                         // --- 位置スコアの計算 ---
                         let position_score = if log_odds > 0.0 {
                             match map_update_method {
-                                MapUpdateMethod::Probabilistic => 1.0 - 1.0 / (1.0 + log_odds.exp()),
+                                MapUpdateMethod::Probabilistic => {
+                                    1.0 - 1.0 / (1.0 + log_odds.exp())
+                                }
                                 _ => 1.0,
                             }
                         } else {
@@ -107,11 +108,11 @@ impl DifferentialEvolutionSolver {
                         let scan_feature_f64 = *scan_feature as f64;
                         let feature_similarity = scan_feature_f64 * map_edgeness
                             + (1.0 - scan_feature_f64) * (1.0 - map_edgeness);
-                        
+
                         // --- 最終スコアの計算 ---
                         // 位置スコアと特徴類似度スコアを重み付けして合計
                         let combined_score = (position_score * POSITION_SCORE_WEIGHT)
-                                            + (feature_similarity * FEATURE_SCORE_WEIGHT);
+                            + (feature_similarity * FEATURE_SCORE_WEIGHT);
 
                         point_score += combined_score * kernel_weight;
                     }

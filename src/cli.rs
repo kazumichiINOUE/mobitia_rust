@@ -725,9 +725,12 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
 
                 // すべてのサブマップがロードされた後にバウンディングボックスを計算 (app.rsで実施済みだが念のため)
                 if !app.current_map_points.is_empty() {
-                let egui_points: Vec<egui::Pos2> =
-                    app.current_map_points.iter().map(|(p, _prob)| egui::pos2(p.x, p.y)).collect();
-                app.slam_map_bounding_box = Some(egui::Rect::from_points(&egui_points));
+                    let egui_points: Vec<egui::Pos2> = app
+                        .current_map_points
+                        .iter()
+                        .map(|(p, _prob)| egui::pos2(p.x, p.y))
+                        .collect();
+                    app.slam_map_bounding_box = Some(egui::Rect::from_points(&egui_points));
                 }
 
                 if loaded_any {

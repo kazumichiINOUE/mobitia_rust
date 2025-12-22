@@ -58,12 +58,11 @@ pub struct CellData {
 impl Default for CellData {
     fn default() -> Self {
         Self {
-            log_odds: 0.0, // 未知
+            log_odds: 0.0,  // 未知
             edge_ness: 0.5, // 不明
         }
     }
 }
-
 
 /// Represents a 2D occupancy grid map where each cell holds a log-odds value.
 pub struct OccupancyGrid {
@@ -166,10 +165,8 @@ impl SlamManager {
             .iter()
             .map(|p| (Point2::new(p.0, p.1), p.4))
             .collect();
-        let mapping_scan: Vec<Point2<f32>> = mapping_scan_with_features
-            .iter()
-            .map(|(p, _)| *p)
-            .collect();
+        let mapping_scan: Vec<Point2<f32>> =
+            mapping_scan_with_features.iter().map(|(p, _)| *p).collect();
 
         if self.is_initial_scan {
             self.robot_pose = Isometry2::identity();
@@ -265,8 +262,8 @@ impl SlamManager {
                 let cell = &mut self.map_gmap.data[index];
 
                 // log_odds を更新
-                cell.log_odds = (cell.log_odds + *LOG_ODDS_OCC)
-                    .clamp(LOG_ODDS_CLAMP_MIN, LOG_ODDS_CLAMP_MAX);
+                cell.log_odds =
+                    (cell.log_odds + *LOG_ODDS_OCC).clamp(LOG_ODDS_CLAMP_MIN, LOG_ODDS_CLAMP_MAX);
 
                 // edge_ness を更新 (加重平均)
                 cell.edge_ness = (cell.edge_ness * 0.7) + (*feature as f64 * 0.3);
@@ -311,7 +308,8 @@ impl SlamManager {
                     let world_x = ((x as isize - MAP_ORIGIN_X as isize) as f32) * CSIZE;
                     let world_y = (-(y as isize - MAP_ORIGIN_Y as isize) as f32) * CSIZE;
                     let probability = log_odds_to_probability(cell_log_odds);
-                    self.cached_map_points.push((Point2::new(world_x, world_y), probability));
+                    self.cached_map_points
+                        .push((Point2::new(world_x, world_y), probability));
                 }
             }
         }

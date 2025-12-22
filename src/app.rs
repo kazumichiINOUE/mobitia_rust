@@ -418,7 +418,7 @@ impl MyApp {
 
         // 描画用のcurrent_map_pointsに現在のサブマップの点群を追加
         self.current_map_points.extend(
-            transformed_points.into_iter().map(|p| (p, 1.0)) // 占有確率1.0として追加
+            transformed_points.into_iter().map(|p| (p, 1.0)), // 占有確率1.0として追加
         );
 
         // サブマップリストと軌跡リストに追加
@@ -459,8 +459,11 @@ impl MyApp {
 
         // すべてのサブマップがロードされた後にバウンディングボックスを計算
         if !self.current_map_points.is_empty() {
-            let egui_points: Vec<egui::Pos2> =
-                self.current_map_points.iter().map(|(p, _prob)| egui::pos2(p.x, p.y)).collect();
+            let egui_points: Vec<egui::Pos2> = self
+                .current_map_points
+                .iter()
+                .map(|(p, _prob)| egui::pos2(p.x, p.y))
+                .collect();
             self.slam_map_bounding_box = Some(egui::Rect::from_points(&egui_points));
             self.slam_mode = SlamMode::Paused; // ロード後はPausedモードにする
         }
@@ -504,19 +507,20 @@ impl MyApp {
             let lambda_1 = eigenvalues[0].max(eigenvalues[1]); // 大きい方
             let lambda_2 = eigenvalues[0].min(eigenvalues[1]); // 小さい方
 
-            let linearity = if lambda_1 > 1e-9 { // より安全なゼロ除算チェック
+            let linearity = if lambda_1 > 1e-9 {
+                // より安全なゼロ除算チェック
                 (lambda_1 - lambda_2) / lambda_1
             } else {
                 0.0
             };
-            
+
             // 6. シグモイド関数で平滑化し、「エッジらしさ」を計算
             // 直線らしさ(linearity)が高い(1.0に近い)ほど0.0に、低い(0.0に近い)ほど1.0になるように変換
             // sharpness と sensitivity は調整可能なハイパーパラメータ
             let sharpness = 10.0;
             let sensitivity = 0.7;
             let edge_ness = 1.0 - (1.0 / (1.0 + (-sharpness * (linearity - sensitivity)).exp()));
-            
+
             scan_with_features[i].4 = edge_ness;
         }
 
@@ -923,7 +927,13 @@ impl eframe::App for MyApp {
                                         let world_x = px_rotated + origin.x;
                                         let world_y = py_rotated + origin.y;
 
-                                        raw_combined_scan.push((world_x, world_y, r_val, theta_val, feature_val));
+                                        raw_combined_scan.push((
+                                            world_x,
+                                            world_y,
+                                            r_val,
+                                            theta_val,
+                                            feature_val,
+                                        ));
                                     }
                                 }
                             }
@@ -1651,11 +1661,7 @@ impl eframe::App for MyApp {
                             (intensity * 0.4).min(255.0) as u8,
                             intensity as u8,
                         );
-                        painter.circle_filled(
-                            screen_pos,
-                            2.0,
-                            color,
-                        );
+                        painter.circle_filled(screen_pos, 2.0, color);
                     }
                 }
 
