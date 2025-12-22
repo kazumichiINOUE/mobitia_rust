@@ -935,7 +935,7 @@ impl eframe::App for MyApp {
                             // FIXME: 閾値と間隔は調整が必要
                             let interpolated_combined_scan = self.interpolate_lidar_scan(
                                 &raw_combined_scan,
-                                0.1,  // min_dist_threshold (10cm)
+                                0.5,  // min_dist_threshold (10cm)
                                 2.0,  // max_dist_threshold (2m)
                                 0.05, // interpolation_interval (1cm)
                             );
