@@ -26,7 +26,7 @@ pub(crate) struct LidarState {
     pub(crate) id: usize,
     pub(crate) path: String,
     pub(crate) baud_rate: u32,
-    pub(crate) points: Vec<(f32, f32)>,
+    pub(crate) points: Vec<(f32, f32, f32, f32)>,
     pub(crate) connection_status: String,
     pub(crate) status_messages: Vec<String>,
     // ワールド座標におけるこのLidarの原点オフセット
@@ -67,8 +67,14 @@ pub enum SlamMode {
 }
 
 pub enum LidarMessage {
-    ScanUpdate { id: usize, scan: Vec<(f32, f32)> },
-    StatusUpdate { id: usize, message: String },
+    ScanUpdate {
+        id: usize,
+        scan: Vec<(f32, f32, f32, f32)>,
+    },
+    StatusUpdate {
+        id: usize,
+        message: String,
+    },
 }
 
 #[allow(dead_code)]
@@ -77,11 +83,13 @@ pub enum SlamThreadCommand {
     Pause,
     Resume,
     UpdateScan {
-        scan: Vec<(f32, f32)>,
+        raw_scan: Vec<(f32, f32, f32, f32)>,
+        interpolated_scan: Vec<(f32, f32, f32, f32)>,
         timestamp: u128,
     }, // LiDARからの新しいスキャンデータ
     ProcessSingleScan {
-        scan: Vec<(f32, f32)>,
+        raw_scan: Vec<(f32, f32, f32, f32)>,
+        interpolated_scan: Vec<(f32, f32, f32, f32)>,
         timestamp: u128,
     }, // 単一スキャン処理要求
     Shutdown,
@@ -90,7 +98,7 @@ pub enum SlamThreadCommand {
 pub struct SlamThreadResult {
     pub map_points: Vec<nalgebra::Point2<f32>>,
     pub robot_pose: nalgebra::Isometry2<f32>,
-    pub scan_used: Vec<(f32, f32)>,
+    pub scan_used: Vec<(f32, f32, f32, f32)>,
 }
 
 /// サブマップのメタデータ構造体 (app.rsに移動)
@@ -124,7 +132,7 @@ pub struct MyApp {
     pub(crate) lidar_message_receiver: mpsc::Receiver<LidarMessage>,
 
     // SLAM用に各Lidarの最新スキャンを保持
-    pub(crate) pending_scans: Vec<Option<Vec<(f32, f32)>>>,
+    pub(crate) pending_scans: Vec<Option<Vec<(f32, f32, f32, f32)>>>,
 
     // UI関連
     pub(crate) command_output_receiver: mpsc::Receiver<String>,
@@ -162,7 +170,7 @@ pub struct MyApp {
 
     pub(crate) single_scan_requested_by_ui: bool,
 
-    pub(crate) latest_scan_for_draw: Vec<(f32, f32)>,
+    pub(crate) latest_scan_for_draw: Vec<(f32, f32, f32, f32)>,
 
     pub(crate) robot_trajectory: Vec<(egui::Pos2, f32)>,
 
@@ -318,7 +326,7 @@ impl MyApp {
                                 })
                                 .unwrap_or_default();
                         }
-                        SlamThreadCommand::UpdateScan { scan, timestamp } => {
+                        SlamThreadCommand::UpdateScan { raw_scan, interpolated_scan, timestamp } => {
                             // UIからLiDARデータが届いたら、モードとタイマーをチェックして更新
                             if current_slam_mode == SlamMode::Continuous {
                                 let now = web_time::Instant::now();
@@ -328,7 +336,7 @@ impl MyApp {
                                     is_slam_processing_for_thread.store(true, Ordering::SeqCst);
 
                                     let slam_start_time = web_time::Instant::now(); // 計測開始
-                                    slam_manager.update(&scan, timestamp);
+                                                            slam_manager.update(&raw_scan, &interpolated_scan, timestamp);
                                     let slam_duration = slam_start_time.elapsed(); // 計測終了
                                     println!("[SLAM Thread] Update took: {:?}", slam_duration); // 時間を出力
 
@@ -336,7 +344,7 @@ impl MyApp {
                                         .send(SlamThreadResult {
                                             map_points: slam_manager.get_map_points().clone(),
                                             robot_pose: *slam_manager.get_robot_pose(),
-                                            scan_used: scan.clone(),
+                                            scan_used: raw_scan.clone(), // 描画には元のスキャンデータを使う
                                         })
                                         .unwrap_or_default();
                                     last_slam_update_time = now; // 更新時間を記録
@@ -346,17 +354,17 @@ impl MyApp {
                                 }
                             }
                         }
-                        SlamThreadCommand::ProcessSingleScan { scan, timestamp } => {
+                        SlamThreadCommand::ProcessSingleScan { raw_scan, interpolated_scan, timestamp } => {
                             // 単一スキャン要求はモードに関わらずすぐに処理
                             is_slam_processing_for_thread.store(true, Ordering::SeqCst);
 
-                            slam_manager.update(&scan, timestamp);
+                                                    slam_manager.update(&raw_scan, &interpolated_scan, timestamp);
 
                             slam_result_sender
                                 .send(SlamThreadResult {
                                     map_points: slam_manager.get_map_points().clone(),
                                     robot_pose: *slam_manager.get_robot_pose(),
-                                    scan_used: scan.clone(),
+                                    scan_used: raw_scan.clone(), // 描画には元のスキャンデータを使う
                                 })
                                 .unwrap_or_default();
                             is_slam_processing_for_thread.store(false, Ordering::SeqCst);
@@ -526,6 +534,74 @@ impl MyApp {
         }
 
         Ok(())
+    }
+
+    /// 隣接点間距離が一定以上離れている場合に、線形補間して点を追加する
+    /// scan: 各点の (x, y, r, theta)
+    /// angle_threshold: 補間を開始する角度差の閾値 (ラジアン)
+    /// interpolation_interval_angle: 補間された点の角度間隔 (ラジアン)
+    fn interpolate_lidar_scan(
+        &self,
+        scan: &Vec<(f32, f32, f32, f32)>,
+        min_dist_threshold: f32,
+        max_dist_threshold: f32,
+        interpolation_interval: f32,
+    ) -> Vec<(f32, f32, f32, f32)> {
+        let mut interpolated_scan = Vec::new();
+        if scan.is_empty() {
+            return interpolated_scan;
+        }
+
+        // .windows(2) を使うためにスライスに変換
+        let scan_slice = scan.as_slice();
+
+        for window in scan_slice.windows(2) {
+            let p1 = window[0];
+            let p2 = window[1];
+
+            // 最初のループでのみp1を追加
+            if interpolated_scan.is_empty() {
+                interpolated_scan.push(p1);
+            }
+
+            // 1. XY座標でのユークリッド距離を計算
+            let dx = p2.0 - p1.0;
+            let dy = p2.1 - p1.1;
+            let distance_xy = (dx * dx + dy * dy).sqrt();
+
+            // 2. 補間条件をチェック
+            if distance_xy > min_dist_threshold && distance_xy < max_dist_threshold {
+                let num_steps = (distance_xy / interpolation_interval).floor() as usize;
+                if num_steps > 0 {
+                    for step in 1..=num_steps {
+                        let fraction = step as f32 * interpolation_interval / distance_xy;
+
+                        // XY座標で線形補間
+                        let interpolated_x = p1.0 + dx * fraction;
+                        let interpolated_y = p1.1 + dy * fraction;
+
+                        // 補間されたXY座標から r と theta を再計算
+                        let interpolated_r = (interpolated_x * interpolated_x + interpolated_y * interpolated_y).sqrt();
+                        let interpolated_theta = interpolated_y.atan2(interpolated_x);
+
+                        interpolated_scan.push((interpolated_x, interpolated_y, interpolated_r, interpolated_theta));
+                    }
+                }
+            }
+            
+            // p2を常に追加
+            interpolated_scan.push(p2);
+        }
+
+        // スキャンが1点だけの場合の処理
+        if scan.len() == 1 && interpolated_scan.is_empty() {
+            interpolated_scan.push(scan[0]);
+        }
+        
+        // 重複する可能性があるためユニークにする
+        interpolated_scan.dedup_by(|a, b| a.0 == b.0 && a.1 == b.1);
+        
+        interpolated_scan
     }
 
     /// Updates the suggestion list based on the current input string.
@@ -770,7 +846,7 @@ impl eframe::App for MyApp {
         while let Ok(lidar_message) = self.lidar_message_receiver.try_recv() {
             match lidar_message {
                 LidarMessage::ScanUpdate { id, scan } => {
-                    let mut filtered_scan = Vec::new();
+                    let mut filtered_scan: Vec<(f32, f32, f32, f32)> = Vec::new();
                     // 該当するLidarStateからフィルタリング角度を取得
                     let (min_angle_rad, max_angle_rad) =
                         if let Some(lidar_state_for_filter) = self.lidars.get(id) {
@@ -783,13 +859,10 @@ impl eframe::App for MyApp {
                             (f32::NEG_INFINITY, f32::INFINITY)
                         };
 
-                    for &(x, y) in &scan {
-                        // 角度を計算 (atan2はラジアンを返す)
-                        let angle_rad = y.atan2(x);
-
-                        // フィルタリング範囲内にあるかチェック
-                        if angle_rad >= min_angle_rad && angle_rad <= max_angle_rad {
-                            filtered_scan.push((x, y));
+                    for &(x, y, r, theta) in &scan {
+                        // フィルタリング範囲内にあるかチェック (角度は受信データから直接利用)
+                        if theta >= min_angle_rad && theta <= max_angle_rad {
+                            filtered_scan.push((x, y, r, theta));
                         }
                     }
 
@@ -819,7 +892,7 @@ impl eframe::App for MyApp {
                         });
 
                         if all_active_scans_received {
-                            let mut combined_scan = Vec::new();
+                            let mut raw_combined_scan: Vec<(f32, f32, f32, f32)> = Vec::new();
 
                             // SLAMが有効な各Lidarのスキャンをロボット座標系に変換して結合
                             for lidar_state in active_lidars {
@@ -828,11 +901,11 @@ impl eframe::App for MyApp {
                                     let origin = lidar_state.origin;
 
                                     for point in points {
-                                        // Lidar座標系での点 (px, py)
-                                        let pxx = point.0;
-                                        let pyy = point.1;
-                                        let px_raw = pxx;
-                                        let py_raw = pyy;
+                                        // Lidar座標系での点 (px, py, r, theta)
+                                        let px_raw = point.0;
+                                        let py_raw = point.1;
+                                        let r_val = point.2; // 距離
+                                        let theta_val = point.3; // 角度
 
                                         // Lidarの回転を適用
                                         let px_rotated =
@@ -844,10 +917,19 @@ impl eframe::App for MyApp {
                                         let world_x = px_rotated + origin.x;
                                         let world_y = py_rotated + origin.y;
 
-                                        combined_scan.push((world_x, world_y));
+                                        raw_combined_scan.push((world_x, world_y, r_val, theta_val));
                                     }
                                 }
                             }
+
+                            // 結合した生スキャンデータを補間
+                            // FIXME: 閾値と間隔は調整が必要
+                            let interpolated_combined_scan = self.interpolate_lidar_scan(
+                                &raw_combined_scan,
+                                0.1,  // min_dist_threshold (10cm)
+                                2.0,  // max_dist_threshold (2m)
+                                0.01, // interpolation_interval (1cm)
+                            );
 
                             // 結合した点群をSLAMスレッドに送信
                             if !self.is_slam_processing.load(Ordering::SeqCst) {
@@ -859,14 +941,16 @@ impl eframe::App for MyApp {
                                 if self.slam_mode == SlamMode::Continuous {
                                     self.slam_command_sender
                                         .send(SlamThreadCommand::UpdateScan {
-                                            scan: combined_scan,
+                                            raw_scan: raw_combined_scan, // raw_scanを送信
+                                            interpolated_scan: interpolated_combined_scan, // 補間済みscanを送信
                                             timestamp: current_timestamp,
                                         })
                                         .unwrap_or_default();
                                 } else if self.single_scan_requested_by_ui {
                                     self.slam_command_sender
                                         .send(SlamThreadCommand::ProcessSingleScan {
-                                            scan: combined_scan,
+                                            raw_scan: raw_combined_scan, // raw_scanを送信
+                                            interpolated_scan: interpolated_combined_scan, // 補間済みscanを送信
                                             timestamp: current_timestamp,
                                         })
                                         .unwrap_or_default();

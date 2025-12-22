@@ -111,7 +111,12 @@ impl SlamManager {
     }
 
     /// Processes a new LiDAR scan and updates the map and pose.
-    pub fn update(&mut self, lidar_points: &[(f32, f32)], timestamp: u128) {
+    pub fn update(
+        &mut self,
+        raw_scan_data: &[(f32, f32, f32, f32)],
+        interpolated_scan_data: &[(f32, f32, f32, f32)],
+        timestamp: u128,
+    ) {
         // --- Map Decay ---
         // Decay the entire map slightly to forget old, unobserved areas.
         // This helps prevent matching against stale parts of the map.
@@ -123,17 +128,26 @@ impl SlamManager {
             }
         }
 
-        let current_scan: Vec<Point2<f32>> =
-            lidar_points.iter().map(|p| Point2::new(p.0, p.1)).collect();
+        // マッチング用のスキャンデータ (補間済み)
+        let matching_scan: Vec<Point2<f32>> = interpolated_scan_data
+            .iter()
+            .map(|p| Point2::new(p.0, p.1))
+            .collect();
+
+        // 地図更新用のスキャンデータ (生データ)
+        let mapping_scan: Vec<Point2<f32>> = raw_scan_data
+            .iter()
+            .map(|p| Point2::new(p.0, p.1))
+            .collect();
 
         if self.is_initial_scan {
             self.robot_pose = Isometry2::identity();
             self.is_initial_scan = false;
         } else {
-            // NOTE: DE評価関数の修正が次のステップで必要
+            // マッチングには補間済みのスキャンデータを使用
             let (best_pose, _score) = self.de_solver.optimize_de(
                 &self.map_gmap,
-                &current_scan,
+                &matching_scan,
                 self.robot_pose,
                 self.map_update_method,
             );
@@ -142,13 +156,13 @@ impl SlamManager {
 
         let pose = self.robot_pose; // Copy pose to avoid borrow checker issues
 
-        // Update the occupancy grid based on the selected method
+        // 地図更新には生の（補間されていない）スキャンデータを使用
         match self.map_update_method {
             MapUpdateMethod::Probabilistic | MapUpdateMethod::Hybrid => {
-                self.update_grid_probabilistic(&current_scan, &pose);
+                self.update_grid_probabilistic(&mapping_scan, &pose);
             }
             MapUpdateMethod::Binary => {
-                self.update_grid_binary(&current_scan, &pose);
+                self.update_grid_binary(&mapping_scan, &pose);
             }
         }
         self.is_map_dirty = true;
@@ -156,7 +170,7 @@ impl SlamManager {
         // --- Submap generation logic (unchanged for now) ---
         // TODO: This part might need refactoring as it relies on storing scans,
         // which is not ideal for long-term probabilistic mapping.
-        self.current_submap_scan_buffer.push(current_scan.clone());
+        self.current_submap_scan_buffer.push(mapping_scan.clone());
         self.current_submap_robot_poses.push(self.robot_pose);
         self.current_submap_timestamps_buffer.push(timestamp);
 
