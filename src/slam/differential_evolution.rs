@@ -54,7 +54,7 @@ impl DifferentialEvolutionSolver {
     /// Calculates the matching score of a scan against the map at a given pose.
     fn gaussian_match_count(
         gmap: &OccupancyGrid,
-        points: &[Point2<f32>],
+        points: &[(Point2<f32>, f32)],
         pose: &Isometry2<f32>,
         kernel_obj: &GaussianKernel,
         map_update_method: MapUpdateMethod, // 引数を追加
@@ -67,8 +67,8 @@ impl DifferentialEvolutionSolver {
         let kernel_radius = kernel_obj.radius;
         let kernel_size = (2 * kernel_radius + 1) as usize;
 
-        for p in points {
-            let transformed_p = pose * p;
+        for (p_coord, _feature) in points {
+            let transformed_p = pose * p_coord;
             let gx = (transformed_p.x / CSIZE) as i32 + MAP_ORIGIN_X as i32;
             let gy = (-transformed_p.y / CSIZE) as i32 + MAP_ORIGIN_Y as i32;
 
@@ -117,7 +117,7 @@ impl DifferentialEvolutionSolver {
     pub fn optimize_de(
         &self,
         gmap: &OccupancyGrid,
-        points: &[Point2<f32>],
+        points: &[(Point2<f32>, f32)],
         initial_pose: Isometry2<f32>,
         map_update_method: MapUpdateMethod, // 引数を追加
     ) -> (Isometry2<f32>, f64) {

@@ -113,8 +113,8 @@ impl SlamManager {
     /// Processes a new LiDAR scan and updates the map and pose.
     pub fn update(
         &mut self,
-        raw_scan_data: &[(f32, f32, f32, f32)],
-        interpolated_scan_data: &[(f32, f32, f32, f32)],
+        raw_scan_data: &[(f32, f32, f32, f32, f32)],
+        interpolated_scan_data: &[(f32, f32, f32, f32, f32)],
         timestamp: u128,
     ) {
         // --- Map Decay ---
@@ -129,15 +129,15 @@ impl SlamManager {
         }
 
         // マッチング用のスキャンデータ (補間済み)
-        let matching_scan: Vec<Point2<f32>> = interpolated_scan_data
+        let matching_scan: Vec<(Point2<f32>, f32)> = interpolated_scan_data
             .iter()
-            .map(|p| Point2::new(p.0, p.1))
+            .map(|p| (Point2::new(p.0, p.1), p.4)) // p.4 は feature
             .collect();
 
         // 地図更新用のスキャンデータ (生データ)
         let mapping_scan: Vec<Point2<f32>> = raw_scan_data
             .iter()
-            .map(|p| Point2::new(p.0, p.1))
+            .map(|p| Point2::new(p.0, p.1)) // 地図更新には特徴量は不要
             .collect();
 
         if self.is_initial_scan {
