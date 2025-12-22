@@ -17,7 +17,7 @@ use std::time::SystemTime;
 use crate::cli::Cli;
 use crate::demo::DemoManager;
 pub use crate::demo::DemoMode;
-use crate::lidar::{start_lidar_thread, LidarInfo, load_lidar_configurations};
+use crate::lidar::{load_lidar_configurations, start_lidar_thread, LidarInfo};
 use crate::slam::{MapUpdateMethod, SlamManager};
 
 // Lidar一台分の状態を保持する構造体
@@ -39,8 +39,6 @@ pub(crate) struct LidarState {
     // SLAM計算にこのLidarを含めるか
     pub(crate) is_active_for_slam: bool,
 }
-
-
 
 // アプリケーション全体のの状態を管理する構造体
 #[derive(PartialEq)]
@@ -179,7 +177,9 @@ impl MyApp {
     pub fn new(cc: &eframe::CreationContext) -> Self {
         // Lidar の初期設定を読み込む
         let lidars = load_lidar_configurations(|id| {
-            cc.storage.as_deref().and_then(|s| s.get_string(&format!("lidar_path_{}", id)))
+            cc.storage
+                .as_deref()
+                .and_then(|s| s.get_string(&format!("lidar_path_{}", id)))
         });
 
         // pending_scansベクターをLidarの総数で初期化
@@ -256,7 +256,11 @@ impl MyApp {
                                 })
                                 .unwrap_or_default();
                         }
-                        SlamThreadCommand::UpdateScan { raw_scan, interpolated_scan, timestamp } => {
+                        SlamThreadCommand::UpdateScan {
+                            raw_scan,
+                            interpolated_scan,
+                            timestamp,
+                        } => {
                             // UIからLiDARデータが届いたら、モードとタイマーをチェックして更新
                             if current_slam_mode == SlamMode::Continuous {
                                 let now = web_time::Instant::now();
@@ -266,7 +270,7 @@ impl MyApp {
                                     is_slam_processing_for_thread.store(true, Ordering::SeqCst);
 
                                     let slam_start_time = web_time::Instant::now(); // 計測開始
-                                                            slam_manager.update(&raw_scan, &interpolated_scan, timestamp);
+                                    slam_manager.update(&raw_scan, &interpolated_scan, timestamp);
                                     let slam_duration = slam_start_time.elapsed(); // 計測終了
                                     println!("[SLAM Thread] Update took: {:?}", slam_duration); // 時間を出力
 
@@ -284,11 +288,15 @@ impl MyApp {
                                 }
                             }
                         }
-                        SlamThreadCommand::ProcessSingleScan { raw_scan, interpolated_scan, timestamp } => {
+                        SlamThreadCommand::ProcessSingleScan {
+                            raw_scan,
+                            interpolated_scan,
+                            timestamp,
+                        } => {
                             // 単一スキャン要求はモードに関わらずすぐに処理
                             is_slam_processing_for_thread.store(true, Ordering::SeqCst);
 
-                                                    slam_manager.update(&raw_scan, &interpolated_scan, timestamp);
+                            slam_manager.update(&raw_scan, &interpolated_scan, timestamp);
 
                             slam_result_sender
                                 .send(SlamThreadResult {
@@ -403,7 +411,10 @@ impl MyApp {
             .collect();
 
         // ワールド座標に変換
-        let transformed_points: Vec<Point2<f32>> = submap_points_local.into_iter().map(|p| global_pose * p).collect();
+        let transformed_points: Vec<Point2<f32>> = submap_points_local
+            .into_iter()
+            .map(|p| global_pose * p)
+            .collect();
 
         // 描画用のcurrent_map_pointsに現在のサブマップの点群を追加
         self.current_map_points.extend(transformed_points);
@@ -423,7 +434,11 @@ impl MyApp {
         Ok(())
     }
 
-    pub fn load_map_from_directory(&mut self, ctx: &egui::Context, base_path_str: &str) -> Result<()> {
+    pub fn load_map_from_directory(
+        &mut self,
+        ctx: &egui::Context,
+        base_path_str: &str,
+    ) -> Result<()> {
         let base_path = std::path::PathBuf::from(base_path_str);
         let submaps_path = base_path.join("submaps");
 
@@ -457,8 +472,11 @@ impl MyApp {
 
         // すべてのサブマップがロードされた後にバウンディングボックスを計算
         if !self.current_map_points.is_empty() {
-            let egui_points: Vec<egui::Pos2> =
-                self.current_map_points.iter().map(|p| egui::pos2(p.x, p.y)).collect();
+            let egui_points: Vec<egui::Pos2> = self
+                .current_map_points
+                .iter()
+                .map(|p| egui::pos2(p.x, p.y))
+                .collect();
             self.slam_map_bounding_box = Some(egui::Rect::from_points(&egui_points));
             self.slam_mode = SlamMode::Paused; // ロード後はPausedモードにする
         }
@@ -529,17 +547,24 @@ impl MyApp {
                         let fraction = step as f32 * interpolation_interval / distance_xy;
                         let interpolated_x = p1.0 + dx * fraction;
                         let interpolated_y = p1.1 + dy * fraction;
-                        let interpolated_r = (interpolated_x * interpolated_x + interpolated_y * interpolated_y).sqrt();
+                        let interpolated_r = (interpolated_x * interpolated_x
+                            + interpolated_y * interpolated_y)
+                            .sqrt();
                         let interpolated_theta = interpolated_y.atan2(interpolated_x);
-                        final_scan.push((interpolated_x, interpolated_y, interpolated_r, interpolated_theta));
+                        final_scan.push((
+                            interpolated_x,
+                            interpolated_y,
+                            interpolated_r,
+                            interpolated_theta,
+                        ));
                     }
                 }
             }
-            
+
             // p2 を追加 (thinned_scan の各点を最終結果に追加)
             final_scan.push(p2);
         }
-        
+
         final_scan
     }
 
@@ -679,7 +704,8 @@ impl MyApp {
                         .collect();
                 }
                 ["map"] if ends_with_space => {
-                    self.current_suggestions = vec!["load".to_string(), "list-and-load".to_string()];
+                    self.current_suggestions =
+                        vec!["load".to_string(), "list-and-load".to_string()];
                 }
 
                 ["serial", _sub @ ("list" | "ls"), partial_arg] => {
@@ -856,7 +882,8 @@ impl eframe::App for MyApp {
                                         let world_x = px_rotated + origin.x;
                                         let world_y = py_rotated + origin.y;
 
-                                        raw_combined_scan.push((world_x, world_y, r_val, theta_val));
+                                        raw_combined_scan
+                                            .push((world_x, world_y, r_val, theta_val));
                                     }
                                 }
                             }
@@ -880,7 +907,7 @@ impl eframe::App for MyApp {
                                 if self.slam_mode == SlamMode::Continuous {
                                     self.slam_command_sender
                                         .send(SlamThreadCommand::UpdateScan {
-                                            raw_scan: raw_combined_scan, // raw_scanを送信
+                                            raw_scan: raw_combined_scan,                   // raw_scanを送信
                                             interpolated_scan: interpolated_combined_scan, // 補間済みscanを送信
                                             timestamp: current_timestamp,
                                         })
@@ -888,7 +915,7 @@ impl eframe::App for MyApp {
                                 } else if self.single_scan_requested_by_ui {
                                     self.slam_command_sender
                                         .send(SlamThreadCommand::ProcessSingleScan {
-                                            raw_scan: raw_combined_scan, // raw_scanを送信
+                                            raw_scan: raw_combined_scan,                   // raw_scanを送信
                                             interpolated_scan: interpolated_combined_scan, // 補間済みscanを送信
                                             timestamp: current_timestamp,
                                         })

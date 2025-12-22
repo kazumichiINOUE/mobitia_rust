@@ -596,7 +596,7 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                         });
                     }
                 }
-            },
+            }
             MapCommands::ListAndLoad { path } => {
                 let msg = format!("Loading individual submaps from '{}'...", path.display());
                 println!("{}", msg);
@@ -642,7 +642,11 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                         }
                     }
                     Err(e) => {
-                        let msg_error = format!("ERROR: Failed to read submaps directory '{}': {}", submaps_base_path.display(), e);
+                        let msg_error = format!(
+                            "ERROR: Failed to read submaps directory '{}': {}",
+                            submaps_base_path.display(),
+                            e
+                        );
                         println!("{}", msg_error);
                         app.command_history.push(ConsoleOutputEntry {
                             text: msg_error,
@@ -684,7 +688,8 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
 
                 let mut loaded_any = false;
                 for submap_path in found_submaps {
-                    let msg_loading = format!("  Loading submap from '{}'...", submap_path.display());
+                    let msg_loading =
+                        format!("  Loading submap from '{}'...", submap_path.display());
                     println!("{}", msg_loading);
                     app.command_history.push(ConsoleOutputEntry {
                         text: msg_loading,
@@ -692,7 +697,10 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                     });
                     match app.load_single_submap(ctx, &submap_path.to_string_lossy().into_owned()) {
                         Ok(_) => {
-                            let msg_success = format!("  Successfully loaded submap from '{}'.", submap_path.display());
+                            let msg_success = format!(
+                                "  Successfully loaded submap from '{}'.",
+                                submap_path.display()
+                            );
                             println!("{}", msg_success);
                             app.command_history.push(ConsoleOutputEntry {
                                 text: msg_success,
@@ -701,7 +709,11 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                             loaded_any = true;
                         }
                         Err(e) => {
-                            let msg_error = format!("  ERROR: Failed to load submap from '{}': {}", submap_path.display(), e);
+                            let msg_error = format!(
+                                "  ERROR: Failed to load submap from '{}': {}",
+                                submap_path.display(),
+                                e
+                            );
                             println!("{}", msg_error);
                             app.command_history.push(ConsoleOutputEntry {
                                 text: msg_error,
@@ -713,8 +725,11 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
 
                 // すべてのサブマップがロードされた後にバウンディングボックスを計算 (app.rsで実施済みだが念のため)
                 if !app.current_map_points.is_empty() {
-                    let egui_points: Vec<egui::Pos2> =
-                        app.current_map_points.iter().map(|p| egui::pos2(p.x, p.y)).collect();
+                    let egui_points: Vec<egui::Pos2> = app
+                        .current_map_points
+                        .iter()
+                        .map(|p| egui::pos2(p.x, p.y))
+                        .collect();
                     app.slam_map_bounding_box = Some(egui::Rect::from_points(&egui_points));
                 }
 
@@ -734,6 +749,7 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                         group_id: current_group_id,
                     });
                 }
-            },        },
+            }
+        },
     }
 }

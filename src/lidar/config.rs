@@ -58,8 +58,7 @@ where
     // HashMapをイテレートし、各LiDARの設定を取得
     for (&id, config_entry) in lidar_defs.iter() {
         // `path_loader` を使ってデバイスパスを読み込む
-        let device_path = path_loader(id)
-            .unwrap_or_else(|| config_entry.path.clone());
+        let device_path = path_loader(id).unwrap_or_else(|| config_entry.path.clone());
 
         lidars.push(LidarState {
             id,
