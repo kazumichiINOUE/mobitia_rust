@@ -3,7 +3,9 @@
 mod comm;
 mod driver;
 mod protocol;
+pub mod config;
 
 // 2. Re-export the public API from the sub-modules.
 // This is the official public API of the `lidar` module.
+pub use self::config::load_lidar_configurations;
 pub use self::driver::{start_lidar_thread, LidarInfo};

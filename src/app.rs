@@ -17,7 +17,7 @@ use std::time::SystemTime;
 use crate::cli::Cli;
 use crate::demo::DemoManager;
 pub use crate::demo::DemoMode;
-use crate::lidar::{start_lidar_thread, LidarInfo};
+use crate::lidar::{start_lidar_thread, LidarInfo, load_lidar_configurations};
 use crate::slam::{MapUpdateMethod, SlamManager};
 
 // Lidar一台分の状態を保持する構造体
@@ -40,16 +40,7 @@ pub(crate) struct LidarState {
     pub(crate) is_active_for_slam: bool,
 }
 
-// LiDARの初期設定を保持する構造体
-#[derive(Clone, Debug)] // Debugトレイトも追加しておくとデバッグに便利
-struct LidarConfigEntry {
-    path: String,
-    baud_rate: u32,
-    origin: Vec2,
-    rotation: f32,
-    data_filter_angle_min: f32,
-    data_filter_angle_max: f32,
-}
+
 
 // アプリケーション全体のの状態を管理する構造体
 #[derive(PartialEq)]
@@ -186,71 +177,8 @@ pub struct MyApp {
 impl MyApp {
     /// Creates a new instance of the application.
     pub fn new(cc: &eframe::CreationContext) -> Self {
-        // 2台のLidarの初期設定
-        // TODO: 将来的には設定ファイルなどから読み込む
-        let lidar_defs: HashMap<usize, LidarConfigEntry> = HashMap::from([
-            (
-                0, // 進行方向右手のlidar
-                LidarConfigEntry {
-                    path: "/dev/cu.usbmodem1201".to_string(),
-                    baud_rate: 115200,
-                    origin: Vec2::new(0.0, -0.26),
-                    rotation: -std::f32::consts::FRAC_PI_2,
-                    data_filter_angle_min: -90.0f32,
-                    data_filter_angle_max: 135.0f32,
-                },
-            ),
-            (
-                1, // 進行方向左手のliar
-                LidarConfigEntry {
-                    path: "/dev/cu.usbmodem1301".to_string(),
-                    baud_rate: 115200,
-                    origin: Vec2::new(0.0, 0.26),
-                    rotation: std::f32::consts::FRAC_PI_2 - std::f32::consts::PI * 1.0 / 180.0,
-                    data_filter_angle_min: -135.0f32,
-                    data_filter_angle_max: 90.0f32,
-                },
-            ),
-            (
-                2, // 予備のliar
-                LidarConfigEntry {
-                    path: "/dev/cu.usbmodem2101".to_string(),
-                    baud_rate: 115200,
-                    origin: Vec2::new(0.0, 0.0),
-                    rotation: 0.0,
-                    data_filter_angle_min: -135.0f32,
-                    data_filter_angle_max: 135.0f32,
-                },
-            ),
-        ]);
-        let mut lidars = Vec::new();
-        // HashMapをイテレートし、各LiDARの設定を取得
-        for (&id, config_entry) in lidar_defs.iter() {
-            // eframe::Storageから対応するlidar_pathを読み込む試み
-            let storage_key = format!("lidar_path_{}", id);
-            let device_path = cc
-                .storage
-                .and_then(|storage| storage.get_string(&storage_key))
-                .unwrap_or_else(|| config_entry.path.clone()); // LidarConfigEntryからパスを取得
-
-            lidars.push(LidarState {
-                id,
-                path: device_path,
-                baud_rate: config_entry.baud_rate,
-                points: Vec::new(),
-                connection_status: "Connecting...".to_string(),
-                status_messages: Vec::new(),
-                origin: config_entry.origin,
-                rotation: config_entry.rotation,
-                data_filter_angle_min: config_entry.data_filter_angle_min,
-                data_filter_angle_max: config_entry.data_filter_angle_max,
-                // IDが0または1のLidarのみ、デフォルトでSLAMを有効にする
-                is_active_for_slam: id == 0 || id == 1,
-            });
-        }
-
-        // IDでソートして、常に安定した順序を保証する
-        lidars.sort_by_key(|l| l.id);
+        // Lidar の初期設定を読み込む
+        let lidars = load_lidar_configurations(cc.storage.as_deref());
 
         // pending_scansベクターをLidarの総数で初期化
         let pending_scans = vec![None; lidars.len()];
@@ -297,7 +225,7 @@ impl MyApp {
             let mut current_slam_mode = SlamMode::Manual;
             let mut last_slam_update_time = web_time::Instant::now(); // std::time::Instant の代わりにweb_time::Instantを使用
             const SLAM_UPDATE_INTERVAL_DURATION: web_time::Duration =
-                web_time::Duration::from_millis(1500); // 500ミリ秒に変更
+                web_time::Duration::from_millis(1000); // 500ミリ秒に変更
 
             loop {
                 // UIスレッドからのコマンドを処理
