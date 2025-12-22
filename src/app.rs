@@ -178,7 +178,9 @@ impl MyApp {
     /// Creates a new instance of the application.
     pub fn new(cc: &eframe::CreationContext) -> Self {
         // Lidar の初期設定を読み込む
-        let lidars = load_lidar_configurations(cc.storage.as_deref());
+        let lidars = load_lidar_configurations(|id| {
+            cc.storage.as_deref().and_then(|s| s.get_string(&format!("lidar_path_{}", id)))
+        });
 
         // pending_scansベクターをLidarの総数で初期化
         let pending_scans = vec![None; lidars.len()];

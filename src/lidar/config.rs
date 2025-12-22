@@ -13,7 +13,10 @@ struct LidarConfigEntry {
     data_filter_angle_max: f32,
 }
 
-pub fn load_lidar_configurations(storage: Option<&dyn eframe::Storage>) -> Vec<LidarState> {
+pub fn load_lidar_configurations<F>(path_loader: F) -> Vec<LidarState>
+where
+    F: Fn(usize) -> Option<String>,
+{
     // 2台のLidarの初期設定
     // TODO: 将来的には設定ファイルなどから読み込む
     let lidar_defs: HashMap<usize, LidarConfigEntry> = HashMap::from([
@@ -43,7 +46,7 @@ pub fn load_lidar_configurations(storage: Option<&dyn eframe::Storage>) -> Vec<L
             2, // 予備のliar
             LidarConfigEntry {
                 path: "/dev/cu.usbmodem2101".to_string(),
-                baud_rate: 115200,
+                baud_rate: 115200, // 正しい値に戻す
                 origin: Vec2::new(0.0, 0.0),
                 rotation: 0.0,
                 data_filter_angle_min: -135.0f32,
@@ -54,10 +57,8 @@ pub fn load_lidar_configurations(storage: Option<&dyn eframe::Storage>) -> Vec<L
     let mut lidars = Vec::new();
     // HashMapをイテレートし、各LiDARの設定を取得
     for (&id, config_entry) in lidar_defs.iter() {
-        // eframe::Storageから対応するlidar_pathを読み込む試み
-        let storage_key = format!("lidar_path_{}", id);
-        let device_path = storage
-            .and_then(|storage| storage.get_string(&storage_key))
+        // `path_loader` を使ってデバイスパスを読み込む
+        let device_path = path_loader(id)
             .unwrap_or_else(|| config_entry.path.clone());
 
         lidars.push(LidarState {
