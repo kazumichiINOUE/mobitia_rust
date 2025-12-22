@@ -484,6 +484,61 @@ impl MyApp {
         Ok(())
     }
 
+    fn compute_features(
+        &self,
+        scan: &Vec<(f32, f32, f32, f32, f32)>,
+    ) -> Vec<(f32, f32, f32, f32, f32)> {
+        let mut scan_with_features = scan.clone();
+        let neighborhood_size = 5; // 片側5点、合計11点を近傍とする
+        if scan.len() < (neighborhood_size * 2 + 1) {
+            return scan_with_features;
+        }
+
+        for i in neighborhood_size..(scan.len() - neighborhood_size) {
+            // 1. 近傍点を収集 (iと、その前後5点ずつ)
+            let neighborhood: Vec<_> = (i - neighborhood_size..=i + neighborhood_size)
+                .map(|j| nalgebra::Point2::new(scan[j].0, scan[j].1))
+                .collect();
+
+            // 2. 重心を計算
+            let sum_vec: nalgebra::Vector2<f32> = neighborhood.iter().map(|p| p.coords).sum();
+            let mean = nalgebra::Point2::from(sum_vec / (neighborhood.len() as f32));
+
+            // 3. 共分散行列を計算
+            let mut covariance_matrix = nalgebra::Matrix2::<f32>::zeros();
+            for point in &neighborhood {
+                let centered_point = point - mean;
+                covariance_matrix += centered_point * centered_point.transpose();
+            }
+            covariance_matrix /= neighborhood.len() as f32;
+
+            // 4. 固有値を計算
+            let eigen = nalgebra::SymmetricEigen::new(covariance_matrix);
+            let eigenvalues = eigen.eigenvalues;
+
+            // 5. 特徴量（直線らしさ）を計算
+            let lambda_1 = eigenvalues[0].max(eigenvalues[1]); // 大きい方
+            let lambda_2 = eigenvalues[0].min(eigenvalues[1]); // 小さい方
+
+            let linearity = if lambda_1 > 1e-9 { // より安全なゼロ除算チェック
+                (lambda_1 - lambda_2) / lambda_1
+            } else {
+                0.0
+            };
+            
+            // 6. シグモイド関数で平滑化し、「エッジらしさ」を計算
+            // 直線らしさ(linearity)が高い(1.0に近い)ほど0.0に、低い(0.0に近い)ほど1.0になるように変換
+            // sharpness と sensitivity は調整可能なハイパーパラメータ
+            let sharpness = 10.0;
+            let sensitivity = 0.7;
+            let edge_ness = 1.0 - (1.0 / (1.0 + (-sharpness * (linearity - sensitivity)).exp()));
+            
+            scan_with_features[i].4 = edge_ness;
+        }
+
+        scan_with_features
+    }
+
     /// 隣接点間距離が一定以上離れている場合に、線形補間して点を追加する
     /// scan: 各点の (x, y, r, theta)
     /// angle_threshold: 補間を開始する角度差の閾値 (ラジアン)
@@ -889,13 +944,16 @@ impl eframe::App for MyApp {
                                 }
                             }
 
+                            // 特徴量を計算
+                            let scan_with_features = self.compute_features(&raw_combined_scan);
+
                             // 結合した生スキャンデータを補間
                             // FIXME: 閾値と間隔は調整が必要
                             let interpolated_combined_scan = self.interpolate_lidar_scan(
-                                &raw_combined_scan,
-                                0.5,  // min_dist_threshold (10cm)
+                                &scan_with_features,
+                                0.1,  // min_dist_threshold (10cm)
                                 2.0,  // max_dist_threshold (2m)
-                                0.05, // interpolation_interval (1cm)
+                                0.05, // interpolation_interval (5cm)
                             );
 
                             // 結合した点群をSLAMスレッドに送信

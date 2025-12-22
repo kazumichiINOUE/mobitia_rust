@@ -37,11 +37,28 @@ lazy_static! {
 const LOG_ODDS_CLAMP_MAX: f64 = 5.0;
 const LOG_ODDS_CLAMP_MIN: f64 = -5.0;
 
+/// Represents a single cell in the occupancy grid.
+#[derive(Clone, Copy, Debug)]
+pub struct CellData {
+    pub log_odds: f64,
+    pub edge_ness: f64, // 0.0: 直線, 1.0: エッジ
+}
+
+impl Default for CellData {
+    fn default() -> Self {
+        Self {
+            log_odds: 0.0, // 未知
+            edge_ness: 0.5, // 不明
+        }
+    }
+}
+
+
 /// Represents a 2D occupancy grid map where each cell holds a log-odds value.
 pub struct OccupancyGrid {
     pub width: usize,
     pub height: usize,
-    pub data: Vec<f64>,
+    pub data: Vec<CellData>,
 }
 
 impl OccupancyGrid {
@@ -49,7 +66,7 @@ impl OccupancyGrid {
         Self {
             width,
             height,
-            data: vec![0.0; width * height], // Initialize with 0.0 log-odds (0.5 probability)
+            data: vec![CellData::default(); width * height], // Initialize with default CellData
         }
     }
 }
@@ -118,26 +135,29 @@ impl SlamManager {
         timestamp: u128,
     ) {
         // --- Map Decay ---
-        // Decay the entire map slightly to forget old, unobserved areas.
-        // This helps prevent matching against stale parts of the map.
         if self.map_update_method == MapUpdateMethod::Probabilistic
             || self.map_update_method == MapUpdateMethod::Hybrid
         {
             for cell in self.map_gmap.data.iter_mut() {
-                *cell *= DECAY_RATE;
+                cell.log_odds *= DECAY_RATE;
+                cell.edge_ness = (cell.edge_ness - 0.5) * DECAY_RATE + 0.5; // 0.5(不明)に近づける
             }
         }
 
-        // マッチング用のスキャンデータ (補間済み)
+        // マッチング用のスキャンデータ (補間済み・特徴量付き)
         let matching_scan: Vec<(Point2<f32>, f32)> = interpolated_scan_data
             .iter()
             .map(|p| (Point2::new(p.0, p.1), p.4)) // p.4 は feature
             .collect();
 
         // 地図更新用のスキャンデータ (生データ)
-        let mapping_scan: Vec<Point2<f32>> = raw_scan_data
+        let mapping_scan_with_features: Vec<(Point2<f32>, f32)> = raw_scan_data
             .iter()
-            .map(|p| Point2::new(p.0, p.1)) // 地図更新には特徴量は不要
+            .map(|p| (Point2::new(p.0, p.1), p.4))
+            .collect();
+        let mapping_scan: Vec<Point2<f32>> = mapping_scan_with_features
+            .iter()
+            .map(|(p, _)| *p)
             .collect();
 
         if self.is_initial_scan {
@@ -159,7 +179,7 @@ impl SlamManager {
         // 地図更新には生の（補間されていない）スキャンデータを使用
         match self.map_update_method {
             MapUpdateMethod::Probabilistic | MapUpdateMethod::Hybrid => {
-                self.update_grid_probabilistic(&mapping_scan, &pose);
+                self.update_grid_probabilistic(&mapping_scan, &mapping_scan_with_features, &pose);
             }
             MapUpdateMethod::Binary => {
                 self.update_grid_binary(&mapping_scan, &pose);
@@ -180,15 +200,20 @@ impl SlamManager {
     }
 
     /// Updates the grid using a probabilistic (log-odds) model.
-    fn update_grid_probabilistic(&mut self, scan: &[Point2<f32>], pose: &Isometry2<f32>) {
+    fn update_grid_probabilistic(
+        &mut self,
+        scan_for_free: &[Point2<f32>],
+        scan_for_occupied: &[(Point2<f32>, f32)],
+        pose: &Isometry2<f32>,
+    ) {
         // --- Free Space Update ---
         // This part applies the inverse sensor model to update free space probabilities.
         // The logic is encapsulated here and can be replaced with other sensor models in the future.
-        self.update_free_space(scan, pose);
+        self.update_free_space(scan_for_free, pose);
 
         // --- Occupied Space Update ---
         // This part updates the cells where the laser beams are considered to have hit an obstacle.
-        self.update_occupied_space(scan, pose);
+        self.update_occupied_space(scan_for_occupied, pose);
     }
 
     /// Updates the cells that are considered free space based on the laser scan.
@@ -212,23 +237,28 @@ impl SlamManager {
                 }
 
                 // Update cell as free
-                self.map_gmap.data[index] = (self.map_gmap.data[index] + *LOG_ODDS_FREE)
+                self.map_gmap.data[index].log_odds = (self.map_gmap.data[index].log_odds + *LOG_ODDS_FREE)
                     .clamp(LOG_ODDS_CLAMP_MIN, LOG_ODDS_CLAMP_MAX);
             }
         }
     }
 
     /// Updates the cells that are considered occupied space based on the laser scan.
-    fn update_occupied_space(&mut self, scan: &[Point2<f32>], pose: &Isometry2<f32>) {
-        for endpoint_local in scan.iter() {
+    fn update_occupied_space(&mut self, scan: &[(Point2<f32>, f32)], pose: &Isometry2<f32>) {
+        for (endpoint_local, feature) in scan.iter() {
             let endpoint_world = pose * endpoint_local;
             let (ix, iy) = world_to_map_coords(endpoint_world.x, endpoint_world.y);
 
             if ix >= 0 && (ix as usize) < MAP_WIDTH && iy >= 0 && (iy as usize) < MAP_HEIGHT {
                 let index = (iy as usize) * MAP_WIDTH + (ix as usize);
-                // Update cell as occupied
-                self.map_gmap.data[index] = (self.map_gmap.data[index] + *LOG_ODDS_OCC)
+                let cell = &mut self.map_gmap.data[index];
+
+                // log_odds を更新
+                cell.log_odds = (cell.log_odds + *LOG_ODDS_OCC)
                     .clamp(LOG_ODDS_CLAMP_MIN, LOG_ODDS_CLAMP_MAX);
+
+                // edge_ness を更新 (加重平均)
+                cell.edge_ness = (cell.edge_ness * 0.7) + (*feature as f64 * 0.3);
             }
         }
     }
@@ -241,7 +271,7 @@ impl SlamManager {
 
             if ix >= 0 && (ix as usize) < MAP_WIDTH && iy >= 0 && (iy as usize) < MAP_HEIGHT {
                 let index = (iy as usize) * MAP_WIDTH + (ix as usize);
-                self.map_gmap.data[index] = 1.0; // Occupied
+                self.map_gmap.data[index].log_odds = 1.0; // Occupied
             }
         }
     }
@@ -263,7 +293,7 @@ impl SlamManager {
         for y in 0..self.map_gmap.height {
             for x in 0..self.map_gmap.width {
                 let index = y * self.map_gmap.width + x;
-                if self.map_gmap.data[index] > threshold {
+                if self.map_gmap.data[index].log_odds > threshold {
                     // Convert map index back to world coordinates
                     let world_x = ((x as isize - MAP_ORIGIN_X as isize) as f32) * CSIZE;
                     let world_y = (-(y as isize - MAP_ORIGIN_Y as isize) as f32) * CSIZE;
@@ -374,7 +404,7 @@ pub fn create_occupancy_grid(points: &[Point2<f32>]) -> OccupancyGrid {
         let (ix, iy) = world_to_map_coords(p.x, p.y);
         if ix >= 0 && (ix as usize) < gmap.width && iy >= 0 && (iy as usize) < gmap.height {
             let index = (iy as usize) * gmap.width + (ix as usize);
-            gmap.data[index] = 1.0; // Occupied
+            gmap.data[index].log_odds = 1.0; // Occupied
         }
     }
     gmap

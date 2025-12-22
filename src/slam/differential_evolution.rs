@@ -80,7 +80,7 @@ impl DifferentialEvolutionSolver {
 
                     if map_x >= 0 && map_x < width && map_y >= 0 && map_y < height {
                         let map_idx = (map_y as usize) * gmap.width + (map_x as usize);
-                        let log_odds = gmap.data[map_idx];
+                        let log_odds = gmap.data[map_idx].log_odds;
 
                         // Calculate cell score based on map update method
                         let cell_score = match map_update_method {
