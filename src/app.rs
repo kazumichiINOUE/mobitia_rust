@@ -547,61 +547,70 @@ impl MyApp {
         max_dist_threshold: f32,
         interpolation_interval: f32,
     ) -> Vec<(f32, f32, f32, f32)> {
-        let mut interpolated_scan = Vec::new();
         if scan.is_empty() {
-            return interpolated_scan;
+            return Vec::new();
         }
 
-        // .windows(2) を使うためにスライスに変換
-        let scan_slice = scan.as_slice();
+        // 閾値を2乗しておくことで、ループ内のsqrt()計算を削減
+        let min_dist_threshold_sq = min_dist_threshold * min_dist_threshold;
+        let max_dist_threshold_sq = max_dist_threshold * max_dist_threshold;
 
-        for window in scan_slice.windows(2) {
+        // ステップ1: 間引き
+        let mut thinned_scan = Vec::new();
+        thinned_scan.push(scan[0]);
+        let mut last_point_thinned = scan[0]; // 最後に追加した間引き点
+
+        for i in 1..scan.len() {
+            let current_point = scan[i];
+            let dx = current_point.0 - last_point_thinned.0;
+            let dy = current_point.1 - last_point_thinned.1;
+            let distance_xy_sq = dx * dx + dy * dy;
+
+            if distance_xy_sq >= min_dist_threshold_sq {
+                thinned_scan.push(current_point);
+                last_point_thinned = current_point;
+            }
+        }
+
+        // ステップ2: 補間
+        let mut final_scan = Vec::new();
+        if thinned_scan.is_empty() {
+            return final_scan;
+        }
+
+        // 最初の間引き点を追加
+        final_scan.push(thinned_scan[0]);
+
+        // .windows(2) を使う
+        for window in thinned_scan.windows(2) {
             let p1 = window[0];
             let p2 = window[1];
 
-            // 最初のループでのみp1を追加
-            if interpolated_scan.is_empty() {
-                interpolated_scan.push(p1);
-            }
-
-            // 1. XY座標でのユークリッド距離を計算
             let dx = p2.0 - p1.0;
             let dy = p2.1 - p1.1;
-            let distance_xy = (dx * dx + dy * dy).sqrt();
+            let distance_xy_sq = dx * dx + dy * dy;
 
-            // 2. 補間条件をチェック
-            if distance_xy > min_dist_threshold && distance_xy < max_dist_threshold {
+            // 補間条件をチェック (2乗で比較)
+            if distance_xy_sq < max_dist_threshold_sq {
+                let distance_xy = distance_xy_sq.sqrt(); // ここで初めて平方根を計算
                 let num_steps = (distance_xy / interpolation_interval).floor() as usize;
                 if num_steps > 0 {
                     for step in 1..=num_steps {
                         let fraction = step as f32 * interpolation_interval / distance_xy;
-
-                        // XY座標で線形補間
                         let interpolated_x = p1.0 + dx * fraction;
                         let interpolated_y = p1.1 + dy * fraction;
-
-                        // 補間されたXY座標から r と theta を再計算
                         let interpolated_r = (interpolated_x * interpolated_x + interpolated_y * interpolated_y).sqrt();
                         let interpolated_theta = interpolated_y.atan2(interpolated_x);
-
-                        interpolated_scan.push((interpolated_x, interpolated_y, interpolated_r, interpolated_theta));
+                        final_scan.push((interpolated_x, interpolated_y, interpolated_r, interpolated_theta));
                     }
                 }
             }
             
-            // p2を常に追加
-            interpolated_scan.push(p2);
-        }
-
-        // スキャンが1点だけの場合の処理
-        if scan.len() == 1 && interpolated_scan.is_empty() {
-            interpolated_scan.push(scan[0]);
+            // p2 を追加 (thinned_scan の各点を最終結果に追加)
+            final_scan.push(p2);
         }
         
-        // 重複する可能性があるためユニークにする
-        interpolated_scan.dedup_by(|a, b| a.0 == b.0 && a.1 == b.1);
-        
-        interpolated_scan
+        final_scan
     }
 
     /// Updates the suggestion list based on the current input string.
@@ -928,7 +937,7 @@ impl eframe::App for MyApp {
                                 &raw_combined_scan,
                                 0.1,  // min_dist_threshold (10cm)
                                 2.0,  // max_dist_threshold (2m)
-                                0.01, // interpolation_interval (1cm)
+                                0.05, // interpolation_interval (1cm)
                             );
 
                             // 結合した点群をSLAMスレッドに送信
