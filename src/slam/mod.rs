@@ -114,7 +114,7 @@ pub struct SlamManager {
     output_base_dir: std::path::PathBuf,
 
     // キャッシュされた点群
-    cached_map_points: Vec<Point2<f32>>,
+    cached_map_points: Vec<(Point2<f32>, f64)>,
     is_map_dirty: bool, // 地図が更新されたかを示すフラグ
 }
 
@@ -289,7 +289,7 @@ impl SlamManager {
 
     /// Returns the map points for visualization.
     /// This now generates the points from the occupancy grid.
-    pub fn get_map_points(&mut self) -> &Vec<Point2<f32>> {
+    pub fn get_map_points(&mut self) -> &Vec<(Point2<f32>, f64)> {
         if !self.is_map_dirty {
             return &self.cached_map_points;
         }
@@ -304,11 +304,14 @@ impl SlamManager {
         for y in 0..self.map_gmap.height {
             for x in 0..self.map_gmap.width {
                 let index = y * self.map_gmap.width + x;
-                if self.map_gmap.data[index].log_odds > threshold {
+                let cell_log_odds = self.map_gmap.data[index].log_odds;
+
+                if cell_log_odds > threshold {
                     // Convert map index back to world coordinates
                     let world_x = ((x as isize - MAP_ORIGIN_X as isize) as f32) * CSIZE;
                     let world_y = (-(y as isize - MAP_ORIGIN_Y as isize) as f32) * CSIZE;
-                    self.cached_map_points.push(Point2::new(world_x, world_y));
+                    let probability = log_odds_to_probability(cell_log_odds);
+                    self.cached_map_points.push((Point2::new(world_x, world_y), probability));
                 }
             }
         }
@@ -419,4 +422,9 @@ pub fn create_occupancy_grid(points: &[Point2<f32>]) -> OccupancyGrid {
         }
     }
     gmap
+}
+
+/// Converts a log-odds value to a probability (0.0 to 1.0).
+fn log_odds_to_probability(log_odds: f64) -> f64 {
+    1.0 / (1.0 + (-log_odds).exp())
 }

@@ -85,7 +85,7 @@ pub enum SlamThreadCommand {
 }
 
 pub struct SlamThreadResult {
-    pub map_points: Vec<nalgebra::Point2<f32>>,
+    pub map_points: Vec<(nalgebra::Point2<f32>, f64)>,
     pub robot_pose: nalgebra::Isometry2<f32>,
     pub scan_used: Vec<(f32, f32, f32, f32, f32)>,
 }
@@ -153,7 +153,7 @@ pub struct MyApp {
     pub(crate) is_slam_processing: Arc<AtomicBool>,
 
     // SLAMスレッドからの最新結果を保持 (描画用)
-    pub(crate) current_map_points: Vec<nalgebra::Point2<f32>>,
+    pub(crate) current_map_points: Vec<(nalgebra::Point2<f32>, f64)>,
 
     pub(crate) current_robot_pose: nalgebra::Isometry2<f32>,
 
@@ -417,7 +417,9 @@ impl MyApp {
             .collect();
 
         // 描画用のcurrent_map_pointsに現在のサブマップの点群を追加
-        self.current_map_points.extend(transformed_points);
+        self.current_map_points.extend(
+            transformed_points.into_iter().map(|p| (p, 1.0)) // 占有確率1.0として追加
+        );
 
         // サブマップリストと軌跡リストに追加
         self.submaps.insert(submap_info.id, submap_info.clone());
@@ -455,28 +457,10 @@ impl MyApp {
         self.robot_trajectory.clear();
         self.slam_map_bounding_box = None; // ロード開始時にバウンディングボックスもクリア
 
-        // 読み込み済みの点群を一時的に保持 (バウンディングボックス計算用)
-        let mut all_loaded_points_for_bounding_box: Vec<Point2<f32>> = Vec::new();
-
-        // サブマップディレクトリを読み込んでソートする (submap_000, submap_001 ...)
-        let mut submap_dirs: Vec<_> = fs::read_dir(&submaps_path)?
-            .filter_map(|entry| entry.ok())
-            .filter(|entry| entry.path().is_dir())
-            .collect();
-        submap_dirs.sort_by_key(|dir| dir.path());
-
-        for entry in submap_dirs {
-            let submap_path = entry.path();
-            self.load_single_submap(ctx, &submap_path.to_string_lossy().into_owned())?;
-        }
-
         // すべてのサブマップがロードされた後にバウンディングボックスを計算
         if !self.current_map_points.is_empty() {
-            let egui_points: Vec<egui::Pos2> = self
-                .current_map_points
-                .iter()
-                .map(|p| egui::pos2(p.x, p.y))
-                .collect();
+            let egui_points: Vec<egui::Pos2> =
+                self.current_map_points.iter().map(|(p, _prob)| egui::pos2(p.x, p.y)).collect();
             self.slam_map_bounding_box = Some(egui::Rect::from_points(&egui_points));
             self.slam_mode = SlamMode::Paused; // ロード後はPausedモードにする
         }
@@ -1656,14 +1640,21 @@ impl eframe::App for MyApp {
                 }
 
                 // Draw the map points
-                for point in &self.current_map_points {
+                for (point, probability) in &self.current_map_points {
                     // Right = +X, Up = +Y
                     let screen_pos = to_screen.transform_pos(egui::pos2(point.x, point.y));
                     if rect.contains(screen_pos) {
+                        // 占有確率に基づいて色を調整
+                        let intensity = (*probability as f32 * 255.0).min(255.0).max(0.0);
+                        let color = egui::Color32::from_rgb(
+                            (intensity * 0.4).min(255.0) as u8, // 青みを強くするためR,Gを低めに
+                            (intensity * 0.4).min(255.0) as u8,
+                            intensity as u8,
+                        );
                         painter.circle_filled(
                             screen_pos,
                             2.0,
-                            egui::Color32::from_rgb(100, 100, 255),
+                            color,
                         );
                     }
                 }
