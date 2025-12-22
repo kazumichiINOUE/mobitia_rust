@@ -1,4 +1,8 @@
-use super::{MapUpdateMethod, OccupancyGrid, CSIZE, MAP_ORIGIN_X, MAP_ORIGIN_Y};
+use super::{
+    MapUpdateMethod, OccupancyGrid, CSIZE, MAP_ORIGIN_X, MAP_ORIGIN_Y,
+    TRANSLATION_PENALTY_WEIGHT, ROTATION_PENALTY_WEIGHT,
+    POSITION_SCORE_WEIGHT, FEATURE_SCORE_WEIGHT,
+};
 use nalgebra::{Isometry2, Point2, Rotation2, Translation2, Vector3};
 use rand::seq::SliceRandom;
 use rand::Rng;
@@ -57,7 +61,7 @@ impl DifferentialEvolutionSolver {
         points: &[(Point2<f32>, f32)],
         pose: &Isometry2<f32>,
         kernel_obj: &GaussianKernel,
-        map_update_method: MapUpdateMethod, // 引数を追加
+        map_update_method: MapUpdateMethod,
     ) -> f64 {
         let mut total_score = 0.0;
 
@@ -67,7 +71,7 @@ impl DifferentialEvolutionSolver {
         let kernel_radius = kernel_obj.radius;
         let kernel_size = (2 * kernel_radius + 1) as usize;
 
-        for (p_coord, _feature) in points {
+        for (p_coord, scan_feature) in points {
             let transformed_p = pose * p_coord;
             let gx = (transformed_p.x / CSIZE) as i32 + MAP_ORIGIN_X as i32;
             let gy = (-transformed_p.y / CSIZE) as i32 + MAP_ORIGIN_Y as i32;
@@ -80,31 +84,36 @@ impl DifferentialEvolutionSolver {
 
                     if map_x >= 0 && map_x < width && map_y >= 0 && map_y < height {
                         let map_idx = (map_y as usize) * gmap.width + (map_x as usize);
-                        let log_odds = gmap.data[map_idx].log_odds;
+                        let cell_data = gmap.data[map_idx];
+                        let log_odds = cell_data.log_odds;
+                        let map_edgeness = cell_data.edge_ness;
 
-                        // Calculate cell score based on map update method
-                        let cell_score = match map_update_method {
-                            MapUpdateMethod::Probabilistic => {
-                                if log_odds > 0.0 {
-                                    1.0 - 1.0 / (1.0 + log_odds.exp())
-                                } else {
-                                    0.0
-                                }
+                        let kernel_idx = ((dy + kernel_radius) as usize) * kernel_size
+                            + ((dx + kernel_radius) as usize);
+                        let kernel_weight = kernel_obj.kernel[kernel_idx];
+
+                        // --- 位置スコアの計算 ---
+                        let position_score = if log_odds > 0.0 {
+                            match map_update_method {
+                                MapUpdateMethod::Probabilistic => 1.0 - 1.0 / (1.0 + log_odds.exp()),
+                                _ => 1.0,
                             }
-                            MapUpdateMethod::Binary | MapUpdateMethod::Hybrid => {
-                                if log_odds > 0.0 {
-                                    1.0
-                                } else {
-                                    0.0
-                                }
-                            }
+                        } else {
+                            0.0 // 自由空間と未知空間は位置スコアに貢献しない
                         };
 
-                        if cell_score > 0.0 {
-                            let kernel_idx = ((dy + kernel_radius) as usize) * kernel_size
-                                + ((dx + kernel_radius) as usize);
-                            point_score += cell_score * kernel_obj.kernel[kernel_idx];
-                        }
+                        // --- 特徴類似度スコアの計算 ---
+                        // スキャン点とマップセルの特徴量が両方エッジ(1)か、両方非エッジ(0)の場合に高くなる
+                        let scan_feature_f64 = *scan_feature as f64;
+                        let feature_similarity = scan_feature_f64 * map_edgeness
+                            + (1.0 - scan_feature_f64) * (1.0 - map_edgeness);
+                        
+                        // --- 最終スコアの計算 ---
+                        // 位置スコアと特徴類似度スコアを重み付けして合計
+                        let combined_score = (position_score * POSITION_SCORE_WEIGHT)
+                                            + (feature_similarity * FEATURE_SCORE_WEIGHT);
+
+                        point_score += combined_score * kernel_weight;
                     }
                 }
             }

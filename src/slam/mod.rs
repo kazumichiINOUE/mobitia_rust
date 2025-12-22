@@ -14,7 +14,7 @@ pub const MAP_WIDTH: usize = 3200;
 pub const MAP_HEIGHT: usize = 3200;
 pub const MAP_ORIGIN_X: usize = MAP_WIDTH / 2;
 pub const MAP_ORIGIN_Y: usize = MAP_HEIGHT / 2;
-const DECAY_RATE: f64 = 0.5; // For map decay
+const DECAY_RATE: f64 = 1.0; // For map decay (無効化)
 
 // --- Map Update Method Selection ---
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -27,6 +27,17 @@ pub enum MapUpdateMethod {
 // --- Constants for Probabilistic Update ---
 const PROB_OCCUPIED: f64 = 0.6; // Probability of a cell being occupied upon a "hit"
 const PROB_FREE: f64 = 0.4; // Probability of a cell being free upon a "miss"
+
+// --- Constants for Penalty ---
+pub const PENALTY_LOG_ODDS_THRESHOLD: f64 = -0.2;
+pub const PENALTY_FACTOR: f64 = 1.0;
+// 移動コストペナルティの重み
+pub const TRANSLATION_PENALTY_WEIGHT: f64 = 100.0; // 1メートルあたり100ポイントのペナルティ
+pub const ROTATION_PENALTY_WEIGHT: f64 = 1000.0; // 1ラジアンあたり1000ポイントのペナルティ
+
+// スコア計算の重み
+pub const POSITION_SCORE_WEIGHT: f64 = 1.0;
+pub const FEATURE_SCORE_WEIGHT: f64 = 1.0;
 
 lazy_static! {
     static ref LOG_ODDS_OCC: f64 = (PROB_OCCUPIED / (1.0 - PROB_OCCUPIED)).ln();
@@ -237,8 +248,8 @@ impl SlamManager {
                 }
 
                 // Update cell as free
-                self.map_gmap.data[index].log_odds = (self.map_gmap.data[index].log_odds + *LOG_ODDS_FREE)
-                    .clamp(LOG_ODDS_CLAMP_MIN, LOG_ODDS_CLAMP_MAX);
+                // self.map_gmap.data[index].log_odds = (self.map_gmap.data[index].log_odds + *LOG_ODDS_FREE)
+                //     .clamp(LOG_ODDS_CLAMP_MIN, LOG_ODDS_CLAMP_MAX);
             }
         }
     }
