@@ -64,14 +64,9 @@ pub enum Commands {
 
 #[derive(Subcommand, Debug)]
 pub enum MapCommands {
-    /// Load a map from a specified directory.
+    /// Load a map from a specified directory, loading submaps sequentially.
     Load {
         /// Path to the directory containing map data (e.g., ./slam_results/slam_result_20251220-211047).
-        path: PathBuf,
-    },
-    /// List and sequentially load maps from a parent directory.
-    ListAndLoad {
-        /// Path to the parent directory containing multiple slam_result_YYYYMMDD-HHMMSS directories. (e.g., ./slam_results)
         path: PathBuf,
     },
 }
@@ -575,29 +570,6 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
         },
         Commands::Map { command } => match command {
             MapCommands::Load { path } => {
-                app.command_history.push(ConsoleOutputEntry {
-                    text: format!("Loading map from '{}'...", path.display()),
-                    group_id: current_group_id,
-                });
-
-                match app.load_map_from_directory(ctx, &path.to_string_lossy().into_owned()) {
-                    Ok(_) => {
-                        app.command_history.push(ConsoleOutputEntry {
-                            text: "Map loaded successfully.".to_string(),
-                            group_id: current_group_id,
-                        });
-                        // マップ表示に切り替え
-                        app.app_mode = AppMode::Slam;
-                    }
-                    Err(e) => {
-                        app.command_history.push(ConsoleOutputEntry {
-                            text: format!("ERROR: Failed to load map: {}", e),
-                            group_id: current_group_id,
-                        });
-                    }
-                }
-            }
-            MapCommands::ListAndLoad { path } => {
                 let msg = format!(
                     "Queueing up individual submaps from '{}'...",
                     path.display()

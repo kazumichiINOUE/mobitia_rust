@@ -447,41 +447,6 @@ impl MyApp {
         Ok(())
     }
 
-    pub fn load_map_from_directory(
-        &mut self,
-        ctx: &egui::Context,
-        base_path_str: &str,
-    ) -> Result<()> {
-        let base_path = std::path::PathBuf::from(base_path_str);
-        let submaps_path = base_path.join("submaps");
-
-        if !submaps_path.exists() || !submaps_path.is_dir() {
-            return Err(anyhow::anyhow!(
-                "Submaps directory not found at: {}",
-                submaps_path.display()
-            ));
-        }
-
-        // マップをクリア
-        self.current_map_points.clear();
-        self.submaps.clear();
-        self.robot_trajectory.clear();
-        self.slam_map_bounding_box = None; // ロード開始時にバウンディングボックスもクリア
-
-        // すべてのサブマップがロードされた後にバウンディングボックスを計算
-        if !self.current_map_points.is_empty() {
-            let egui_points: Vec<egui::Pos2> = self
-                .current_map_points
-                .iter()
-                .map(|(p, _prob)| egui::pos2(p.x, p.y))
-                .collect();
-            self.slam_map_bounding_box = Some(egui::Rect::from_points(&egui_points));
-            self.slam_mode = SlamMode::Paused; // ロード後はPausedモードにする
-        }
-
-        Ok(())
-    }
-
     fn compute_features(
         &self,
         scan: &Vec<(f32, f32, f32, f32, f32)>,
@@ -705,32 +670,9 @@ impl MyApp {
                         .collect();
                 }
 
-                ["map", "list-and-load"] if ends_with_space => {
-                    // map list-and-load の場合、デフォルトで ./slam_results/ をサジェスト
-                    self.current_suggestions = vec!["./slam_results/".to_string()];
-                    // もしカレントディレクトリにslam_resultsがない場合のために、一般的なパスも追加するかもしれない
-                    // for now, just suggest the common parent
-                }
-                ["map", "list-and-load", partial_path] => {
-                    let path_buf = PathBuf::from(partial_path);
-                    let (dir_to_read, prefix) = if partial_path.ends_with('/')
-                        || (path_buf.is_dir() && path_buf.exists())
-                    {
-                        (path_buf, "".to_string())
-                    } else {
-                        let parent = path_buf.parent().unwrap_or(Path::new(""));
-                        let file_name = path_buf
-                            .file_name()
-                            .unwrap_or_default()
-                            .to_string_lossy()
-                            .to_string();
-                        (parent.to_path_buf(), file_name)
-                    };
-                    self.current_suggestions =
-                        get_path_suggestions(&dir_to_read.to_string_lossy(), &prefix);
-                }
                 ["map", "load"] if ends_with_space => {
-                    self.current_suggestions = get_path_suggestions(".", "");
+                    // map load の場合、デフォルトで ./slam_results/ をサジェスト
+                    self.current_suggestions = vec!["./slam_results/".to_string()];
                 }
                 ["map", "load", partial_path] => {
                     let path_buf = PathBuf::from(partial_path);
@@ -751,7 +693,7 @@ impl MyApp {
                         get_path_suggestions(&dir_to_read.to_string_lossy(), &prefix);
                 }
                 ["map", partial_arg] => {
-                    let options = vec!["load", "list-and-load"];
+                    let options = vec!["load"];
                     self.current_suggestions = options
                         .into_iter()
                         .filter(|opt| opt.starts_with(partial_arg))
@@ -759,8 +701,7 @@ impl MyApp {
                         .collect();
                 }
                 ["map"] if ends_with_space => {
-                    self.current_suggestions =
-                        vec!["load".to_string(), "list-and-load".to_string()];
+                    self.current_suggestions = vec!["load".to_string()];
                 }
 
                 ["serial", _sub @ ("list" | "ls"), partial_arg] => {
