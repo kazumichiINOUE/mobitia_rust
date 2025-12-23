@@ -1,5 +1,5 @@
 use anyhow::Result;
-use chrono::Local; // 追加
+use chrono::Local;
 use clap::Parser;
 use eframe::egui;
 use egui::Vec2;
@@ -8,11 +8,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
-use std::path::{Path, PathBuf}; // 追加
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread;
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 
 use crate::cli::Cli;
 use crate::demo::DemoManager;
@@ -170,6 +170,13 @@ pub struct MyApp {
     pub(crate) current_submap_robot_poses: Vec<nalgebra::Isometry2<f32>>,
     pub(crate) submaps: HashMap<usize, Submap>,
     pub(crate) slam_map_bounding_box: Option<egui::Rect>,
+
+    /// `list-and-load`コマンドで読み込むサブマップのパスのキュー
+    pub(crate) submap_load_queue: Option<Vec<PathBuf>>,
+    /// 最後にサブマップを読み込んだ時刻
+    pub(crate) last_submap_load_time: Option<Instant>,
+    /// サブマップ読み込み間の遅延
+    pub(crate) submap_load_delay: Duration,
 }
 
 impl MyApp {
@@ -369,6 +376,12 @@ impl MyApp {
             current_submap_robot_poses: Vec::new(),
             submaps: HashMap::new(),
             slam_map_bounding_box: None,
+
+            // V V V ここから追加 V V V
+            submap_load_queue: None,
+            last_submap_load_time: None,
+            submap_load_delay: Duration::from_millis(500), // 500ms遅延
+                                                           // ^ ^ ^ ここまで追加 ^ ^ ^
         }
     }
 
@@ -430,8 +443,6 @@ impl MyApp {
 
         // UIの更新をリクエスト
         ctx.request_repaint();
-        // 視覚的な確認のため、短い遅延を入れる (UIフリーズを避けるため、本来は非同期化が必要)
-        std::thread::sleep(std::time::Duration::from_millis(100));
 
         Ok(())
     }
@@ -851,6 +862,76 @@ impl eframe::App for MyApp {
 
     /// フレームごとに呼ばれ、UIを描画する
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // --- サブマップの逐次読み込み処理 ---
+        let mut path_to_load: Option<PathBuf> = None; // ロードするパスを保持する変数
+
+        if let Some(queue) = &mut self.submap_load_queue {
+            let should_load = self.last_submap_load_time.map_or(true, |last_load| {
+                last_load.elapsed() >= self.submap_load_delay
+            });
+
+            if should_load && !queue.is_empty() {
+                path_to_load = Some(queue.remove(0)); // パスを取り出して変数に格納
+                self.last_submap_load_time = Some(Instant::now());
+            }
+        }
+
+        if let Some(submap_path) = path_to_load {
+            let submap_path_str = submap_path.to_string_lossy().into_owned();
+
+            // どのくらい進んだかのメッセージはここで生成
+            if let Some(queue) = &self.submap_load_queue {
+                let total_count = self.submaps.len() + queue.len() + 1;
+                let current_count = self.submaps.len() + 1;
+                let msg = format!(
+                    "Loading submap {}/{} from '{}'...",
+                    current_count,
+                    total_count,
+                    submap_path.display()
+                );
+                self.command_history.push(ConsoleOutputEntry {
+                    text: msg,
+                    group_id: self.next_group_id,
+                });
+            }
+
+            match self.load_single_submap(ctx, &submap_path_str) {
+                Ok(_) => {
+                    // バウンディングボックスを更新
+                    if !self.current_map_points.is_empty() {
+                        let egui_points: Vec<egui::Pos2> = self
+                            .current_map_points
+                            .iter()
+                            .map(|(p, _prob)| egui::pos2(p.x, p.y))
+                            .collect();
+                        self.slam_map_bounding_box = Some(egui::Rect::from_points(&egui_points));
+                    }
+                }
+                Err(e) => {
+                    let error_msg = format!(
+                        "ERROR: Failed to load submap '{}': {}",
+                        submap_path.display(),
+                        e
+                    );
+                    self.command_history.push(ConsoleOutputEntry {
+                        text: error_msg,
+                        group_id: self.next_group_id,
+                    });
+                }
+            }
+
+            // キューが空になったかチェック
+            if let Some(queue) = &mut self.submap_load_queue {
+                if queue.is_empty() {
+                    self.submap_load_queue = None; // キューが空になったらNoneにする
+                    self.command_history.push(ConsoleOutputEntry {
+                        text: "All submap loading attempts completed.".to_string(),
+                        group_id: self.next_group_id,
+                    });
+                }
+            }
+        }
+
         // --- データ更新 ---
         while let Ok(lidar_message) = self.lidar_message_receiver.try_recv() {
             match lidar_message {
@@ -1466,8 +1547,8 @@ impl eframe::App for MyApp {
                 // ワールド座標からスクリーン座標への変換を定義
                 // Y軸を反転させるため、fromに渡すRectのYのmin/maxを入れ替える
                 let world_to_screen_rect = egui::Rect::from_min_max(
-                    egui::pos2(-8.0, 8.0), // ワールドの左上 (min_x, max_y)
-                    egui::pos2(8.0, -8.0), // ワールドの右下 (max_x, min_y)
+                    egui::pos2(-15.0, 15.0), // ワールドの左上 (min_x, max_y)
+                    egui::pos2(15.0, -15.0), // ワールドの右下 (max_x, min_y)
                 );
                 let to_screen =
                     egui::emath::RectTransform::from_to(world_to_screen_rect, square_rect);

@@ -598,7 +598,10 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                 }
             }
             MapCommands::ListAndLoad { path } => {
-                let msg = format!("Loading individual submaps from '{}'...", path.display());
+                let msg = format!(
+                    "Queueing up individual submaps from '{}'...",
+                    path.display()
+                );
                 println!("{}", msg);
                 app.command_history.push(ConsoleOutputEntry {
                     text: msg,
@@ -671,84 +674,17 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
 
                 found_submaps.sort(); // 名前順にソート (submap_000, submap_001, ...)
 
-                let msg_found_count = format!("Found {} submaps:", found_submaps.len());
+                let msg_found_count = format!("Found and queued {} submaps.", found_submaps.len());
                 println!("{}", msg_found_count);
                 app.command_history.push(ConsoleOutputEntry {
                     text: msg_found_count,
                     group_id: current_group_id,
                 });
-                for submap_path in &found_submaps {
-                    let msg_submap_path = format!("  - {}", submap_path.display());
-                    println!("{}", msg_submap_path);
-                    app.command_history.push(ConsoleOutputEntry {
-                        text: msg_submap_path,
-                        group_id: current_group_id,
-                    });
-                }
 
-                let mut loaded_any = false;
-                for submap_path in found_submaps {
-                    let msg_loading =
-                        format!("  Loading submap from '{}'...", submap_path.display());
-                    println!("{}", msg_loading);
-                    app.command_history.push(ConsoleOutputEntry {
-                        text: msg_loading,
-                        group_id: current_group_id,
-                    });
-                    match app.load_single_submap(ctx, &submap_path.to_string_lossy().into_owned()) {
-                        Ok(_) => {
-                            let msg_success = format!(
-                                "  Successfully loaded submap from '{}'.",
-                                submap_path.display()
-                            );
-                            println!("{}", msg_success);
-                            app.command_history.push(ConsoleOutputEntry {
-                                text: msg_success,
-                                group_id: current_group_id,
-                            });
-                            loaded_any = true;
-                        }
-                        Err(e) => {
-                            let msg_error = format!(
-                                "  ERROR: Failed to load submap from '{}': {}",
-                                submap_path.display(),
-                                e
-                            );
-                            println!("{}", msg_error);
-                            app.command_history.push(ConsoleOutputEntry {
-                                text: msg_error,
-                                group_id: current_group_id,
-                            });
-                        }
-                    }
-                }
-
-                // すべてのサブマップがロードされた後にバウンディングボックスを計算 (app.rsで実施済みだが念のため)
-                if !app.current_map_points.is_empty() {
-                    let egui_points: Vec<egui::Pos2> = app
-                        .current_map_points
-                        .iter()
-                        .map(|(p, _prob)| egui::pos2(p.x, p.y))
-                        .collect();
-                    app.slam_map_bounding_box = Some(egui::Rect::from_points(&egui_points));
-                }
-
-                if loaded_any {
-                    let msg = "All submap loading attempts completed.".to_string();
-                    println!("{}", msg);
-                    app.command_history.push(ConsoleOutputEntry {
-                        text: msg,
-                        group_id: current_group_id,
-                    });
-                    app.app_mode = AppMode::Slam; // マップ表示に切り替え
-                } else {
-                    let msg = "No submaps were loaded successfully.".to_string();
-                    println!("{}", msg);
-                    app.command_history.push(ConsoleOutputEntry {
-                        text: msg,
-                        group_id: current_group_id,
-                    });
-                }
+                // 実際のロード処理は update ループに任せる
+                app.submap_load_queue = Some(found_submaps);
+                app.last_submap_load_time = None; // タイマーをリセット
+                app.app_mode = AppMode::Slam; // 先にSlamモードに切り替え
             }
         },
     }
