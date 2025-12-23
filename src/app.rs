@@ -1298,6 +1298,12 @@ impl eframe::App for MyApp {
                                     if let Some(selected_suggestion) =
                                         self.current_suggestions.get(selected_index).cloned()
                                     {
+                                        let mut completed_text = selected_suggestion;
+                                        // 補完候補がディレクトリ（末尾が /）でないならスペースを追加
+                                        if !completed_text.ends_with('/') {
+                                            completed_text.push(' ');
+                                        }
+
                                         let last_space_idx = self
                                             .input_string
                                             .rfind(char::is_whitespace)
@@ -1310,10 +1316,11 @@ impl eframe::App for MyApp {
                                             .unwrap_or(0);
                                         let replace_from_idx =
                                             std::cmp::max(last_space_idx, last_slash_idx);
+
                                         self.input_string = format!(
                                             "{}{}",
                                             &self.input_string[..replace_from_idx],
-                                            selected_suggestion
+                                            completed_text
                                         );
 
                                         let id = text_edit_response.id;
