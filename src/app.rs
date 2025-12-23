@@ -1196,7 +1196,7 @@ impl eframe::App for MyApp {
                     // 入力欄
                     let text_edit_response = ui
                         .horizontal(|ui| {
-                            ui.monospace("> ");
+                            ui.monospace(">");
                             ui.add(
                                 egui::TextEdit::singleline(&mut self.input_string)
                                     .id(console_input_id)
