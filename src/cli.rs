@@ -56,6 +56,7 @@ pub enum Commands {
         command: SaveCommands,
     },
     /// Manage map data.
+    #[command(alias = "m")]
     Map {
         #[command(subcommand)]
         command: MapCommands,

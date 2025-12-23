@@ -670,11 +670,11 @@ impl MyApp {
                         .collect();
                 }
 
-                ["map", "load"] if ends_with_space => {
+                ["map" | "m", "load"] if ends_with_space => {
                     // map load の場合、デフォルトで ./slam_results/ をサジェスト
                     self.current_suggestions = vec!["./slam_results/".to_string()];
                 }
-                ["map", "load", partial_path] => {
+                ["map" | "m", "load", partial_path] => {
                     let path_buf = PathBuf::from(partial_path);
                     let (dir_to_read, prefix) = if partial_path.ends_with('/')
                         || (path_buf.is_dir() && path_buf.exists())
@@ -692,7 +692,7 @@ impl MyApp {
                     self.current_suggestions =
                         get_path_suggestions(&dir_to_read.to_string_lossy(), &prefix);
                 }
-                ["map", partial_arg] => {
+                ["map" | "m", partial_arg] => {
                     let options = vec!["load"];
                     self.current_suggestions = options
                         .into_iter()
@@ -700,7 +700,7 @@ impl MyApp {
                         .map(|s| s.to_string())
                         .collect();
                 }
-                ["map"] if ends_with_space => {
+                ["map" | "m"] if ends_with_space => {
                     self.current_suggestions = vec!["load".to_string()];
                 }
 
@@ -779,6 +779,8 @@ impl MyApp {
                         "q",
                         "clear",
                         "save",
+                        "map",
+                        "m",
                     ];
                     self.current_suggestions = all_commands
                         .into_iter()
