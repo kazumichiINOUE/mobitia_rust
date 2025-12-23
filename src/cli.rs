@@ -571,6 +571,7 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
         },
         Commands::Map { command } => match command {
             MapCommands::Load { path } => {
+                /*
                 let msg = format!(
                     "Queueing up individual submaps from '{}'...",
                     path.display()
@@ -580,6 +581,7 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                     text: msg,
                     group_id: current_group_id,
                 });
+                */
 
                 // ロード開始時にマップをクリア
                 app.current_map_points.clear();
@@ -647,12 +649,14 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
 
                 found_submaps.sort(); // 名前順にソート (submap_000, submap_001, ...)
 
+                /*
                 let msg_found_count = format!("Found and queued {} submaps.", found_submaps.len());
                 println!("{}", msg_found_count);
                 app.command_history.push(ConsoleOutputEntry {
                     text: msg_found_count,
                     group_id: current_group_id,
                 });
+                */
 
                 // 実際のロード処理は update ループに任せる
                 app.submap_load_queue = Some(found_submaps);

@@ -823,6 +823,7 @@ impl eframe::App for MyApp {
             let submap_path_str = submap_path.to_string_lossy().into_owned();
 
             // どのくらい進んだかのメッセージはここで生成
+            /*
             if let Some(queue) = &self.submap_load_queue {
                 let total_count = self.submaps.len() + queue.len() + 1;
                 let current_count = self.submaps.len() + 1;
@@ -837,6 +838,7 @@ impl eframe::App for MyApp {
                     group_id: self.next_group_id,
                 });
             }
+            */
 
             match self.load_single_submap(ctx, &submap_path_str) {
                 Ok(_) => {
