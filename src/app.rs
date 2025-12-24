@@ -18,7 +18,7 @@ use crate::cli::Cli;
 use crate::demo::DemoManager;
 pub use crate::demo::DemoMode;
 use crate::lidar::{load_lidar_configurations, start_lidar_thread, LidarInfo};
-use crate::slam::{MapUpdateMethod, PointRepresentationMethod, SlamManager};
+use crate::slam::SlamManager; // Add SlamManager
 
 // Lidar一台分の状態を保持する構造体
 #[derive(Clone)]
@@ -165,7 +165,6 @@ pub struct MyApp {
 
     // --- サブマップ関連のフィールド (MyAppに移行) ---
     pub(crate) submap_counter: usize,
-    pub(crate) num_scans_per_submap: usize,
     pub(crate) current_submap_scan_buffer: Vec<Vec<(f32, f32)>>,
     pub(crate) current_submap_robot_poses: Vec<nalgebra::Isometry2<f32>>,
     pub(crate) submaps: HashMap<usize, Submap>,
@@ -175,13 +174,13 @@ pub struct MyApp {
     pub(crate) submap_load_queue: Option<Vec<PathBuf>>,
     /// 最後にサブマップを読み込んだ時刻
     pub(crate) last_submap_load_time: Option<Instant>,
-    /// サブマップ読み込み間の遅延
-    pub(crate) submap_load_delay: Duration,
+    
+    pub(crate) config: crate::config::Config, // 追加
 }
 
 impl MyApp {
     /// Creates a new instance of the application.
-    pub fn new(cc: &eframe::CreationContext) -> Self {
+    pub fn new(cc: &eframe::CreationContext, config: crate::config::Config) -> Self {
         // Lidar の初期設定を読み込む
         let lidars = load_lidar_configurations(|id| {
             cc.storage
@@ -218,6 +217,7 @@ impl MyApp {
         let (slam_command_sender, slam_command_receiver) = mpsc::channel();
         let (slam_result_sender, slam_result_receiver) = mpsc::channel();
         let is_slam_processing_for_thread = is_slam_processing.clone();
+        let slam_config_for_thread = config.slam.clone();
 
         // SLAMスレッドの起動
         // タイムスタンプに基づいたSLAM結果保存ディレクトリのパスを決定
@@ -230,8 +230,7 @@ impl MyApp {
         thread::spawn(move || {
             let mut slam_manager = SlamManager::new(
                 slam_results_path,
-                MapUpdateMethod::Hybrid,
-                PointRepresentationMethod::Centroid,
+                slam_config_for_thread.clone(), // Pass slam config
             );
             //let mut slam_manager = SlamManager::new(slam_results_path, MapUpdateMethod::Binary);
             //let mut slam_manager = SlamManager::new(slam_results_path, MapUpdateMethod::Probabilistic);
@@ -375,7 +374,6 @@ impl MyApp {
 
             // --- サブマップ関連のフィールド (MyAppに移行) ---
             submap_counter: 0,
-            num_scans_per_submap: 20, // 暫定的に20スキャンで1つのサブマップを生成
             current_submap_scan_buffer: Vec::new(),
             current_submap_robot_poses: Vec::new(),
             submaps: HashMap::new(),
@@ -384,7 +382,7 @@ impl MyApp {
             // V V V ここから追加 V V V
             submap_load_queue: None,
             last_submap_load_time: None,
-            submap_load_delay: Duration::from_millis(500), // 500ms遅延
+            config, // configフィールドの初期化
                                                            // ^ ^ ^ ここまで追加 ^ ^ ^
         }
     }
@@ -821,7 +819,7 @@ impl eframe::App for MyApp {
 
         if let Some(queue) = &mut self.submap_load_queue {
             let should_load = self.last_submap_load_time.map_or(true, |last_load| {
-                last_load.elapsed() >= self.submap_load_delay
+                last_load.elapsed() >= Duration::from_millis(self.config.map.submap_load_delay_ms)
             });
 
             if should_load && !queue.is_empty() {
@@ -1645,7 +1643,7 @@ impl eframe::App for MyApp {
                     // オンラインSLAM中の場合、これまで通りロボットを中心に表示
                     let robot_center_world =
                         egui::pos2(robot_pose.translation.x, robot_pose.translation.y);
-                    let map_view_size = 30.0; // 追従時の表示サイズ
+                    let map_view_size = self.config.slam.online_slam_view_size; // 追従時の表示サイズ
                     egui::Rect::from_center_size(
                         robot_center_world,
                         egui::vec2(map_view_size, map_view_size),

@@ -1,61 +1,13 @@
 pub mod differential_evolution;
 
 use bresenham::Bresenham;
-use lazy_static::lazy_static;
 use nalgebra::{Isometry2, Point2};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 
-// --- Map Configuration ---
-pub const CSIZE: f32 = 0.025;
-pub const MAP_WIDTH: usize = 3200;
-pub const MAP_HEIGHT: usize = 3200;
-pub const MAP_ORIGIN_X: usize = MAP_WIDTH / 2;
-pub const MAP_ORIGIN_Y: usize = MAP_HEIGHT / 2;
-const DECAY_RATE: f64 = 1.0; // For map decay (無効化)
-
-// --- Map Update Method Selection ---
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum MapUpdateMethod {
-    Binary,
-    Probabilistic,
-    Hybrid,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum PointRepresentationMethod {
-    CellCenter,
-    Centroid,
-}
-
-// --- Constants for Probabilistic Update ---
-const PROB_OCCUPIED: f64 = 0.6; // Probability of a cell being occupied upon a "hit"
-const PROB_FREE: f64 = 0.4; // Probability of a cell being free upon a "miss"
-                            // --- Constants for Penalty ---
-pub const PENALTY_LOG_ODDS_THRESHOLD: f64 = -0.2;
-pub const PENALTY_FACTOR: f64 = 1.0;
-// 移動コストペナルティの重み
-pub const TRANSLATION_PENALTY_WEIGHT: f64 = 100.0; // 1メートルあたり100ポイントのペナルティ
-pub const ROTATION_PENALTY_WEIGHT: f64 = 1000.0; // 1ラジアンあたり1000ポイントのペナルティ
-
-// スコア計算の重み
-pub const POSITION_SCORE_WEIGHT: f64 = 0.1;
-pub const FEATURE_SCORE_WEIGHT: f64 = 0.4;
-pub const NORMAL_ALIGNMENT_SCORE_WEIGHT: f64 = 0.5;
-
-pub const MAX_MATCHING_DIST: f32 = 0.5; // マッチングを考慮する最大距離 (メートル)
-pub const MATCH_SIGMA: f32 = 0.1; // 距離ペナルティのガウス関数におけるシグマ (メートル)
-
-lazy_static! {
-    static ref LOG_ODDS_OCC: f64 = (PROB_OCCUPIED / (1.0 - PROB_OCCUPIED)).ln();
-    static ref LOG_ODDS_FREE: f64 = (PROB_FREE / (1.0 - PROB_FREE)).ln();
-}
-
-// Clamp limits for log-odds to prevent infinite values and allow for unlearning
-const LOG_ODDS_CLAMP_MAX: f64 = 5.0;
-const LOG_ODDS_CLAMP_MIN: f64 = -5.0;
+use crate::config::{MapUpdateMethod, PointRepresentationMethod, SlamConfig};
 
 /// Represents a single cell in the occupancy grid.
 #[derive(Clone, Copy, Debug)]
@@ -116,12 +68,13 @@ pub struct Submap {
 
 /// The main SLAM state manager.
 pub struct SlamManager {
-    map_update_method: MapUpdateMethod,
-    point_representation: PointRepresentationMethod,
     is_initial_scan: bool,
     map_gmap: OccupancyGrid,
     robot_pose: Isometry2<f32>,
     de_solver: differential_evolution::DifferentialEvolutionSolver,
+    pub(crate) config: SlamConfig,
+    log_odds_occ: f64,
+    log_odds_free: f64,
 
     // サブマップ関連のフィールド
     submap_counter: usize,
@@ -140,18 +93,18 @@ pub struct SlamManager {
 impl SlamManager {
     pub fn new(
         output_base_dir: std::path::PathBuf,
-        map_update_method: MapUpdateMethod,
-        point_representation: PointRepresentationMethod,
+        config: SlamConfig,
     ) -> Self {
+        let log_odds_occ = (config.prob_occupied / (1.0 - config.prob_occupied)).ln();
+        let log_odds_free = (config.prob_free / (1.0 - config.prob_free)).ln();
+
         Self {
-            map_update_method,
-            point_representation,
             is_initial_scan: true,
-            map_gmap: OccupancyGrid::new(MAP_WIDTH, MAP_HEIGHT),
+            map_gmap: OccupancyGrid::new(config.map_width, config.map_height),
             robot_pose: Isometry2::identity(),
-            de_solver: differential_evolution::DifferentialEvolutionSolver::new(),
+            de_solver: differential_evolution::DifferentialEvolutionSolver::new(config.clone()),
             submap_counter: 0,
-            num_scans_per_submap: 20,
+            num_scans_per_submap: config.num_scans_per_submap,
             current_submap_scan_buffer: Vec::new(),
             current_submap_robot_poses: Vec::new(),
             current_submap_timestamps_buffer: Vec::new(),
@@ -159,6 +112,9 @@ impl SlamManager {
             output_base_dir,
             cached_map_points: Vec::new(),
             is_map_dirty: true,
+            config,
+            log_odds_occ,
+            log_odds_free,
         }
     }
 
@@ -170,16 +126,16 @@ impl SlamManager {
         timestamp: u128,
     ) {
         // --- Map Decay ---
-        if self.map_update_method == MapUpdateMethod::Probabilistic
-            || self.map_update_method == MapUpdateMethod::Hybrid
+        if self.config.map_update_method == MapUpdateMethod::Probabilistic
+            || self.config.map_update_method == MapUpdateMethod::Hybrid
         {
             for cell in self.map_gmap.data.iter_mut() {
-                cell.log_odds *= DECAY_RATE;
+                cell.log_odds *= self.config.decay_rate;
                 // 0.5(不明)に近づける
-                cell.edge_ness = (cell.edge_ness - 0.5) * DECAY_RATE + 0.5;
+                cell.edge_ness = (cell.edge_ness - 0.5) * self.config.decay_rate + 0.5;
                 // 法線も減衰（ゼロベクトルに近づける）
-                cell.normal_x *= DECAY_RATE;
-                cell.normal_y *= DECAY_RATE;
+                cell.normal_x *= self.config.decay_rate;
+                cell.normal_y *= self.config.decay_rate;
             }
         }
 
@@ -208,8 +164,6 @@ impl SlamManager {
                 &self.map_gmap,
                 &matching_scan,
                 self.robot_pose,
-                self.map_update_method,
-                self.point_representation,
             );
             self.robot_pose = best_pose;
         }
@@ -217,7 +171,7 @@ impl SlamManager {
         let pose = self.robot_pose; // Copy pose to avoid borrow checker issues
 
         // 地図更新には生の（補間されていない）スキャンデータを使用
-        match self.map_update_method {
+        match self.config.map_update_method {
             MapUpdateMethod::Probabilistic | MapUpdateMethod::Hybrid => {
                 self.update_grid_probabilistic(&mapping_scan, &mapping_scan_with_features, &pose);
             }
@@ -234,7 +188,7 @@ impl SlamManager {
         self.current_submap_robot_poses.push(self.robot_pose);
         self.current_submap_timestamps_buffer.push(timestamp);
 
-        if self.current_submap_scan_buffer.len() >= self.num_scans_per_submap {
+        if self.current_submap_scan_buffer.len() >= self.config.num_scans_per_submap {
             self.generate_and_save_submap();
         }
     }
@@ -258,18 +212,18 @@ impl SlamManager {
 
     /// Updates the cells that are considered free space based on the laser scan.
     fn update_free_space(&mut self, scan: &[Point2<f32>], pose: &Isometry2<f32>) {
-        let robot_pos_map = world_to_map_coords(pose.translation.x, pose.translation.y);
+        let robot_pos_map = world_to_map_coords(pose.translation.x, pose.translation.y, &self.config);
 
         for endpoint_local in scan.iter() {
             let endpoint_world = pose * endpoint_local;
-            let endpoint_map = world_to_map_coords(endpoint_world.x, endpoint_world.y);
+            let endpoint_map = world_to_map_coords(endpoint_world.x, endpoint_world.y, &self.config);
 
             // Use Bresenham's algorithm to trace the laser beam
             for (px, py) in Bresenham::new(robot_pos_map, endpoint_map) {
-                if px < 0 || px as usize >= MAP_WIDTH || py < 0 || py as usize >= MAP_HEIGHT {
+                if px < 0 || px as usize >= self.config.map_width || py < 0 || py as usize >= self.config.map_height {
                     continue;
                 }
-                let index = py as usize * MAP_WIDTH + px as usize;
+                let index = py as usize * self.config.map_width + px as usize;
 
                 // Don't update the endpoint itself as free space
                 if (px, py) == endpoint_map {
@@ -277,8 +231,8 @@ impl SlamManager {
                 }
 
                 // Update cell as free
-                // self.map_gmap.data[index].log_odds = (self.map_gmap.data[index].log_odds + *LOG_ODDS_FREE)
-                //     .clamp(LOG_ODDS_CLAMP_MIN, LOG_ODDS_CLAMP_MAX);
+                self.map_gmap.data[index].log_odds = (self.map_gmap.data[index].log_odds + self.log_odds_free)
+                    .clamp(self.config.log_odds_clamp_min, self.config.log_odds_clamp_max);
             }
         }
     }
@@ -291,15 +245,15 @@ impl SlamManager {
     ) {
         for (endpoint_local, feature, nx, ny) in scan.iter() {
             let endpoint_world = pose * endpoint_local;
-            let (ix, iy) = world_to_map_coords(endpoint_world.x, endpoint_world.y);
+            let (ix, iy) = world_to_map_coords(endpoint_world.x, endpoint_world.y, &self.config);
 
-            if ix >= 0 && (ix as usize) < MAP_WIDTH && iy >= 0 && (iy as usize) < MAP_HEIGHT {
-                let index = (iy as usize) * MAP_WIDTH + (ix as usize);
+            if ix >= 0 && (ix as usize) < self.config.map_width && iy >= 0 && (iy as usize) < self.config.map_height {
+                let index = (iy as usize) * self.config.map_width + (ix as usize);
                 let cell = &mut self.map_gmap.data[index];
 
                 // log_odds を更新
                 cell.log_odds =
-                    (cell.log_odds + *LOG_ODDS_OCC).clamp(LOG_ODDS_CLAMP_MIN, LOG_ODDS_CLAMP_MAX);
+                    (cell.log_odds + self.log_odds_occ).clamp(self.config.log_odds_clamp_min, self.config.log_odds_clamp_max);
 
                 // edge_ness を更新 (加重平均)
                 cell.edge_ness = (cell.edge_ness * 0.7) + (*feature as f64 * 0.3);
@@ -335,10 +289,10 @@ impl SlamManager {
     fn update_grid_binary(&mut self, scan: &[Point2<f32>], pose: &Isometry2<f32>) {
         for point_local in scan {
             let point_world = pose * point_local;
-            let (ix, iy) = world_to_map_coords(point_world.x, point_world.y);
+            let (ix, iy) = world_to_map_coords(point_world.x, point_world.y, &self.config);
 
-            if ix >= 0 && (ix as usize) < MAP_WIDTH && iy >= 0 && (iy as usize) < MAP_HEIGHT {
-                let index = (iy as usize) * MAP_WIDTH + (ix as usize);
+            if ix >= 0 && (ix as usize) < self.config.map_width && iy >= 0 && (iy as usize) < self.config.map_height {
+                let index = (iy as usize) * self.config.map_width + (ix as usize);
                 self.map_gmap.data[index].log_odds = 1.0; // Occupied
             }
         }
@@ -353,7 +307,7 @@ impl SlamManager {
 
         self.cached_map_points.clear();
         // Determine the threshold based on the map update method
-        let threshold = match self.map_update_method {
+        let threshold = match self.config.map_update_method {
             MapUpdateMethod::Probabilistic | MapUpdateMethod::Hybrid => 0.0, // log-odds > 0 means P > 0.5
             MapUpdateMethod::Binary => 0.5, // binary map uses 1.0 for occupied
         };
@@ -365,12 +319,12 @@ impl SlamManager {
                 let cell_log_odds = cell_data.log_odds;
 
                 if cell_log_odds > threshold {
-                    let (world_x, world_y) = match self.point_representation {
+                    let (world_x, world_y) = match self.config.point_representation {
                         PointRepresentationMethod::CellCenter => {
                             // Convert map index back to world coordinates (cell center)
                             (
-                                ((x as isize - MAP_ORIGIN_X as isize) as f32) * CSIZE,
-                                (-(y as isize - MAP_ORIGIN_Y as isize) as f32) * CSIZE,
+                                ((x as isize - (self.config.map_width / 2) as isize) as f32) * self.config.csize,
+                                (-(y as isize - (self.config.map_height / 2) as isize) as f32) * self.config.csize,
                             )
                         }
                         PointRepresentationMethod::Centroid => {
@@ -379,8 +333,8 @@ impl SlamManager {
                             } else {
                                 // Fallback to cell center if no points have hit the cell
                                 (
-                                    ((x as isize - MAP_ORIGIN_X as isize) as f32) * CSIZE,
-                                    (-(y as isize - MAP_ORIGIN_Y as isize) as f32) * CSIZE,
+                                    ((x as isize - (self.config.map_width / 2) as isize) as f32) * self.config.csize,
+                                    (-(y as isize - (self.config.map_height / 2) as isize) as f32) * self.config.csize,
                                 )
                             }
                         }
@@ -479,19 +433,21 @@ impl SlamManager {
 }
 
 /// Converts world coordinates to map grid coordinates.
-fn world_to_map_coords(x: f32, y: f32) -> (isize, isize) {
-    let ix = (x / CSIZE).round() as isize + MAP_ORIGIN_X as isize;
-    let iy = (-y / CSIZE).round() as isize + MAP_ORIGIN_Y as isize;
+fn world_to_map_coords(x: f32, y: f32, config: &SlamConfig) -> (isize, isize) {
+    let map_origin_x = config.map_width / 2;
+    let map_origin_y = config.map_height / 2;
+    let ix = (x / config.csize).round() as isize + map_origin_x as isize;
+    let iy = (-y / config.csize).round() as isize + map_origin_y as isize;
     (ix, iy)
 }
 
 // NOTE: This function is now deprecated in favor of the new update methods.
 // It is kept here for reference or for a full-binary-regeneration mode if needed.
 #[allow(dead_code)]
-pub fn create_occupancy_grid(points: &[Point2<f32>]) -> OccupancyGrid {
-    let mut gmap = OccupancyGrid::new(MAP_WIDTH, MAP_HEIGHT);
+pub fn create_occupancy_grid(points: &[Point2<f32>], config: &SlamConfig) -> OccupancyGrid {
+    let mut gmap = OccupancyGrid::new(config.map_width, config.map_height);
     for p in points {
-        let (ix, iy) = world_to_map_coords(p.x, p.y);
+        let (ix, iy) = world_to_map_coords(p.x, p.y, config);
         if ix >= 0 && (ix as usize) < gmap.width && iy >= 0 && (iy as usize) < gmap.height {
             let index = (iy as usize) * gmap.width + (ix as usize);
             gmap.data[index].log_odds = 1.0; // Occupied
