@@ -143,9 +143,8 @@ impl LidarDriver {
                         let angle_rad = current_angle.to_radians();
                         let x = distance_m * angle_rad.cos();
                         let y = distance_m * angle_rad.sin();
-                        lidar_points_current_scan.push((
-                            x, y, distance_m, angle_rad, 0.0, 0.0, 0.0,
-                        ));
+                        lidar_points_current_scan
+                            .push((x, y, distance_m, angle_rad, 0.0, 0.0, 0.0));
                         // 0.0をfeatureとnormalの初期値として追加
                     }
                 }
