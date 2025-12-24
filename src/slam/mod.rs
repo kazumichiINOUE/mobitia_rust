@@ -91,10 +91,7 @@ pub struct SlamManager {
 }
 
 impl SlamManager {
-    pub fn new(
-        output_base_dir: std::path::PathBuf,
-        config: SlamConfig,
-    ) -> Self {
+    pub fn new(output_base_dir: std::path::PathBuf, config: SlamConfig) -> Self {
         let log_odds_occ = (config.prob_occupied / (1.0 - config.prob_occupied)).ln();
         let log_odds_free = (config.prob_free / (1.0 - config.prob_free)).ln();
 
@@ -160,11 +157,9 @@ impl SlamManager {
             self.is_initial_scan = false;
         } else {
             // マッチングには補間済みのスキャンデータを使用
-            let (best_pose, _score) = self.de_solver.optimize_de(
-                &self.map_gmap,
-                &matching_scan,
-                self.robot_pose,
-            );
+            let (best_pose, _score) =
+                self.de_solver
+                    .optimize_de(&self.map_gmap, &matching_scan, self.robot_pose);
             self.robot_pose = best_pose;
         }
 
@@ -212,15 +207,21 @@ impl SlamManager {
 
     /// Updates the cells that are considered free space based on the laser scan.
     fn update_free_space(&mut self, scan: &[Point2<f32>], pose: &Isometry2<f32>) {
-        let robot_pos_map = world_to_map_coords(pose.translation.x, pose.translation.y, &self.config);
+        let robot_pos_map =
+            world_to_map_coords(pose.translation.x, pose.translation.y, &self.config);
 
         for endpoint_local in scan.iter() {
             let endpoint_world = pose * endpoint_local;
-            let endpoint_map = world_to_map_coords(endpoint_world.x, endpoint_world.y, &self.config);
+            let endpoint_map =
+                world_to_map_coords(endpoint_world.x, endpoint_world.y, &self.config);
 
             // Use Bresenham's algorithm to trace the laser beam
             for (px, py) in Bresenham::new(robot_pos_map, endpoint_map) {
-                if px < 0 || px as usize >= self.config.map_width || py < 0 || py as usize >= self.config.map_height {
+                if px < 0
+                    || px as usize >= self.config.map_width
+                    || py < 0
+                    || py as usize >= self.config.map_height
+                {
                     continue;
                 }
                 let index = py as usize * self.config.map_width + px as usize;
@@ -231,8 +232,11 @@ impl SlamManager {
                 }
 
                 // Update cell as free
-                self.map_gmap.data[index].log_odds = (self.map_gmap.data[index].log_odds + self.log_odds_free)
-                    .clamp(self.config.log_odds_clamp_min, self.config.log_odds_clamp_max);
+                self.map_gmap.data[index].log_odds =
+                    (self.map_gmap.data[index].log_odds + self.log_odds_free).clamp(
+                        self.config.log_odds_clamp_min,
+                        self.config.log_odds_clamp_max,
+                    );
             }
         }
     }
@@ -247,13 +251,19 @@ impl SlamManager {
             let endpoint_world = pose * endpoint_local;
             let (ix, iy) = world_to_map_coords(endpoint_world.x, endpoint_world.y, &self.config);
 
-            if ix >= 0 && (ix as usize) < self.config.map_width && iy >= 0 && (iy as usize) < self.config.map_height {
+            if ix >= 0
+                && (ix as usize) < self.config.map_width
+                && iy >= 0
+                && (iy as usize) < self.config.map_height
+            {
                 let index = (iy as usize) * self.config.map_width + (ix as usize);
                 let cell = &mut self.map_gmap.data[index];
 
                 // log_odds を更新
-                cell.log_odds =
-                    (cell.log_odds + self.log_odds_occ).clamp(self.config.log_odds_clamp_min, self.config.log_odds_clamp_max);
+                cell.log_odds = (cell.log_odds + self.log_odds_occ).clamp(
+                    self.config.log_odds_clamp_min,
+                    self.config.log_odds_clamp_max,
+                );
 
                 // edge_ness を更新 (加重平均)
                 cell.edge_ness = (cell.edge_ness * 0.7) + (*feature as f64 * 0.3);
@@ -291,7 +301,11 @@ impl SlamManager {
             let point_world = pose * point_local;
             let (ix, iy) = world_to_map_coords(point_world.x, point_world.y, &self.config);
 
-            if ix >= 0 && (ix as usize) < self.config.map_width && iy >= 0 && (iy as usize) < self.config.map_height {
+            if ix >= 0
+                && (ix as usize) < self.config.map_width
+                && iy >= 0
+                && (iy as usize) < self.config.map_height
+            {
                 let index = (iy as usize) * self.config.map_width + (ix as usize);
                 self.map_gmap.data[index].log_odds = 1.0; // Occupied
             }
@@ -323,8 +337,10 @@ impl SlamManager {
                         PointRepresentationMethod::CellCenter => {
                             // Convert map index back to world coordinates (cell center)
                             (
-                                ((x as isize - (self.config.map_width / 2) as isize) as f32) * self.config.csize,
-                                (-(y as isize - (self.config.map_height / 2) as isize) as f32) * self.config.csize,
+                                ((x as isize - (self.config.map_width / 2) as isize) as f32)
+                                    * self.config.csize,
+                                (-(y as isize - (self.config.map_height / 2) as isize) as f32)
+                                    * self.config.csize,
                             )
                         }
                         PointRepresentationMethod::Centroid => {
@@ -333,8 +349,10 @@ impl SlamManager {
                             } else {
                                 // Fallback to cell center if no points have hit the cell
                                 (
-                                    ((x as isize - (self.config.map_width / 2) as isize) as f32) * self.config.csize,
-                                    (-(y as isize - (self.config.map_height / 2) as isize) as f32) * self.config.csize,
+                                    ((x as isize - (self.config.map_width / 2) as isize) as f32)
+                                        * self.config.csize,
+                                    (-(y as isize - (self.config.map_height / 2) as isize) as f32)
+                                        * self.config.csize,
                                 )
                             }
                         }

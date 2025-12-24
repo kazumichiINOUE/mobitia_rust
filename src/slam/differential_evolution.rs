@@ -49,7 +49,10 @@ pub struct DifferentialEvolutionSolver {
 impl DifferentialEvolutionSolver {
     pub fn new(config: SlamConfig) -> Self {
         Self {
-            gaussian_kernel: GaussianKernel::new(config.gaussian_kernel_sigma, config.gaussian_kernel_radius),
+            gaussian_kernel: GaussianKernel::new(
+                config.gaussian_kernel_sigma,
+                config.gaussian_kernel_radius,
+            ),
             config,
         }
     }
@@ -82,8 +85,10 @@ impl DifferentialEvolutionSolver {
             let transformed_p = pose * p_coord;
             let transformed_normal = pose.rotation * Vector2::new(*scan_nx, *scan_ny);
 
-            let gx = (transformed_p.x / self.config.csize) as i32 + (self.config.map_width / 2) as i32;
-            let gy = (-transformed_p.y / self.config.csize) as i32 + (self.config.map_height / 2) as i32;
+            let gx =
+                (transformed_p.x / self.config.csize) as i32 + (self.config.map_width / 2) as i32;
+            let gy =
+                (-transformed_p.y / self.config.csize) as i32 + (self.config.map_height / 2) as i32;
 
             let mut point_score = 0.0;
             for dy in -kernel_radius..=kernel_radius {
@@ -106,30 +111,30 @@ impl DifferentialEvolutionSolver {
                         // --- 位置スコアの計算 ---
                         let mut position_score = 0.0;
                         if log_odds > 0.0 {
-                            let map_point_for_comparison =
-                                match self.config.point_representation {
-                                    PointRepresentationMethod::CellCenter => {
+                            let map_point_for_comparison = match self.config.point_representation {
+                                PointRepresentationMethod::CellCenter => {
+                                    Self::map_grid_to_world_center(map_x, map_y, &self.config)
+                                }
+                                PointRepresentationMethod::Centroid => {
+                                    if cell_data.point_count > 0 {
+                                        Point2::new(
+                                            cell_data.centroid_x as f32,
+                                            cell_data.centroid_y as f32,
+                                        )
+                                    } else {
+                                        // Fallback to cell center if no points have hit the cell
                                         Self::map_grid_to_world_center(map_x, map_y, &self.config)
                                     }
-                                    PointRepresentationMethod::Centroid => {
-                                        if cell_data.point_count > 0 {
-                                            Point2::new(
-                                                cell_data.centroid_x as f32,
-                                                cell_data.centroid_y as f32,
-                                            )
-                                        } else {
-                                            // Fallback to cell center if no points have hit the cell
-                                            Self::map_grid_to_world_center(map_x, map_y, &self.config)
-                                        }
-                                    }
-                                };
+                                }
+                            };
 
                             let dist = (transformed_p - map_point_for_comparison).norm();
 
                             if dist < self.config.max_matching_dist {
                                 let occupancy_prob = 1.0 - 1.0 / (1.0 + log_odds.exp());
                                 // 距離ペナルティ: 距離が遠いほど0に近づくガウス関数
-                                let distance_penalty = (-dist.powi(2) / (2.0 * self.config.match_sigma.powi(2))).exp();
+                                let distance_penalty =
+                                    (-dist.powi(2) / (2.0 * self.config.match_sigma.powi(2))).exp();
                                 position_score = occupancy_prob * distance_penalty as f64;
                             }
                         }
@@ -197,11 +202,7 @@ impl DifferentialEvolutionSolver {
             let translation = Translation2::new(current_x, current_y);
             let pose = Isometry2::from_parts(translation, rotation.into());
 
-            scores.push(self.gaussian_match_count(
-                gmap,
-                points,
-                &pose,
-            ));
+            scores.push(self.gaussian_match_count(gmap, points, &pose));
         }
 
         let mut best_idx = 0;
@@ -257,11 +258,7 @@ impl DifferentialEvolutionSolver {
                 let rotation_trial = Rotation2::new(trial_pose.z);
                 let translation_trial = Translation2::new(trial_pose.x, trial_pose.y);
                 let pose_trial = Isometry2::from_parts(translation_trial, rotation_trial.into());
-                let eval_trial = self.gaussian_match_count(
-                    gmap,
-                    points,
-                    &pose_trial,
-                );
+                let eval_trial = self.gaussian_match_count(gmap, points, &pose_trial);
 
                 if eval_trial > scores[i] {
                     population[i] = trial_pose;

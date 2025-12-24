@@ -17,10 +17,8 @@ fn main() -> Result<(), eframe::Error> {
     // --- Config loading ---
     let config_path = Path::new("config.toml");
     let app_config = if config_path.exists() {
-        let config_str = fs::read_to_string(config_path)
-            .expect("Failed to read config.toml");
-        toml::from_str(&config_str)
-            .expect("Failed to parse config.toml")
+        let config_str = fs::read_to_string(config_path).expect("Failed to read config.toml");
+        toml::from_str(&config_str).expect("Failed to parse config.toml")
     } else {
         let default_config_toml = r###"
 # Mobitia Configuration File
@@ -130,10 +128,8 @@ online_slam_view_size = 30.0
 # Delay in milliseconds between loading each submap for 'list-and-load'.
 submap_load_delay_ms = 500
 "###;
-        fs::write(config_path, default_config_toml)
-            .expect("Failed to write default config.toml");
-        toml::from_str(default_config_toml)
-            .expect("Failed to parse default config from string")
+        fs::write(config_path, default_config_toml).expect("Failed to write default config.toml");
+        toml::from_str(default_config_toml).expect("Failed to parse default config from string")
     };
     // --- End of Config loading ---
 
@@ -209,4 +205,3 @@ submap_load_delay_ms = 500
         }),
     )
 }
-

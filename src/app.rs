@@ -174,7 +174,7 @@ pub struct MyApp {
     pub(crate) submap_load_queue: Option<Vec<PathBuf>>,
     /// 最後にサブマップを読み込んだ時刻
     pub(crate) last_submap_load_time: Option<Instant>,
-    
+
     pub(crate) config: crate::config::Config, // 追加
 }
 
@@ -383,7 +383,7 @@ impl MyApp {
             submap_load_queue: None,
             last_submap_load_time: None,
             config, // configフィールドの初期化
-                                                           // ^ ^ ^ ここまで追加 ^ ^ ^
+                    // ^ ^ ^ ここまで追加 ^ ^ ^
         }
     }
 

@@ -1,4 +1,4 @@
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 // --- Map Update Method Selection (Moved from src/slam/mod.rs) ---
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
