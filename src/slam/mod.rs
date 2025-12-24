@@ -45,6 +45,9 @@ pub const POSITION_SCORE_WEIGHT: f64 = 0.1;
 pub const FEATURE_SCORE_WEIGHT: f64 = 0.4;
 pub const NORMAL_ALIGNMENT_SCORE_WEIGHT: f64 = 0.5;
 
+pub const MAX_MATCHING_DIST: f32 = 0.5; // マッチングを考慮する最大距離 (メートル)
+pub const MATCH_SIGMA: f32 = 0.1; // 距離ペナルティのガウス関数におけるシグマ (メートル)
+
 lazy_static! {
     static ref LOG_ODDS_OCC: f64 = (PROB_OCCUPIED / (1.0 - PROB_OCCUPIED)).ln();
     static ref LOG_ODDS_FREE: f64 = (PROB_FREE / (1.0 - PROB_FREE)).ln();
@@ -206,6 +209,7 @@ impl SlamManager {
                 &matching_scan,
                 self.robot_pose,
                 self.map_update_method,
+                self.point_representation,
             );
             self.robot_pose = best_pose;
         }

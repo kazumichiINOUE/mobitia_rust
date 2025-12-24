@@ -1,7 +1,7 @@
 use super::{
     MapUpdateMethod, OccupancyGrid, CSIZE, FEATURE_SCORE_WEIGHT, MAP_ORIGIN_X, MAP_ORIGIN_Y,
-    NORMAL_ALIGNMENT_SCORE_WEIGHT, POSITION_SCORE_WEIGHT, ROTATION_PENALTY_WEIGHT,
-    TRANSLATION_PENALTY_WEIGHT,
+    MAX_MATCHING_DIST, MATCH_SIGMA, NORMAL_ALIGNMENT_SCORE_WEIGHT, POSITION_SCORE_WEIGHT,
+    PointRepresentationMethod, ROTATION_PENALTY_WEIGHT, TRANSLATION_PENALTY_WEIGHT,
 };
 use nalgebra::{Isometry2, Point2, Rotation2, Translation2, Vector2, Vector3};
 use rand::seq::SliceRandom;
@@ -51,8 +51,15 @@ pub struct DifferentialEvolutionSolver {
 impl DifferentialEvolutionSolver {
     pub fn new() -> Self {
         Self {
-            gaussian_kernel: GaussianKernel::new(0.8, 2),
+            gaussian_kernel: GaussianKernel::new(0.8, 1),
         }
+    }
+
+    /// Helper function to convert map grid coordinates to world center coordinates.
+    fn map_grid_to_world_center(map_x: i32, map_y: i32) -> Point2<f32> {
+        let world_x = ((map_x as isize - MAP_ORIGIN_X as isize) as f32) * CSIZE;
+        let world_y = (-(map_y as isize - MAP_ORIGIN_Y as isize) as f32) * CSIZE;
+        Point2::new(world_x, world_y)
     }
 
     /// Calculates the matching score of a scan against the map at a given pose.
@@ -62,6 +69,7 @@ impl DifferentialEvolutionSolver {
         pose: &Isometry2<f32>,
         kernel_obj: &GaussianKernel,
         map_update_method: MapUpdateMethod,
+        point_representation: PointRepresentationMethod, // 新しい引数
     ) -> f64 {
         let mut total_score = 0.0;
 
@@ -97,16 +105,35 @@ impl DifferentialEvolutionSolver {
                         let kernel_weight = kernel_obj.kernel[kernel_idx];
 
                         // --- 位置スコアの計算 ---
-                        let position_score = if log_odds > 0.0 {
-                            match map_update_method {
-                                MapUpdateMethod::Probabilistic => {
-                                    1.0 - 1.0 / (1.0 + log_odds.exp())
-                                }
-                                _ => 1.0,
+                        let mut position_score = 0.0;
+                        if log_odds > 0.0 {
+                            let map_point_for_comparison =
+                                match point_representation {
+                                    PointRepresentationMethod::CellCenter => {
+                                        Self::map_grid_to_world_center(map_x, map_y)
+                                    }
+                                    PointRepresentationMethod::Centroid => {
+                                        if cell_data.point_count > 0 {
+                                            Point2::new(
+                                                cell_data.centroid_x as f32,
+                                                cell_data.centroid_y as f32,
+                                            )
+                                        } else {
+                                            // Fallback to cell center if no points have hit the cell
+                                            Self::map_grid_to_world_center(map_x, map_y)
+                                        }
+                                    }
+                                };
+
+                            let dist = (transformed_p - map_point_for_comparison).norm();
+
+                            if dist < MAX_MATCHING_DIST {
+                                let occupancy_prob = 1.0 - 1.0 / (1.0 + log_odds.exp());
+                                // 距離ペナルティ: 距離が遠いほど0に近づくガウス関数
+                                let distance_penalty = (-dist.powi(2) / (2.0 * MATCH_SIGMA.powi(2))).exp();
+                                position_score = occupancy_prob * distance_penalty as f64;
                             }
-                        } else {
-                            0.0 // 自由空間と未知空間は位置スコアに貢献しない
-                        };
+                        }
 
                         // --- 特徴類似度スコアの計算 ---
                         let scan_feature_f64 = *scan_feature as f64;
@@ -138,7 +165,8 @@ impl DifferentialEvolutionSolver {
         gmap: &OccupancyGrid,
         points: &[(Point2<f32>, f32, f32, f32)], // (point, edge_ness, nx, ny)
         initial_pose: Isometry2<f32>,
-        map_update_method: MapUpdateMethod, // 引数を追加
+        map_update_method: MapUpdateMethod,
+        point_representation: PointRepresentationMethod, // 新しい引数
     ) -> (Isometry2<f32>, f64) {
         // DE Parameters
         const WXY: f32 = 0.8;
@@ -178,6 +206,7 @@ impl DifferentialEvolutionSolver {
                 &pose,
                 &self.gaussian_kernel,
                 map_update_method,
+                point_representation, // 新しい引数
             ));
         }
 
@@ -240,6 +269,7 @@ impl DifferentialEvolutionSolver {
                     &pose_trial,
                     &self.gaussian_kernel,
                     map_update_method,
+                    point_representation, // 新しい引数
                 );
 
                 if eval_trial > scores[i] {
