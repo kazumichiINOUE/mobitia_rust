@@ -24,11 +24,16 @@ pub enum MapUpdateMethod {
     Hybrid,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PointRepresentationMethod {
+    CellCenter,
+    Centroid,
+}
+
 // --- Constants for Probabilistic Update ---
 const PROB_OCCUPIED: f64 = 0.6; // Probability of a cell being occupied upon a "hit"
 const PROB_FREE: f64 = 0.4; // Probability of a cell being free upon a "miss"
-
-// --- Constants for Penalty ---
+                            // --- Constants for Penalty ---
 pub const PENALTY_LOG_ODDS_THRESHOLD: f64 = -0.2;
 pub const PENALTY_FACTOR: f64 = 1.0;
 // 移動コストペナルティの重み
@@ -56,6 +61,9 @@ pub struct CellData {
     pub edge_ness: f64, // 0.0: 直線, 1.0: エッジ
     pub normal_x: f64,
     pub normal_y: f64,
+    pub centroid_x: f64,
+    pub centroid_y: f64,
+    pub point_count: u32,
 }
 
 impl Default for CellData {
@@ -65,6 +73,9 @@ impl Default for CellData {
             edge_ness: 0.5, // 不明
             normal_x: 0.0,
             normal_y: 0.0,
+            centroid_x: 0.0,
+            centroid_y: 0.0,
+            point_count: 0,
         }
     }
 }
@@ -103,6 +114,7 @@ pub struct Submap {
 /// The main SLAM state manager.
 pub struct SlamManager {
     map_update_method: MapUpdateMethod,
+    point_representation: PointRepresentationMethod,
     is_initial_scan: bool,
     map_gmap: OccupancyGrid,
     robot_pose: Isometry2<f32>,
@@ -123,9 +135,14 @@ pub struct SlamManager {
 }
 
 impl SlamManager {
-    pub fn new(output_base_dir: std::path::PathBuf, map_update_method: MapUpdateMethod) -> Self {
+    pub fn new(
+        output_base_dir: std::path::PathBuf,
+        map_update_method: MapUpdateMethod,
+        point_representation: PointRepresentationMethod,
+    ) -> Self {
         Self {
             map_update_method,
+            point_representation,
             is_initial_scan: true,
             map_gmap: OccupancyGrid::new(MAP_WIDTH, MAP_HEIGHT),
             robot_pose: Isometry2::identity(),
@@ -174,8 +191,10 @@ impl SlamManager {
             .iter()
             .map(|p| (Point2::new(p.0, p.1), p.4, p.5, p.6)) // (point, edge_ness, nx, ny)
             .collect();
-        let mapping_scan: Vec<Point2<f32>> =
-            mapping_scan_with_features.iter().map(|(p, _, _, _)| *p).collect();
+        let mapping_scan: Vec<Point2<f32>> = mapping_scan_with_features
+            .iter()
+            .map(|(p, _, _, _)| *p)
+            .collect();
 
         if self.is_initial_scan {
             self.robot_pose = Isometry2::identity();
@@ -290,6 +309,20 @@ impl SlamManager {
                     cell.normal_x /= len;
                     cell.normal_y /= len;
                 }
+
+                // 重心座標を逐次計算で更新
+                let old_count = cell.point_count as f64;
+                let new_count = old_count + 1.0;
+                if cell.point_count == 0 {
+                    cell.centroid_x = endpoint_world.x as f64;
+                    cell.centroid_y = endpoint_world.y as f64;
+                } else {
+                    cell.centroid_x =
+                        (cell.centroid_x * old_count + endpoint_world.x as f64) / new_count;
+                    cell.centroid_y =
+                        (cell.centroid_y * old_count + endpoint_world.y as f64) / new_count;
+                }
+                cell.point_count += 1;
             }
         }
     }
@@ -324,12 +357,30 @@ impl SlamManager {
         for y in 0..self.map_gmap.height {
             for x in 0..self.map_gmap.width {
                 let index = y * self.map_gmap.width + x;
-                let cell_log_odds = self.map_gmap.data[index].log_odds;
+                let cell_data = self.map_gmap.data[index];
+                let cell_log_odds = cell_data.log_odds;
 
                 if cell_log_odds > threshold {
-                    // Convert map index back to world coordinates
-                    let world_x = ((x as isize - MAP_ORIGIN_X as isize) as f32) * CSIZE;
-                    let world_y = (-(y as isize - MAP_ORIGIN_Y as isize) as f32) * CSIZE;
+                    let (world_x, world_y) = match self.point_representation {
+                        PointRepresentationMethod::CellCenter => {
+                            // Convert map index back to world coordinates (cell center)
+                            (
+                                ((x as isize - MAP_ORIGIN_X as isize) as f32) * CSIZE,
+                                (-(y as isize - MAP_ORIGIN_Y as isize) as f32) * CSIZE,
+                            )
+                        }
+                        PointRepresentationMethod::Centroid => {
+                            if cell_data.point_count > 0 {
+                                (cell_data.centroid_x as f32, cell_data.centroid_y as f32)
+                            } else {
+                                // Fallback to cell center if no points have hit the cell
+                                (
+                                    ((x as isize - MAP_ORIGIN_X as isize) as f32) * CSIZE,
+                                    (-(y as isize - MAP_ORIGIN_Y as isize) as f32) * CSIZE,
+                                )
+                            }
+                        }
+                    };
                     let probability = log_odds_to_probability(cell_log_odds);
                     self.cached_map_points
                         .push((Point2::new(world_x, world_y), probability));

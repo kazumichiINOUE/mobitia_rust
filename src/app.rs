@@ -18,7 +18,7 @@ use crate::cli::Cli;
 use crate::demo::DemoManager;
 pub use crate::demo::DemoMode;
 use crate::lidar::{load_lidar_configurations, start_lidar_thread, LidarInfo};
-use crate::slam::{MapUpdateMethod, SlamManager};
+use crate::slam::{MapUpdateMethod, PointRepresentationMethod, SlamManager};
 
 // Lidar一台分の状態を保持する構造体
 #[derive(Clone)]
@@ -228,7 +228,11 @@ impl MyApp {
             slam_results_base_path.join(format!("slam_result_{}", timestamp_str));
 
         thread::spawn(move || {
-            let mut slam_manager = SlamManager::new(slam_results_path, MapUpdateMethod::Hybrid);
+            let mut slam_manager = SlamManager::new(
+                slam_results_path,
+                MapUpdateMethod::Hybrid,
+                PointRepresentationMethod::Centroid,
+            );
             //let mut slam_manager = SlamManager::new(slam_results_path, MapUpdateMethod::Binary);
             //let mut slam_manager = SlamManager::new(slam_results_path, MapUpdateMethod::Probabilistic);
             let mut current_slam_mode = SlamMode::Manual;
@@ -1003,7 +1007,7 @@ impl eframe::App for MyApp {
                                 if self.slam_mode == SlamMode::Continuous {
                                     self.slam_command_sender
                                         .send(SlamThreadCommand::UpdateScan {
-                                            raw_scan: raw_combined_scan, // raw_scanを送信
+                                            raw_scan: raw_combined_scan,                   // raw_scanを送信
                                             interpolated_scan: interpolated_combined_scan, // 補間済みscanを送信
                                             timestamp: current_timestamp,
                                         })
@@ -1011,7 +1015,7 @@ impl eframe::App for MyApp {
                                 } else if self.single_scan_requested_by_ui {
                                     self.slam_command_sender
                                         .send(SlamThreadCommand::ProcessSingleScan {
-                                            raw_scan: raw_combined_scan, // raw_scanを送信
+                                            raw_scan: raw_combined_scan,                   // raw_scanを送信
                                             interpolated_scan: interpolated_combined_scan, // 補間済みscanを送信
                                             timestamp: current_timestamp,
                                         })
