@@ -1515,11 +1515,12 @@ impl eframe::App for MyApp {
                 let square_rect =
                     egui::Rect::from_center_size(rect.center(), egui::vec2(side, side));
 
+                let half_view_size = self.config.slam.online_slam_view_size / 2.0;
                 // ワールド座標からスクリーン座標への変換を定義
                 // Y軸を反転させるため、fromに渡すRectのYのmin/maxを入れ替える
                 let world_to_screen_rect = egui::Rect::from_min_max(
-                    egui::pos2(-15.0, 15.0), // ワールドの左上 (min_x, max_y)
-                    egui::pos2(15.0, -15.0), // ワールドの右下 (max_x, min_y)
+                    egui::pos2(-half_view_size, half_view_size), // ワールドの左上 (min_x, max_y)
+                    egui::pos2(half_view_size, -half_view_size), // ワールドの右下 (max_x, min_y)
                 );
                 let to_screen =
                     egui::emath::RectTransform::from_to(world_to_screen_rect, square_rect);
