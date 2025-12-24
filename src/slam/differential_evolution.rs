@@ -1,8 +1,9 @@
 use super::{
     MapUpdateMethod, OccupancyGrid, CSIZE, FEATURE_SCORE_WEIGHT, MAP_ORIGIN_X, MAP_ORIGIN_Y,
-    POSITION_SCORE_WEIGHT, ROTATION_PENALTY_WEIGHT, TRANSLATION_PENALTY_WEIGHT,
+    NORMAL_ALIGNMENT_SCORE_WEIGHT, POSITION_SCORE_WEIGHT, ROTATION_PENALTY_WEIGHT,
+    TRANSLATION_PENALTY_WEIGHT,
 };
-use nalgebra::{Isometry2, Point2, Rotation2, Translation2, Vector3};
+use nalgebra::{Isometry2, Point2, Rotation2, Translation2, Vector2, Vector3};
 use rand::seq::SliceRandom;
 use rand::Rng;
 
@@ -57,7 +58,7 @@ impl DifferentialEvolutionSolver {
     /// Calculates the matching score of a scan against the map at a given pose.
     fn gaussian_match_count(
         gmap: &OccupancyGrid,
-        points: &[(Point2<f32>, f32)],
+        points: &[(Point2<f32>, f32, f32, f32)], // (point, edge_ness, nx, ny)
         pose: &Isometry2<f32>,
         kernel_obj: &GaussianKernel,
         map_update_method: MapUpdateMethod,
@@ -70,8 +71,10 @@ impl DifferentialEvolutionSolver {
         let kernel_radius = kernel_obj.radius;
         let kernel_size = (2 * kernel_radius + 1) as usize;
 
-        for (p_coord, scan_feature) in points {
+        for (p_coord, scan_feature, scan_nx, scan_ny) in points {
             let transformed_p = pose * p_coord;
+            let transformed_normal = pose.rotation * Vector2::new(*scan_nx, *scan_ny);
+
             let gx = (transformed_p.x / CSIZE) as i32 + MAP_ORIGIN_X as i32;
             let gy = (-transformed_p.y / CSIZE) as i32 + MAP_ORIGIN_Y as i32;
 
@@ -86,6 +89,8 @@ impl DifferentialEvolutionSolver {
                         let cell_data = gmap.data[map_idx];
                         let log_odds = cell_data.log_odds;
                         let map_edgeness = cell_data.edge_ness;
+                        let map_normal_x = cell_data.normal_x;
+                        let map_normal_y = cell_data.normal_y;
 
                         let kernel_idx = ((dy + kernel_radius) as usize) * kernel_size
                             + ((dx + kernel_radius) as usize);
@@ -104,15 +109,19 @@ impl DifferentialEvolutionSolver {
                         };
 
                         // --- 特徴類似度スコアの計算 ---
-                        // スキャン点とマップセルの特徴量が両方エッジ(1)か、両方非エッジ(0)の場合に高くなる
                         let scan_feature_f64 = *scan_feature as f64;
                         let feature_similarity = scan_feature_f64 * map_edgeness
                             + (1.0 - scan_feature_f64) * (1.0 - map_edgeness);
 
+                        // --- 法線類似度スコアの計算 ---
+                        let normal_similarity = (transformed_normal.x as f64 * map_normal_x
+                            + transformed_normal.y as f64 * map_normal_y)
+                            .max(0.0); // 内積が負の場合は0にクランプ
+
                         // --- 最終スコアの計算 ---
-                        // 位置スコアと特徴類似度スコアを重み付けして合計
                         let combined_score = (position_score * POSITION_SCORE_WEIGHT)
-                            + (feature_similarity * FEATURE_SCORE_WEIGHT);
+                            + (feature_similarity * FEATURE_SCORE_WEIGHT)
+                            + (normal_similarity * NORMAL_ALIGNMENT_SCORE_WEIGHT);
 
                         point_score += combined_score * kernel_weight;
                     }
@@ -127,7 +136,7 @@ impl DifferentialEvolutionSolver {
     pub fn optimize_de(
         &self,
         gmap: &OccupancyGrid,
-        points: &[(Point2<f32>, f32)],
+        points: &[(Point2<f32>, f32, f32, f32)], // (point, edge_ness, nx, ny)
         initial_pose: Isometry2<f32>,
         map_update_method: MapUpdateMethod, // 引数を追加
     ) -> (Isometry2<f32>, f64) {

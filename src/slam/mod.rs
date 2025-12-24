@@ -36,8 +36,9 @@ pub const TRANSLATION_PENALTY_WEIGHT: f64 = 100.0; // 1メートルあたり100�
 pub const ROTATION_PENALTY_WEIGHT: f64 = 1000.0; // 1ラジアンあたり1000ポイントのペナルティ
 
 // スコア計算の重み
-pub const POSITION_SCORE_WEIGHT: f64 = 1.0;
-pub const FEATURE_SCORE_WEIGHT: f64 = 1.0;
+pub const POSITION_SCORE_WEIGHT: f64 = 0.1;
+pub const FEATURE_SCORE_WEIGHT: f64 = 0.4;
+pub const NORMAL_ALIGNMENT_SCORE_WEIGHT: f64 = 0.5;
 
 lazy_static! {
     static ref LOG_ODDS_OCC: f64 = (PROB_OCCUPIED / (1.0 - PROB_OCCUPIED)).ln();
@@ -53,6 +54,8 @@ const LOG_ODDS_CLAMP_MIN: f64 = -5.0;
 pub struct CellData {
     pub log_odds: f64,
     pub edge_ness: f64, // 0.0: 直線, 1.0: エッジ
+    pub normal_x: f64,
+    pub normal_y: f64,
 }
 
 impl Default for CellData {
@@ -60,6 +63,8 @@ impl Default for CellData {
         Self {
             log_odds: 0.0,  // 未知
             edge_ness: 0.5, // 不明
+            normal_x: 0.0,
+            normal_y: 0.0,
         }
     }
 }
@@ -140,8 +145,8 @@ impl SlamManager {
     /// Processes a new LiDAR scan and updates the map and pose.
     pub fn update(
         &mut self,
-        raw_scan_data: &[(f32, f32, f32, f32, f32)],
-        interpolated_scan_data: &[(f32, f32, f32, f32, f32)],
+        raw_scan_data: &[(f32, f32, f32, f32, f32, f32, f32)],
+        interpolated_scan_data: &[(f32, f32, f32, f32, f32, f32, f32)],
         timestamp: u128,
     ) {
         // --- Map Decay ---
@@ -150,23 +155,27 @@ impl SlamManager {
         {
             for cell in self.map_gmap.data.iter_mut() {
                 cell.log_odds *= DECAY_RATE;
-                cell.edge_ness = (cell.edge_ness - 0.5) * DECAY_RATE + 0.5; // 0.5(不明)に近づける
+                // 0.5(不明)に近づける
+                cell.edge_ness = (cell.edge_ness - 0.5) * DECAY_RATE + 0.5;
+                // 法線も減衰（ゼロベクトルに近づける）
+                cell.normal_x *= DECAY_RATE;
+                cell.normal_y *= DECAY_RATE;
             }
         }
 
         // マッチング用のスキャンデータ (補間済み・特徴量付き)
-        let matching_scan: Vec<(Point2<f32>, f32)> = interpolated_scan_data
+        let matching_scan: Vec<(Point2<f32>, f32, f32, f32)> = interpolated_scan_data
             .iter()
-            .map(|p| (Point2::new(p.0, p.1), p.4)) // p.4 は feature
+            .map(|p| (Point2::new(p.0, p.1), p.4, p.5, p.6)) // (point, edge_ness, nx, ny)
             .collect();
 
         // 地図更新用のスキャンデータ (生データ)
-        let mapping_scan_with_features: Vec<(Point2<f32>, f32)> = raw_scan_data
+        let mapping_scan_with_features: Vec<(Point2<f32>, f32, f32, f32)> = raw_scan_data
             .iter()
-            .map(|p| (Point2::new(p.0, p.1), p.4))
+            .map(|p| (Point2::new(p.0, p.1), p.4, p.5, p.6)) // (point, edge_ness, nx, ny)
             .collect();
         let mapping_scan: Vec<Point2<f32>> =
-            mapping_scan_with_features.iter().map(|(p, _)| *p).collect();
+            mapping_scan_with_features.iter().map(|(p, _, _, _)| *p).collect();
 
         if self.is_initial_scan {
             self.robot_pose = Isometry2::identity();
@@ -211,7 +220,7 @@ impl SlamManager {
     fn update_grid_probabilistic(
         &mut self,
         scan_for_free: &[Point2<f32>],
-        scan_for_occupied: &[(Point2<f32>, f32)],
+        scan_for_occupied: &[(Point2<f32>, f32, f32, f32)],
         pose: &Isometry2<f32>,
     ) {
         // --- Free Space Update ---
@@ -252,8 +261,12 @@ impl SlamManager {
     }
 
     /// Updates the cells that are considered occupied space based on the laser scan.
-    fn update_occupied_space(&mut self, scan: &[(Point2<f32>, f32)], pose: &Isometry2<f32>) {
-        for (endpoint_local, feature) in scan.iter() {
+    fn update_occupied_space(
+        &mut self,
+        scan: &[(Point2<f32>, f32, f32, f32)],
+        pose: &Isometry2<f32>,
+    ) {
+        for (endpoint_local, feature, nx, ny) in scan.iter() {
             let endpoint_world = pose * endpoint_local;
             let (ix, iy) = world_to_map_coords(endpoint_world.x, endpoint_world.y);
 
@@ -267,6 +280,16 @@ impl SlamManager {
 
                 // edge_ness を更新 (加重平均)
                 cell.edge_ness = (cell.edge_ness * 0.7) + (*feature as f64 * 0.3);
+
+                // 法線ベクトルを更新 (加重平均)
+                cell.normal_x = (cell.normal_x * 0.7) + (*nx as f64 * 0.3);
+                cell.normal_y = (cell.normal_y * 0.7) + (*ny as f64 * 0.3);
+                // 正規化
+                let len = (cell.normal_x.powi(2) + cell.normal_y.powi(2)).sqrt();
+                if len > 1e-9 {
+                    cell.normal_x /= len;
+                    cell.normal_y /= len;
+                }
             }
         }
     }

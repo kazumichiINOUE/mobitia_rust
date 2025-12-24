@@ -26,7 +26,7 @@ pub(crate) struct LidarState {
     pub(crate) id: usize,
     pub(crate) path: String,
     pub(crate) baud_rate: u32,
-    pub(crate) points: Vec<(f32, f32, f32, f32, f32)>,
+    pub(crate) points: Vec<(f32, f32, f32, f32, f32, f32, f32)>,
     pub(crate) connection_status: String,
     pub(crate) status_messages: Vec<String>,
     // ワールド座標におけるこのLidarの原点オフセット
@@ -58,7 +58,7 @@ pub enum SlamMode {
 pub enum LidarMessage {
     ScanUpdate {
         id: usize,
-        scan: Vec<(f32, f32, f32, f32, f32)>,
+        scan: Vec<(f32, f32, f32, f32, f32, f32, f32)>,
     },
     StatusUpdate {
         id: usize,
@@ -72,13 +72,13 @@ pub enum SlamThreadCommand {
     Pause,
     Resume,
     UpdateScan {
-        raw_scan: Vec<(f32, f32, f32, f32, f32)>,
-        interpolated_scan: Vec<(f32, f32, f32, f32, f32)>,
+        raw_scan: Vec<(f32, f32, f32, f32, f32, f32, f32)>,
+        interpolated_scan: Vec<(f32, f32, f32, f32, f32, f32, f32)>,
         timestamp: u128,
     }, // LiDARからの新しいスキャンデータ
     ProcessSingleScan {
-        raw_scan: Vec<(f32, f32, f32, f32, f32)>,
-        interpolated_scan: Vec<(f32, f32, f32, f32, f32)>,
+        raw_scan: Vec<(f32, f32, f32, f32, f32, f32, f32)>,
+        interpolated_scan: Vec<(f32, f32, f32, f32, f32, f32, f32)>,
         timestamp: u128,
     }, // 単一スキャン処理要求
     Shutdown,
@@ -87,7 +87,7 @@ pub enum SlamThreadCommand {
 pub struct SlamThreadResult {
     pub map_points: Vec<(nalgebra::Point2<f32>, f64)>,
     pub robot_pose: nalgebra::Isometry2<f32>,
-    pub scan_used: Vec<(f32, f32, f32, f32, f32)>,
+    pub scan_used: Vec<(f32, f32, f32, f32, f32, f32, f32)>,
 }
 
 /// サブマップのメタデータ構造体 (app.rsに移動)
@@ -121,7 +121,7 @@ pub struct MyApp {
     pub(crate) lidar_message_receiver: mpsc::Receiver<LidarMessage>,
 
     // SLAM用に各Lidarの最新スキャンを保持
-    pub(crate) pending_scans: Vec<Option<Vec<(f32, f32, f32, f32, f32)>>>,
+    pub(crate) pending_scans: Vec<Option<Vec<(f32, f32, f32, f32, f32, f32, f32)>>>,
 
     // UI関連
     pub(crate) command_output_receiver: mpsc::Receiver<String>,
@@ -159,7 +159,7 @@ pub struct MyApp {
 
     pub(crate) single_scan_requested_by_ui: bool,
 
-    pub(crate) latest_scan_for_draw: Vec<(f32, f32, f32, f32, f32)>,
+    pub(crate) latest_scan_for_draw: Vec<(f32, f32, f32, f32, f32, f32, f32)>,
 
     pub(crate) robot_trajectory: Vec<(egui::Pos2, f32)>,
 
@@ -449,8 +449,8 @@ impl MyApp {
 
     fn compute_features(
         &self,
-        scan: &Vec<(f32, f32, f32, f32, f32)>,
-    ) -> Vec<(f32, f32, f32, f32, f32)> {
+        scan: &Vec<(f32, f32, f32, f32, f32, f32, f32)>,
+    ) -> Vec<(f32, f32, f32, f32, f32, f32, f32)> {
         let mut scan_with_features = scan.clone();
         let neighborhood_size = 5; // 片側5点、合計11点を近傍とする
         if scan.len() < (neighborhood_size * 2 + 1) {
@@ -475,29 +475,34 @@ impl MyApp {
             }
             covariance_matrix /= neighborhood.len() as f32;
 
-            // 4. 固有値を計算
+            // 4. 固有値と固有ベクトルを計算
             let eigen = nalgebra::SymmetricEigen::new(covariance_matrix);
             let eigenvalues = eigen.eigenvalues;
+            let eigenvectors = eigen.eigenvectors;
+
+            // 固有値をソートして、どちらが大きいか小さいか判断
+            let (lambda_1, lambda_2, normal_vector) = if eigenvalues[0] > eigenvalues[1] {
+                (eigenvalues[0], eigenvalues[1], eigenvectors.column(1))
+            } else {
+                (eigenvalues[1], eigenvalues[0], eigenvectors.column(0))
+            };
 
             // 5. 特徴量（直線らしさ）を計算
-            let lambda_1 = eigenvalues[0].max(eigenvalues[1]); // 大きい方
-            let lambda_2 = eigenvalues[0].min(eigenvalues[1]); // 小さい方
-
             let linearity = if lambda_1 > 1e-9 {
-                // より安全なゼロ除算チェック
                 (lambda_1 - lambda_2) / lambda_1
             } else {
                 0.0
             };
 
             // 6. シグモイド関数で平滑化し、「エッジらしさ」を計算
-            // 直線らしさ(linearity)が高い(1.0に近い)ほど0.0に、低い(0.0に近い)ほど1.0になるように変換
-            // sharpness と sensitivity は調整可能なハイパーパラメータ
             let sharpness = 10.0;
             let sensitivity = 0.7;
             let edge_ness = 1.0 - (1.0 / (1.0 + (-sharpness * (linearity - sensitivity)).exp()));
 
+            // 結果を格納
             scan_with_features[i].4 = edge_ness;
+            scan_with_features[i].5 = normal_vector[0];
+            scan_with_features[i].6 = normal_vector[1];
         }
 
         scan_with_features
@@ -509,11 +514,11 @@ impl MyApp {
     /// interpolation_interval_angle: 補間された点の角度間隔 (ラジアン)
     fn interpolate_lidar_scan(
         &self,
-        scan: &Vec<(f32, f32, f32, f32, f32)>,
+        scan: &Vec<(f32, f32, f32, f32, f32, f32, f32)>,
         min_dist_threshold: f32,
         max_dist_threshold: f32,
         interpolation_interval: f32,
-    ) -> Vec<(f32, f32, f32, f32, f32)> {
+    ) -> Vec<(f32, f32, f32, f32, f32, f32, f32)> {
         if scan.is_empty() {
             return Vec::new();
         }
@@ -575,7 +580,9 @@ impl MyApp {
                             interpolated_y,
                             interpolated_r,
                             interpolated_theta,
-                            0.0,
+                            0.0, // edge_ness
+                            0.0, // nx
+                            0.0, // ny
                         ));
                     }
                 }
@@ -881,7 +888,7 @@ impl eframe::App for MyApp {
         while let Ok(lidar_message) = self.lidar_message_receiver.try_recv() {
             match lidar_message {
                 LidarMessage::ScanUpdate { id, scan } => {
-                    let mut filtered_scan: Vec<(f32, f32, f32, f32, f32)> = Vec::new();
+                    let mut filtered_scan: Vec<(f32, f32, f32, f32, f32, f32, f32)> = Vec::new();
                     // 該当するLidarStateからフィルタリング角度を取得
                     let (min_angle_rad, max_angle_rad) =
                         if let Some(lidar_state_for_filter) = self.lidars.get(id) {
@@ -894,10 +901,10 @@ impl eframe::App for MyApp {
                             (f32::NEG_INFINITY, f32::INFINITY)
                         };
 
-                    for &(x, y, r, theta, feature) in &scan {
+                    for &(x, y, r, theta, feature, nx, ny) in &scan {
                         // フィルタリング範囲内にあるかチェック (角度は受信データから直接利用)
                         if theta >= min_angle_rad && theta <= max_angle_rad {
-                            filtered_scan.push((x, y, r, theta, feature));
+                            filtered_scan.push((x, y, r, theta, feature, nx, ny));
                         }
                     }
 
@@ -927,7 +934,8 @@ impl eframe::App for MyApp {
                         });
 
                         if all_active_scans_received {
-                            let mut raw_combined_scan: Vec<(f32, f32, f32, f32, f32)> = Vec::new();
+                            let mut raw_combined_scan: Vec<(f32, f32, f32, f32, f32, f32, f32)> =
+                                Vec::new();
 
                             // SLAMが有効な各Lidarのスキャンをロボット座標系に変換して結合
                             for lidar_state in active_lidars {
@@ -942,12 +950,19 @@ impl eframe::App for MyApp {
                                         let r_val = point.2; // 距離
                                         let theta_val = point.3; // 角度
                                         let feature_val = point.4; // 特徴量
+                                        let nx_raw = point.5;
+                                        let ny_raw = point.6;
 
                                         // Lidarの回転を適用
                                         let px_rotated =
                                             px_raw * rotation.cos() - py_raw * rotation.sin();
                                         let py_rotated =
                                             px_raw * rotation.sin() + py_raw * rotation.cos();
+
+                                        let nx_rotated =
+                                            nx_raw * rotation.cos() - ny_raw * rotation.sin();
+                                        let ny_rotated =
+                                            nx_raw * rotation.sin() + ny_raw * rotation.cos();
 
                                         // ワールド座標に変換 (Lidarの原点オフセットを加える)
                                         let world_x = px_rotated + origin.x;
@@ -959,6 +974,8 @@ impl eframe::App for MyApp {
                                             r_val,
                                             theta_val,
                                             feature_val,
+                                            nx_rotated,
+                                            ny_rotated,
                                         ));
                                     }
                                 }
@@ -986,7 +1003,7 @@ impl eframe::App for MyApp {
                                 if self.slam_mode == SlamMode::Continuous {
                                     self.slam_command_sender
                                         .send(SlamThreadCommand::UpdateScan {
-                                            raw_scan: raw_combined_scan,                   // raw_scanを送信
+                                            raw_scan: raw_combined_scan, // raw_scanを送信
                                             interpolated_scan: interpolated_combined_scan, // 補間済みscanを送信
                                             timestamp: current_timestamp,
                                         })
@@ -994,7 +1011,7 @@ impl eframe::App for MyApp {
                                 } else if self.single_scan_requested_by_ui {
                                     self.slam_command_sender
                                         .send(SlamThreadCommand::ProcessSingleScan {
-                                            raw_scan: raw_combined_scan,                   // raw_scanを送信
+                                            raw_scan: raw_combined_scan, // raw_scanを送信
                                             interpolated_scan: interpolated_combined_scan, // 補間済みscanを送信
                                             timestamp: current_timestamp,
                                         })
@@ -1603,7 +1620,7 @@ impl eframe::App for MyApp {
                 // 描画範囲を決定
                 let map_view_rect = if let Some(bounds) = self.slam_map_bounding_box {
                     // ロードした地図がある場合、そのバウンディングボックスを表示範囲とする
-                    let mut new_bounds = bounds.expand(bounds.width() * 0.1); // 先に少しマージンを追加
+                    let new_bounds = bounds.expand(bounds.width() * 0.1); // 先に少しマージンを追加
 
                     let screen_aspect = rect.width() / rect.height();
                     if !screen_aspect.is_nan() {
