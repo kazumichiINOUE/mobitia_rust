@@ -5,6 +5,7 @@ use std::path::Path;
 
 // Define application modules
 mod app;
+mod camera;
 mod cli;
 mod config; // Add config module
 mod demo;

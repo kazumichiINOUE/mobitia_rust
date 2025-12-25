@@ -19,6 +19,17 @@ use crate::demo::DemoManager;
 pub use crate::demo::DemoMode;
 use crate::lidar::{load_lidar_configurations, start_lidar_thread, LidarInfo};
 use crate::slam::SlamManager; // Add SlamManager
+use crate::camera::{start_camera_thread, CameraInfo, CameraMessage};
+
+// Camera一台分の状態を保持する構造体
+#[derive(Clone)]
+pub(crate) struct CameraState {
+    pub(crate) id: usize,
+    pub(crate) name: String,
+    pub(crate) texture: Option<egui::TextureHandle>,
+    pub(crate) connection_status: String,
+    pub(crate) stop_flag: Arc<AtomicBool>,
+}
 
 // Lidar一台分の状態を保持する構造体
 #[derive(Clone)]
@@ -46,6 +57,7 @@ pub enum AppMode {
     Lidar,
     Slam,
     Demo,
+    Camera,
 }
 
 #[derive(PartialEq)]
@@ -116,9 +128,11 @@ pub struct MyApp {
     pub(crate) current_suggestions: Vec<String>, // 現在のサジェスト候補
     pub(crate) suggestion_selection_index: Option<usize>, // サジェスト候補の選択インデックス
     pub(crate) lidars: Vec<LidarState>, // 複数Lidarの状態を管理
+    pub(crate) cameras: Vec<CameraState>, // 複数Cameraの状態を管理
 
     // スレッドからのデータ/ステータス受信を統合
     pub(crate) lidar_message_receiver: mpsc::Receiver<LidarMessage>,
+    pub(crate) camera_message_receiver: mpsc::Receiver<CameraMessage>,
 
     // SLAM用に各Lidarの最新スキャンを保持
     pub(crate) pending_scans: Vec<Option<Vec<(f32, f32, f32, f32, f32, f32, f32)>>>,
@@ -193,6 +207,8 @@ impl MyApp {
 
         // Lidarメッセージング用の単一チャネルを作成
         let (lidar_message_sender, lidar_message_receiver) = mpsc::channel();
+        // Cameraメッセージング用の単一チャネルを作成
+        let (camera_message_sender, camera_message_receiver) = mpsc::channel();
 
         // コンソールコマンド出力用のチャネルを作成
         let (command_output_sender, command_output_receiver) = mpsc::channel();
@@ -208,6 +224,55 @@ impl MyApp {
                 lidar_config.clone(),
                 lidar_message_sender.clone(),
             );
+        }
+
+        // カメラの初期化
+        let mut cameras = Vec::new();
+        let camera_devices =
+            nokhwa::query(nokhwa::utils::ApiBackend::Auto).unwrap_or_else(|e| {
+                command_output_sender
+                    .send(format!("ERROR: Failed to query cameras: {}", e))
+                    .unwrap_or_default();
+                vec![]
+            });
+
+        // 内蔵カメラを特定して優先的に使用
+        let mut selected_camera_device = None;
+        for device in camera_devices.iter() {
+            // macOSでは一般的に内蔵カメラの名前には"FaceTime"が含まれることが多い
+            // または、最初のデバイスをデフォルトとする
+            if device.human_name().contains("FaceTime") || selected_camera_device.is_none() {
+                selected_camera_device = Some(device);
+                if device.human_name().contains("FaceTime") { // FaceTimeカメラを強く優先
+                    break;
+                }
+            }
+        }
+        
+        if let Some(device) = selected_camera_device {
+            let i = 0; // 内蔵カメラは常にID 0 とする
+            let stop_flag = Arc::new(AtomicBool::new(false));
+            let camera_state = CameraState {
+                id: i,
+                name: device.human_name(),
+                texture: None,
+                connection_status: "Disconnected".to_string(),
+                stop_flag: stop_flag.clone(),
+            };
+            cameras.push(camera_state);
+
+            let info = CameraInfo {
+                id: i,
+                index: device.index().clone(),
+                name: device.human_name(),
+            };
+
+            // ここでスレッドを開始
+            start_camera_thread(info, camera_message_sender.clone(), stop_flag);
+        } else {
+            command_output_sender
+                .send("WARNING: No camera found or internal camera not identified.".to_string())
+                .unwrap_or_default();
         }
 
         // SLAM処理中フラグの作成
@@ -232,8 +297,6 @@ impl MyApp {
                 slam_results_path,
                 slam_config_for_thread.clone(), // Pass slam config
             );
-            //let mut slam_manager = SlamManager::new(slam_results_path, MapUpdateMethod::Binary);
-            //let mut slam_manager = SlamManager::new(slam_results_path, MapUpdateMethod::Probabilistic);
             let mut current_slam_mode = SlamMode::Manual;
             let mut last_slam_update_time = web_time::Instant::now(); // std::time::Instant の代わりにweb_time::Instantを使用
             const SLAM_UPDATE_INTERVAL_DURATION: web_time::Duration =
@@ -255,7 +318,6 @@ impl MyApp {
                         }
                         SlamThreadCommand::Pause => current_slam_mode = SlamMode::Paused,
                         SlamThreadCommand::Resume => {
-                            // Resumeを追加
                             current_slam_mode = SlamMode::Continuous;
                             last_slam_update_time = web_time::Instant::now(); // リセット
                             slam_result_sender
@@ -271,7 +333,6 @@ impl MyApp {
                             interpolated_scan,
                             timestamp,
                         } => {
-                            // UIからLiDARデータが届いたら、モードとタイマーをチェックして更新
                             if current_slam_mode == SlamMode::Continuous {
                                 let now = web_time::Instant::now();
                                 if now.duration_since(last_slam_update_time)
@@ -279,22 +340,20 @@ impl MyApp {
                                 {
                                     is_slam_processing_for_thread.store(true, Ordering::SeqCst);
 
-                                    let slam_start_time = web_time::Instant::now(); // 計測開始
+                                    let slam_start_time = web_time::Instant::now();
                                     slam_manager.update(&raw_scan, &interpolated_scan, timestamp);
-                                    let slam_duration = slam_start_time.elapsed(); // 計測終了
-                                    println!("[SLAM Thread] Update took: {:?}", slam_duration); // 時間を出力
+                                    let slam_duration = slam_start_time.elapsed();
+                                    println!("[SLAM Thread] Update took: {:?}", slam_duration);
 
                                     slam_result_sender
                                         .send(SlamThreadResult {
                                             map_points: slam_manager.get_map_points().clone(),
                                             robot_pose: *slam_manager.get_robot_pose(),
-                                            scan_used: raw_scan.clone(), // 描画には元のスキャンデータを使う
+                                            scan_used: raw_scan.clone(),
                                         })
                                         .unwrap_or_default();
-                                    last_slam_update_time = now; // 更新時間を記録
+                                    last_slam_update_time = now;
                                     is_slam_processing_for_thread.store(false, Ordering::SeqCst);
-                                } else {
-                                    //
                                 }
                             }
                         }
@@ -303,7 +362,6 @@ impl MyApp {
                             interpolated_scan,
                             timestamp,
                         } => {
-                            // 単一スキャン要求はモードに関わらずすぐに処理
                             is_slam_processing_for_thread.store(true, Ordering::SeqCst);
 
                             slam_manager.update(&raw_scan, &interpolated_scan, timestamp);
@@ -312,16 +370,15 @@ impl MyApp {
                                 .send(SlamThreadResult {
                                     map_points: slam_manager.get_map_points().clone(),
                                     robot_pose: *slam_manager.get_robot_pose(),
-                                    scan_used: raw_scan.clone(), // 描画には元のスキャンデータを使う
+                                    scan_used: raw_scan.clone(),
                                 })
                                 .unwrap_or_default();
                             is_slam_processing_for_thread.store(false, Ordering::SeqCst);
                         }
-                        SlamThreadCommand::Shutdown => break, // スレッドを終了
+                        SlamThreadCommand::Shutdown => break,
                     }
                 }
 
-                // 負荷軽減のため短時間スリープ
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }
         });
@@ -350,8 +407,10 @@ impl MyApp {
             history_index,
             current_suggestions: Vec::new(),
             suggestion_selection_index: None,
-            lidars,                 // 新しいlidarsフィールドを初期化
-            lidar_message_receiver, // 単一のLidarメッセージ受信
+            lidars,
+            cameras,
+            lidar_message_receiver,
+            camera_message_receiver,
             pending_scans,
             command_output_receiver,
             command_output_sender,
@@ -372,18 +431,15 @@ impl MyApp {
             latest_scan_for_draw: Vec::new(),
             robot_trajectory: Vec::new(),
 
-            // --- サブマップ関連のフィールド (MyAppに移行) ---
             submap_counter: 0,
             current_submap_scan_buffer: Vec::new(),
             current_submap_robot_poses: Vec::new(),
             submaps: HashMap::new(),
             slam_map_bounding_box: None,
 
-            // V V V ここから追加 V V V
             submap_load_queue: None,
             last_submap_load_time: None,
-            config, // configフィールドの初期化
-                    // ^ ^ ^ ここまで追加 ^ ^ ^
+            config,
         }
     }
 
@@ -1075,6 +1131,34 @@ impl eframe::App for MyApp {
             ctx.request_repaint();
         }
 
+        while let Ok(camera_message) = self.camera_message_receiver.try_recv() {
+            match camera_message {
+                CameraMessage::Frame { id, image } => {
+                    if let Some(camera_state) = self.cameras.get_mut(id) {
+                        if let Some(texture) = &mut camera_state.texture {
+                            texture.set(image, egui::TextureOptions::LINEAR);
+                        } else {
+                            camera_state.texture = Some(ctx.load_texture(
+                                format!("camera_{}", id),
+                                image,
+                                egui::TextureOptions::LINEAR,
+                            ));
+                        }
+                    }
+                }
+                CameraMessage::Status { id, message } => {
+                    if let Some(camera_state) = self.cameras.get_mut(id) {
+                        camera_state.connection_status = message.clone();
+                         self.command_history.push(ConsoleOutputEntry {
+                            text: message,
+                            group_id: self.next_group_id,
+                        });
+                    }
+                }
+            }
+            ctx.request_repaint();
+        }
+
         // SLAMスレッドからの結果を受け取る
         while let Ok(slam_result) = self.slam_result_receiver.try_recv() {
             self.current_map_points = slam_result.map_points;
@@ -1457,6 +1541,25 @@ impl eframe::App for MyApp {
                 }
                 ui.heading("Console");
 
+                for camera_state in &self.cameras {
+                    egui::Frame::group(ui.style()).show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.label(format!("[CAMERA {}]", camera_state.id));
+                        ui.label(format!("  Name: {}", camera_state.name));
+                        let status_text = format!("  Status: {}", camera_state.connection_status);
+                        let status_color = if camera_state.connection_status.contains("Connected")
+                        {
+                            egui::Color32::GREEN
+                        } else if camera_state.connection_status.contains("Trying") {
+                            egui::Color32::YELLOW
+                        } else {
+                            egui::Color32::RED
+                        };
+                        ui.label(egui::RichText::new(status_text).color(status_color));
+                    });
+                }
+                ui.separator();
+
                 for lidar_state in &self.lidars {
                     egui::Frame::group(ui.style()).show(ui, |ui| {
                         ui.set_width(ui.available_width());
@@ -1751,9 +1854,56 @@ impl eframe::App for MyApp {
             AppMode::Demo => {
                 self.demo_manager.update_and_draw(ui);
             }
+            AppMode::Camera => {
+                ui.heading("Camera Mode");
+                if let Some(camera_state) = self.cameras.get(0) {
+                     if let Some(texture) = &camera_state.texture {
+                        // 利用可能な描画領域のサイズを取得
+                        let available_size = ui.available_size();
+                        let image_size = texture.size_vec2();
+
+                        if image_size.y > 0.0 {
+                            let image_aspect = image_size.x / image_size.y;
+                            let available_aspect = available_size.x / available_size.y;
+
+                            let new_size = if image_aspect > available_aspect {
+                                // 画像が描画領域より横長 -> 幅に合わせる
+                                let new_height = available_size.x / image_aspect;
+                                egui::vec2(available_size.x, new_height)
+                            } else {
+                                // 画像が描画領域より縦長 -> 高さに合わせる
+                                let new_width = available_size.y * image_aspect;
+                                egui::vec2(new_width, available_size.y)
+                            };
+
+                            // 画像を中央揃えで描画
+                            ui.centered_and_justified(|ui| {
+                                ui.add(egui::Image::new(texture).fit_to_exact_size(new_size));
+                            });
+                        }
+                    } else {
+                        ui.centered_and_justified(|ui| {
+                            ui.label(&camera_state.connection_status);
+                        });
+                    }
+                } else {
+                     ui.centered_and_justified(|ui| {
+                        ui.label("No camera available.");
+                    });
+                }
+            }
         });
 
         ctx.request_repaint();
+    }
+}
+
+impl Drop for MyApp {
+    fn drop(&mut self) {
+        // アプリケーション終了時にカメラのスレッドに停止を通知
+        for camera_state in &self.cameras {
+            camera_state.stop_flag.store(true, Ordering::SeqCst);
+        }
     }
 }
 

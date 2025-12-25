@@ -8,7 +8,7 @@ clap = { version = "4.4.11", features = ["derive"] }
 eframe = { version = "0.24.1", features = ["persistence"] } # Added persistence feature
 egui = "0.24.1"
 egui_extras = { version = "0.24.1", features = ["image", "svg"] }
-image = { version = "0.24", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
 libloading = "0.8.1"
 nalgebra = "0.32.3"
 rppal = { version = "0.17.1", optional = true } # Raspberry Pi GPIO support
@@ -25,6 +25,7 @@ anyhow = "1.0" # Added
 rand = "0.8" # Added
 bresenham = "0.1.1"
 lazy_static = "1.5.0"
+nokhwa = { version = "0.10.10", features = ["input-avfoundation"] }
 
 [dev-dependencies]
 assert_cmd = "2"

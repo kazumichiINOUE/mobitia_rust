@@ -19,6 +19,11 @@ pub enum Commands {
     /// Show help for commands.
     #[command(alias = "h")]
     Help,
+    /// Manage Camera related commands and settings.
+    Camera {
+        #[command(subcommand)]
+        command: Option<CameraCommands>,
+    },
     /// Manage LiDAR related commands and settings.
     Lidar {
         #[command(subcommand)]
@@ -61,6 +66,13 @@ pub enum Commands {
         #[command(subcommand)]
         command: MapCommands,
     },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum CameraCommands {
+    /// Enter Camera visualization mode.
+    #[command(alias = "mode")]
+    EnterMode,
 }
 
 #[derive(Subcommand, Debug)]
@@ -154,6 +166,25 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
             for line in help_text.lines() {
                 app.command_history.push(ConsoleOutputEntry {
                     text: line.to_string(),
+                    group_id: current_group_id,
+                });
+            }
+        }
+        Commands::Camera { command } => {
+            if let Some(camera_command) = command {
+                match camera_command {
+                    CameraCommands::EnterMode => {
+                        app.app_mode = AppMode::Camera;
+                        app.command_history.push(ConsoleOutputEntry {
+                            text: "Mode set to Camera.".to_string(),
+                            group_id: current_group_id,
+                        });
+                    }
+                }
+            } else {
+                app.app_mode = AppMode::Camera;
+                app.command_history.push(ConsoleOutputEntry {
+                    text: "Mode set to Camera.".to_string(),
                     group_id: current_group_id,
                 });
             }
