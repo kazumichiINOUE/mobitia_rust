@@ -14,12 +14,12 @@ use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
+use crate::camera::{start_camera_thread, CameraInfo, CameraMessage};
 use crate::cli::Cli;
 use crate::demo::DemoManager;
 pub use crate::demo::DemoMode;
 use crate::lidar::{load_lidar_configurations, start_lidar_thread, LidarInfo};
 use crate::slam::SlamManager; // Add SlamManager
-use crate::camera::{start_camera_thread, CameraInfo, CameraMessage};
 use crate::xppen::{start_xppen_thread, XppenMessage};
 
 // Camera一台分の状態を保持する構造体
@@ -220,7 +220,6 @@ impl MyApp {
         // XPPenスレッドを起動
         start_xppen_thread(xppen_message_sender, command_output_sender.clone());
 
-
         // 各Lidarに対してスレッドを起動
         for lidar_state in &lidars {
             let lidar_config = LidarInfo {
@@ -236,13 +235,12 @@ impl MyApp {
 
         // カメラの初期化
         let mut cameras = Vec::new();
-        let camera_devices =
-            nokhwa::query(nokhwa::utils::ApiBackend::Auto).unwrap_or_else(|e| {
-                command_output_sender
-                    .send(format!("ERROR: Failed to query cameras: {}", e))
-                    .unwrap_or_default();
-                vec![]
-            });
+        let camera_devices = nokhwa::query(nokhwa::utils::ApiBackend::Auto).unwrap_or_else(|e| {
+            command_output_sender
+                .send(format!("ERROR: Failed to query cameras: {}", e))
+                .unwrap_or_default();
+            vec![]
+        });
 
         // 内蔵カメラを特定して優先的に使用
         let mut selected_camera_device = None;
@@ -251,12 +249,13 @@ impl MyApp {
             // または、最初のデバイスをデフォルトとする
             if device.human_name().contains("FaceTime") || selected_camera_device.is_none() {
                 selected_camera_device = Some(device);
-                if device.human_name().contains("FaceTime") { // FaceTimeカメラを強く優先
+                if device.human_name().contains("FaceTime") {
+                    // FaceTimeカメラを強く優先
                     break;
                 }
             }
         }
-        
+
         if let Some(device) = selected_camera_device {
             let i = 0; // 内蔵カメラは常にID 0 とする
             let stop_flag = Arc::new(AtomicBool::new(false));
@@ -1233,7 +1232,7 @@ impl eframe::App for MyApp {
                 CameraMessage::Status { id, message } => {
                     if let Some(camera_state) = self.cameras.get_mut(id) {
                         camera_state.connection_status = message.clone();
-                         self.command_history.push(ConsoleOutputEntry {
+                        self.command_history.push(ConsoleOutputEntry {
                             text: message,
                             group_id: self.next_group_id,
                         });
@@ -1631,8 +1630,7 @@ impl eframe::App for MyApp {
                         ui.label(format!("[CAMERA {}]", camera_state.id));
                         ui.label(format!("  Name: {}", camera_state.name));
                         let status_text = format!("  Status: {}", camera_state.connection_status);
-                        let status_color = if camera_state.connection_status.contains("Connected")
-                        {
+                        let status_color = if camera_state.connection_status.contains("Connected") {
                             egui::Color32::GREEN
                         } else if camera_state.connection_status.contains("Trying") {
                             egui::Color32::YELLOW
@@ -1941,7 +1939,7 @@ impl eframe::App for MyApp {
             AppMode::Camera => {
                 ui.heading("Camera Mode");
                 if let Some(camera_state) = self.cameras.get(0) {
-                     if let Some(texture) = &camera_state.texture {
+                    if let Some(texture) = &camera_state.texture {
                         // 利用可能な描画領域のサイズを取得
                         let available_size = ui.available_size();
                         let image_size = texture.size_vec2();
@@ -1971,7 +1969,7 @@ impl eframe::App for MyApp {
                         });
                     }
                 } else {
-                     ui.centered_and_justified(|ui| {
+                    ui.centered_and_justified(|ui| {
                         ui.label("No camera available.");
                     });
                 }

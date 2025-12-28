@@ -14,14 +14,8 @@ use nokhwa::{
 
 // メインスレッドに送信するメッセージ
 pub enum CameraMessage {
-    Frame {
-        id: usize,
-        image: egui::ColorImage,
-    },
-    Status {
-        id: usize,
-        message: String,
-    },
+    Frame { id: usize, image: egui::ColorImage },
+    Status { id: usize, message: String },
 }
 
 // カメラごとの情報
@@ -45,7 +39,8 @@ pub fn start_camera_thread(
             })
             .unwrap_or_default();
 
-        let format = RequestedFormat::new::<RgbFormat>(RequestedFormatType::AbsoluteHighestFrameRate);
+        let format =
+            RequestedFormat::new::<RgbFormat>(RequestedFormatType::AbsoluteHighestFrameRate);
         let mut camera = match Camera::new(info.index.clone(), format) {
             Ok(cam) => {
                 sender
