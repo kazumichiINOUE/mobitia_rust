@@ -66,6 +66,9 @@ pub enum Commands {
         #[command(subcommand)]
         command: MapCommands,
     },
+    /// Show function key assignments.
+    #[command(alias = "fkey")]
+    Fkeys,
 }
 
 #[derive(Subcommand, Debug)]
@@ -695,5 +698,26 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                 app.app_mode = AppMode::Slam; // 先にSlamモードに切り替え
             }
         },
+        Commands::Fkeys => {
+            let assignments = [
+                "F1: Navigate Up",
+                "F2: Navigate Down",
+                "F6: Select Suggestion",
+                "F9: Clear Input",
+                "F10: Clear History",
+                "F11: Submit Command",
+                "F12: Toggle Console",
+            ];
+            app.command_history.push(ConsoleOutputEntry {
+                text: "Function Key Assignments:".to_string(),
+                group_id: current_group_id,
+            });
+            for assignment in assignments {
+                app.command_history.push(ConsoleOutputEntry {
+                    text: format!("  {}", assignment),
+                    group_id: current_group_id,
+                });
+            }
+        }
     }
 }

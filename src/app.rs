@@ -707,6 +707,7 @@ impl MyApp {
             "clear",
             "save",
             "map",
+            "fkeys",
         ];
 
         if input.is_empty() {
