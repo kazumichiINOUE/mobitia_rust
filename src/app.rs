@@ -912,12 +912,11 @@ impl MyApp {
                         };
                     }
                     SuggestionNavigationDirection::Up => {
-                        current_index =
-                            if current_index == usize::MAX || current_index == 0 {
-                                num_suggestions - 1
-                            } else {
-                                current_index - 1
-                            };
+                        current_index = if current_index == usize::MAX || current_index == 0 {
+                            num_suggestions - 1
+                        } else {
+                            current_index - 1
+                        };
                     }
                 }
                 self.suggestion_selection_index = Some(current_index);
@@ -1023,8 +1022,12 @@ impl eframe::App for MyApp {
         // --- データ更新 ---
         while let Ok(xppen_message) = self.xppen_message_receiver.try_recv() {
             match xppen_message {
-                XppenMessage::ToggleF1 => self.navigate_suggestions(SuggestionNavigationDirection::Up),
-                XppenMessage::ToggleF2 => self.navigate_suggestions(SuggestionNavigationDirection::Down),
+                XppenMessage::ToggleF1 => {
+                    self.navigate_suggestions(SuggestionNavigationDirection::Up)
+                }
+                XppenMessage::ToggleF2 => {
+                    self.navigate_suggestions(SuggestionNavigationDirection::Down)
+                }
                 XppenMessage::ToggleF3 => {
                     self.command_history.push(ConsoleOutputEntry {
                         text: "F3キーが押されました！".to_string(),
@@ -1390,7 +1393,9 @@ impl eframe::App for MyApp {
             ctx.request_repaint(); // 表示が変わるので再描画
         }
 
-        if (ctx.input(|i| (i.modifiers.ctrl || i.modifiers.command) && i.key_pressed(egui::Key::L))) || self.clear_command_requested {
+        if (ctx.input(|i| (i.modifiers.ctrl || i.modifiers.command) && i.key_pressed(egui::Key::L)))
+            || self.clear_command_requested
+        {
             self.command_history.clear();
             ctx.request_repaint();
             self.clear_command_requested = false; // Reset the flag
