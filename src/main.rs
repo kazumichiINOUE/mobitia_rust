@@ -11,6 +11,7 @@ mod config; // Add config module
 mod demo;
 mod lidar;
 mod slam;
+mod xppen;
 
 use app::MyApp;
 

@@ -20,6 +20,7 @@ pub use crate::demo::DemoMode;
 use crate::lidar::{load_lidar_configurations, start_lidar_thread, LidarInfo};
 use crate::slam::SlamManager; // Add SlamManager
 use crate::camera::{start_camera_thread, CameraInfo, CameraMessage};
+use crate::xppen::{start_xppen_thread, XppenMessage};
 
 // Camera一台分の状態を保持する構造体
 #[derive(Clone)]
@@ -133,6 +134,7 @@ pub struct MyApp {
     // スレッドからのデータ/ステータス受信を統合
     pub(crate) lidar_message_receiver: mpsc::Receiver<LidarMessage>,
     pub(crate) camera_message_receiver: mpsc::Receiver<CameraMessage>,
+    pub(crate) xppen_message_receiver: mpsc::Receiver<XppenMessage>,
 
     // SLAM用に各Lidarの最新スキャンを保持
     pub(crate) pending_scans: Vec<Option<Vec<(f32, f32, f32, f32, f32, f32, f32)>>>,
@@ -209,9 +211,15 @@ impl MyApp {
         let (lidar_message_sender, lidar_message_receiver) = mpsc::channel();
         // Cameraメッセージング用の単一チャネルを作成
         let (camera_message_sender, camera_message_receiver) = mpsc::channel();
+        // XPPenメッセージング用の単一チャネルを作成
+        let (xppen_message_sender, xppen_message_receiver) = mpsc::channel();
 
         // コンソールコマンド出力用のチャネルを作成
         let (command_output_sender, command_output_receiver) = mpsc::channel();
+
+        // XPPenスレッドを起動
+        start_xppen_thread(xppen_message_sender, command_output_sender.clone());
+
 
         // 各Lidarに対してスレッドを起動
         for lidar_state in &lidars {
@@ -411,6 +419,7 @@ impl MyApp {
             cameras,
             lidar_message_receiver,
             camera_message_receiver,
+            xppen_message_receiver,
             pending_scans,
             command_output_receiver,
             command_output_sender,
@@ -943,6 +952,81 @@ impl eframe::App for MyApp {
         }
 
         // --- データ更新 ---
+        while let Ok(xppen_message) = self.xppen_message_receiver.try_recv() {
+            match xppen_message {
+                XppenMessage::ToggleF1 => {
+                    self.command_history.push(ConsoleOutputEntry {
+                        text: "F1キーが押されました！".to_string(),
+                        group_id: self.next_group_id,
+                    });
+                }
+                XppenMessage::ToggleF2 => {
+                    self.command_history.push(ConsoleOutputEntry {
+                        text: "F2キーが押されました！".to_string(),
+                        group_id: self.next_group_id,
+                    });
+                }
+                XppenMessage::ToggleF3 => {
+                    self.command_history.push(ConsoleOutputEntry {
+                        text: "F3キーが押されました！".to_string(),
+                        group_id: self.next_group_id,
+                    });
+                }
+                XppenMessage::ToggleF4 => {
+                    self.command_history.push(ConsoleOutputEntry {
+                        text: "F4キーが押されました！".to_string(),
+                        group_id: self.next_group_id,
+                    });
+                }
+                XppenMessage::ToggleF5 => {
+                    self.command_history.push(ConsoleOutputEntry {
+                        text: "F5キーが押されました！".to_string(),
+                        group_id: self.next_group_id,
+                    });
+                }
+                XppenMessage::ToggleF6 => {
+                    self.command_history.push(ConsoleOutputEntry {
+                        text: "F6キーが押されました！".to_string(),
+                        group_id: self.next_group_id,
+                    });
+                }
+                XppenMessage::ToggleF7 => {
+                    self.command_history.push(ConsoleOutputEntry {
+                        text: "F7キーが押されました！".to_string(),
+                        group_id: self.next_group_id,
+                    });
+                }
+                XppenMessage::ToggleF8 => {
+                    self.command_history.push(ConsoleOutputEntry {
+                        text: "F8キーが押されました！".to_string(),
+                        group_id: self.next_group_id,
+                    });
+                }
+                XppenMessage::ToggleF9 => {
+                    self.command_history.push(ConsoleOutputEntry {
+                        text: "F9キーが押されました！".to_string(),
+                        group_id: self.next_group_id,
+                    });
+                }
+                XppenMessage::ToggleF10 => {
+                    self.command_history.push(ConsoleOutputEntry {
+                        text: "F10キーが押されました！".to_string(),
+                        group_id: self.next_group_id,
+                    });
+                }
+                XppenMessage::ToggleF11 => {
+                    self.command_history.push(ConsoleOutputEntry {
+                        text: "F11キーが押されました！".to_string(),
+                        group_id: self.next_group_id,
+                    });
+                }
+                XppenMessage::ToggleF12 => {
+                    self.show_command_window = !self.show_command_window;
+                }
+            }
+            ctx.request_repaint();
+        }
+
         while let Ok(lidar_message) = self.lidar_message_receiver.try_recv() {
             match lidar_message {
                 LidarMessage::ScanUpdate { id, scan } => {

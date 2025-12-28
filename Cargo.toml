@@ -26,6 +26,7 @@ rand = "0.8" # Added
 bresenham = "0.1.1"
 lazy_static = "1.5.0"
 nokhwa = { version = "0.10.10", features = ["input-avfoundation"] }
+hidapi = "2.6.4"
 
 [dev-dependencies]
 assert_cmd = "2"
