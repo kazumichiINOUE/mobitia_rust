@@ -889,6 +889,11 @@ impl MyApp {
     }
 
     fn navigate_suggestions(&mut self, direction: SuggestionNavigationDirection) {
+        // If input is empty and suggestions are not shown, populate them first.
+        if self.input_string.is_empty() && self.current_suggestions.is_empty() {
+            self.update_suggestions();
+        }
+
         if self.show_command_window && !self.current_suggestions.is_empty() {
             let num_suggestions = self.current_suggestions.len();
             if num_suggestions > 0 {
@@ -1489,40 +1494,13 @@ impl eframe::App for MyApp {
                         let tab_pressed = i.key_pressed(egui::Key::Tab);
 
                         // Suggestion navigation (Ctrl+n/p)
-                        if !self.current_suggestions.is_empty() {
-                            if ctrl_n_pressed || ctrl_p_pressed {
-                                let num_suggestions = self.current_suggestions.len();
-                                if num_suggestions > 0 {
-                                    let mut current_index =
-                                        self.suggestion_selection_index.unwrap_or(usize::MAX);
-                                    if ctrl_n_pressed {
-                                        current_index = if current_index == usize::MAX {
-                                            0
-                                        } else {
-                                            (current_index + 1) % num_suggestions
-                                        };
-                                    }
-                                    if ctrl_p_pressed {
-                                        current_index =
-                                            if current_index == usize::MAX || current_index == 0 {
-                                                num_suggestions - 1
-                                            } else {
-                                                current_index - 1
-                                            };
-                                    }
-                                    self.suggestion_selection_index = Some(current_index);
-                                    if ctrl_n_pressed {
-                                        ctx.input_mut(|i| {
-                                            i.consume_key(egui::Modifiers::CTRL, egui::Key::N)
-                                        });
-                                    }
-                                    if ctrl_p_pressed {
-                                        ctx.input_mut(|i| {
-                                            i.consume_key(egui::Modifiers::CTRL, egui::Key::P)
-                                        });
-                                    }
-                                }
-                            }
+                        if ctrl_n_pressed {
+                            self.navigate_suggestions(SuggestionNavigationDirection::Down);
+                            ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::N));
+                        }
+                        if ctrl_p_pressed {
+                            self.navigate_suggestions(SuggestionNavigationDirection::Up);
+                            ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::P));
                         }
 
                         // Tab key handling (completion) by Tab or F6
