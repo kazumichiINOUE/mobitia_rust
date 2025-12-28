@@ -135,6 +135,8 @@ pub struct MyApp {
     pub(crate) lidar_message_receiver: mpsc::Receiver<LidarMessage>,
     pub(crate) camera_message_receiver: mpsc::Receiver<CameraMessage>,
     pub(crate) xppen_message_receiver: mpsc::Receiver<XppenMessage>,
+    pub(crate) xppen_trigger_sender: mpsc::Sender<()>,
+    pub(crate) xppen_connection_triggered: bool,
 
     // SLAM用に各Lidarの最新スキャンを保持
     pub(crate) pending_scans: Vec<Option<Vec<(f32, f32, f32, f32, f32, f32, f32)>>>,
@@ -213,12 +215,18 @@ impl MyApp {
         let (camera_message_sender, camera_message_receiver) = mpsc::channel();
         // XPPenメッセージング用の単一チャネルを作成
         let (xppen_message_sender, xppen_message_receiver) = mpsc::channel();
+        // XPPenトリガー用のチャネルを作成
+        let (xppen_trigger_sender, xppen_trigger_receiver) = mpsc::channel();
 
         // コンソールコマンド出力用のチャネルを作成
         let (command_output_sender, command_output_receiver) = mpsc::channel();
 
         // XPPenスレッドを起動
-        start_xppen_thread(xppen_message_sender, command_output_sender.clone());
+        start_xppen_thread(
+            xppen_message_sender,
+            command_output_sender.clone(),
+            xppen_trigger_receiver,
+        );
 
         // 各Lidarに対してスレッドを起動
         for lidar_state in &lidars {
@@ -419,6 +427,8 @@ impl MyApp {
             lidar_message_receiver,
             camera_message_receiver,
             xppen_message_receiver,
+            xppen_trigger_sender,
+            xppen_connection_triggered: false,
             pending_scans,
             command_output_receiver,
             command_output_sender,
@@ -878,6 +888,17 @@ impl eframe::App for MyApp {
 
     /// フレームごとに呼ばれ、UIを描画する
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // --- Trigger XPPen connection on first update ---
+        if !self.xppen_connection_triggered {
+            // Send the trigger signal. The `if let Err` handles the case where the thread dies.
+            if let Err(e) = self.xppen_trigger_sender.send(()) {
+                self.command_output_sender
+                    .send(format!("Failed to trigger XPPen thread: {}", e))
+                    .unwrap_or_default();
+            }
+            self.xppen_connection_triggered = true;
+        }
+
         // --- サブマップの逐次読み込み処理 ---
         let mut path_to_load: Option<PathBuf> = None; // ロードするパスを保持する変数
 
