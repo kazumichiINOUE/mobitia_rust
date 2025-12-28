@@ -138,6 +138,7 @@ pub fn start_xppen_thread(
                 match device.read_timeout(&mut buf[..], 100) {
                     Ok(size) => {
                         if size == 32 {
+                            /*
                             let hex_string: Vec<String> = buf[..size]
                                 .iter()
                                 .map(|b| format!("0x{:02x}", b))
@@ -147,6 +148,7 @@ pub fn start_xppen_thread(
                                 size,
                                 hex_string.join(", ")
                             );
+                            */
                             if &buf[..size] == F1_PATTERN {
                                 xppen_message_sender
                                     .send(XppenMessage::ToggleF1)
