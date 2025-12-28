@@ -198,6 +198,9 @@ pub struct MyApp {
     /// 最後にサブマップを読み込んだ時刻
     pub(crate) last_submap_load_time: Option<Instant>,
 
+    /// F6キーによるサジェスト補完が要求されたか
+    pub(crate) suggestion_completion_requested: bool,
+
     pub(crate) config: crate::config::Config, // 追加
 }
 
@@ -462,6 +465,7 @@ impl MyApp {
 
             submap_load_queue: None,
             last_submap_load_time: None,
+            suggestion_completion_requested: false,
             config,
         }
     }
@@ -1030,10 +1034,7 @@ impl eframe::App for MyApp {
                     });
                 }
                 XppenMessage::ToggleF6 => {
-                    self.command_history.push(ConsoleOutputEntry {
-                        text: "F6キーが押されました！".to_string(),
-                        group_id: self.next_group_id,
-                    });
+                    self.suggestion_completion_requested = true;
                 }
                 XppenMessage::ToggleF7 => {
                     self.command_history.push(ConsoleOutputEntry {
@@ -1524,8 +1525,8 @@ impl eframe::App for MyApp {
                             }
                         }
 
-                        // Tab key handling (completion)
-                        if tab_pressed {
+                        // Tab key handling (completion) by Tab or F6
+                        if tab_pressed || self.suggestion_completion_requested {
                             if !self.current_suggestions.is_empty()
                                 && self.suggestion_selection_index.is_some()
                             {
@@ -1573,12 +1574,16 @@ impl eframe::App for MyApp {
                                         }
                                         self.update_suggestions();
                                         self.suggestion_selection_index = None;
-                                        ctx.input_mut(|i| {
-                                            i.consume_key(egui::Modifiers::NONE, egui::Key::Tab)
-                                        });
+                                        if tab_pressed {
+                                            ctx.input_mut(|i| {
+                                                i.consume_key(egui::Modifiers::NONE, egui::Key::Tab)
+                                            });
+                                        }
                                     }
                                 }
                             }
+                            // Reset the flag since the action has been handled
+                            self.suggestion_completion_requested = false;
                         }
 
                         // History navigation (ArrowUp/Down) - separate from suggestions
