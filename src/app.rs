@@ -696,7 +696,6 @@ impl MyApp {
 
         let all_commands = vec![
             "help",
-            "h",
             "lidar",
             "slam",
             "demo",
@@ -705,11 +704,9 @@ impl MyApp {
             "debug-storage",
             "version",
             "quit",
-            "q",
             "clear",
             "save",
             "map",
-            "m",
         ];
 
         if input.is_empty() {
@@ -847,11 +844,11 @@ impl MyApp {
                             cmd.starts_with(partial_subcommand)
                                 || "ls".starts_with(partial_subcommand)
                         })
-                        .map(|(_, display)| display.to_string())
+                        .map(|(cmd, _)| cmd.to_string())
                         .collect();
                 }
                 ["serial"] if ends_with_space => {
-                    self.current_suggestions = vec!["list (ls)".to_string()];
+                    self.current_suggestions = vec!["list".to_string()];
                 }
                 ["save", _sub @ ("points" | "p"), partial_arg] => {
                     let options = vec!["--output", "-o"];
@@ -877,12 +874,11 @@ impl MyApp {
                                 || "i".starts_with(partial_subcommand)
                                 || "p".starts_with(partial_subcommand)
                         })
-                        .map(|(_, display)| display.to_string())
+                        .map(|(cmd, _)| cmd.to_string())
                         .collect();
                 }
                 ["save"] if ends_with_space => {
-                    self.current_suggestions =
-                        vec!["image (i)".to_string(), "points (p)".to_string()];
+                    self.current_suggestions = vec!["image".to_string(), "points".to_string()];
                 }
                 [partial_command] => {
                     self.current_suggestions = all_commands
