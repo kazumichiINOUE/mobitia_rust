@@ -1062,13 +1062,20 @@ impl eframe::App for MyApp {
                     });
                 }
                 XppenMessage::ToggleF9 => {
+                    self.input_string.clear();
+                    self.update_suggestions();
+                    self.suggestion_selection_index = None;
                     self.command_history.push(ConsoleOutputEntry {
-                        text: "F9キーが押されました！".to_string(),
+                        text: "Clear Input (F9)".to_string(),
                         group_id: self.next_group_id,
                     });
                 }
                 XppenMessage::ToggleF10 => {
                     self.clear_command_requested = true;
+                    self.command_history.push(ConsoleOutputEntry {
+                        text: "Clear History (F10)".to_string(),
+                        group_id: self.next_group_id,
+                    });
                 }
                 XppenMessage::ToggleF11 => {
                     self.command_submission_requested = true;
