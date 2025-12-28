@@ -79,6 +79,11 @@ pub enum LidarMessage {
     },
 }
 
+pub enum SuggestionNavigationDirection {
+    Up,
+    Down,
+}
+
 #[allow(dead_code)]
 pub enum SlamThreadCommand {
     StartContinuous,
@@ -677,7 +682,27 @@ impl MyApp {
         self.current_suggestions.clear(); // 毎回クリアしてから再計算
         self.suggestion_selection_index = None; // 選択もリセット
 
-        if !input.is_empty() {
+        let all_commands = vec![
+            "help",
+            "h",
+            "lidar",
+            "slam",
+            "demo",
+            "set",
+            "serial",
+            "debug-storage",
+            "version",
+            "quit",
+            "q",
+            "clear",
+            "save",
+            "map",
+            "m",
+        ];
+
+        if input.is_empty() {
+            self.current_suggestions = all_commands.into_iter().map(String::from).collect();
+        } else {
             let parts: Vec<&str> = input.split_whitespace().collect();
             let ends_with_space = input.ends_with(' ');
 
@@ -848,23 +873,6 @@ impl MyApp {
                         vec!["image (i)".to_string(), "points (p)".to_string()];
                 }
                 [partial_command] => {
-                    let all_commands = vec![
-                        "help",
-                        "h",
-                        "lidar",
-                        "slam",
-                        "demo",
-                        "set",
-                        "serial",
-                        "debug-storage",
-                        "version",
-                        "quit",
-                        "q",
-                        "clear",
-                        "save",
-                        "map",
-                        "m",
-                    ];
                     self.current_suggestions = all_commands
                         .into_iter()
                         .filter(|cmd| cmd.starts_with(partial_command))
@@ -872,6 +880,33 @@ impl MyApp {
                         .collect();
                 }
                 _ => {}
+            }
+        }
+    }
+
+    fn navigate_suggestions(&mut self, direction: SuggestionNavigationDirection) {
+        if self.show_command_window && !self.current_suggestions.is_empty() {
+            let num_suggestions = self.current_suggestions.len();
+            if num_suggestions > 0 {
+                let mut current_index = self.suggestion_selection_index.unwrap_or(usize::MAX);
+                match direction {
+                    SuggestionNavigationDirection::Down => {
+                        current_index = if current_index == usize::MAX {
+                            0
+                        } else {
+                            (current_index + 1) % num_suggestions
+                        };
+                    }
+                    SuggestionNavigationDirection::Up => {
+                        current_index =
+                            if current_index == usize::MAX || current_index == 0 {
+                                num_suggestions - 1
+                            } else {
+                                current_index - 1
+                            };
+                    }
+                }
+                self.suggestion_selection_index = Some(current_index);
             }
         }
     }
@@ -974,18 +1009,8 @@ impl eframe::App for MyApp {
         // --- データ更新 ---
         while let Ok(xppen_message) = self.xppen_message_receiver.try_recv() {
             match xppen_message {
-                XppenMessage::ToggleF1 => {
-                    self.command_history.push(ConsoleOutputEntry {
-                        text: "F1キーが押されました！".to_string(),
-                        group_id: self.next_group_id,
-                    });
-                }
-                XppenMessage::ToggleF2 => {
-                    self.command_history.push(ConsoleOutputEntry {
-                        text: "F2キーが押されました！".to_string(),
-                        group_id: self.next_group_id,
-                    });
-                }
+                XppenMessage::ToggleF1 => self.navigate_suggestions(SuggestionNavigationDirection::Up),
+                XppenMessage::ToggleF2 => self.navigate_suggestions(SuggestionNavigationDirection::Down),
                 XppenMessage::ToggleF3 => {
                     self.command_history.push(ConsoleOutputEntry {
                         text: "F3キーが押されました！".to_string(),
@@ -1423,7 +1448,9 @@ impl eframe::App for MyApp {
                     }
 
                     // --- サジェスト候補の生成 ---
-                    if text_edit_response.changed() || self.input_string.is_empty() {
+                    if text_edit_response.changed()
+                        || (text_edit_response.gained_focus() && self.input_string.is_empty())
+                    {
                         self.update_suggestions();
                     }
 
