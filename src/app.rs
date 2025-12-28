@@ -201,6 +201,9 @@ pub struct MyApp {
     /// F6キーによるサジェスト補完が要求されたか
     pub(crate) suggestion_completion_requested: bool,
 
+    /// F11キーによるコマンド実行が要求されたか
+    pub(crate) command_submission_requested: bool,
+
     pub(crate) config: crate::config::Config, // 追加
 }
 
@@ -466,6 +469,7 @@ impl MyApp {
             submap_load_queue: None,
             last_submap_load_time: None,
             suggestion_completion_requested: false,
+            command_submission_requested: false,
             config,
         }
     }
@@ -1066,10 +1070,7 @@ impl eframe::App for MyApp {
                     });
                 }
                 XppenMessage::ToggleF11 => {
-                    self.command_history.push(ConsoleOutputEntry {
-                        text: "F11キーが押されました！".to_string(),
-                        group_id: self.next_group_id,
-                    });
+                    self.command_submission_requested = true;
                 }
                 XppenMessage::ToggleF12 => {
                     self.show_command_window = !self.show_command_window;
@@ -1597,9 +1598,9 @@ impl eframe::App for MyApp {
                     }
 
                     // Enter key handling (submission) - must be outside the `has_focus` block
-                    if text_edit_response.lost_focus()
-                        && ctx.input(|i| i.key_pressed(egui::Key::Enter))
-                    {
+                    let enter_pressed = text_edit_response.lost_focus()
+                        && ctx.input(|i| i.key_pressed(egui::Key::Enter));
+                    if enter_pressed || self.command_submission_requested {
                         let full_command_line_owned = self.input_string.trim().to_owned();
                         if !full_command_line_owned.is_empty() {
                             self.command_history.push(ConsoleOutputEntry {
@@ -1635,6 +1636,8 @@ impl eframe::App for MyApp {
                         self.current_suggestions.clear();
                         self.suggestion_selection_index = None;
                         text_edit_response.request_focus();
+                        // Reset the F11 flag
+                        self.command_submission_requested = false;
                     }
                 });
         }
