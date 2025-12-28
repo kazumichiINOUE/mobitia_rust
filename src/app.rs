@@ -204,6 +204,9 @@ pub struct MyApp {
     /// F11キーによるコマンド実行が要求されたか
     pub(crate) command_submission_requested: bool,
 
+    /// F10キーによるクリアコマンドが要求されたか
+    pub(crate) clear_command_requested: bool,
+
     pub(crate) config: crate::config::Config, // 追加
 }
 
@@ -470,6 +473,7 @@ impl MyApp {
             last_submap_load_time: None,
             suggestion_completion_requested: false,
             command_submission_requested: false,
+            clear_command_requested: false,
             config,
         }
     }
@@ -1064,10 +1068,7 @@ impl eframe::App for MyApp {
                     });
                 }
                 XppenMessage::ToggleF10 => {
-                    self.command_history.push(ConsoleOutputEntry {
-                        text: "F10キーが押されました！".to_string(),
-                        group_id: self.next_group_id,
-                    });
+                    self.clear_command_requested = true;
                 }
                 XppenMessage::ToggleF11 => {
                     self.command_submission_requested = true;
@@ -1385,9 +1386,10 @@ impl eframe::App for MyApp {
             ctx.request_repaint(); // 表示が変わるので再描画
         }
 
-        if ctx.input(|i| (i.modifiers.ctrl || i.modifiers.command) && i.key_pressed(egui::Key::L)) {
+        if (ctx.input(|i| (i.modifiers.ctrl || i.modifiers.command) && i.key_pressed(egui::Key::L))) || self.clear_command_requested {
             self.command_history.clear();
             ctx.request_repaint();
+            self.clear_command_requested = false; // Reset the flag
         }
 
         if self.show_command_window {
