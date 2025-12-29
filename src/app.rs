@@ -899,6 +899,17 @@ impl MyApp {
                         "slam-toggle".to_string(),
                     ];
                 }
+                ["osmo"] if ends_with_space => {
+                    self.current_suggestions = vec!["capture".to_string()];
+                }
+                ["osmo", partial_subcommand] => {
+                    let options = vec!["capture"];
+                    self.current_suggestions = options
+                        .into_iter()
+                        .filter(|opt| opt.starts_with(partial_subcommand))
+                        .map(|s| s.to_string())
+                        .collect();
+                }
                 ["slam"] if ends_with_space => {
                     self.current_suggestions = vec![
                         "getlidar".to_string(),
