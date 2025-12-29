@@ -4,6 +4,8 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
+use crate::app::LidarMessage;
+
 use super::comm::LidarConnection;
 use super::protocol::{decode_scip_2_0_3char, decode_scip_2_0_4char};
 
@@ -37,41 +39,60 @@ impl LidarDriver {
         Ok(Self { connection })
     }
 
-    pub fn initialize(&mut self, status_sender: &mpsc::Sender<String>) -> Result<()> {
+    pub fn initialize(
+        &mut self,
+        lidar_id: usize,
+        message_sender: &mpsc::Sender<LidarMessage>,
+    ) -> Result<()> {
         let init_commands: &[&[u8]] = &[b"VV\n", b"PP\n", b"II\n"];
         for cmd in init_commands {
-            status_sender
-                .send(format!(
-                    "INFO: Sending command: {}",
-                    String::from_utf8_lossy(*cmd).trim()
-                ))
+            message_sender
+                .send(LidarMessage::StatusUpdate {
+                    id: lidar_id,
+                    message: format!(
+                        "INFO: Sending command: {}",
+                        String::from_utf8_lossy(*cmd).trim()
+                    ),
+                })
                 .unwrap_or_default();
             let response = self.connection.send_and_receive(*cmd)?;
-            status_sender
-                .send(format!(
-                    "INFO: Response for {}: {}",
-                    String::from_utf8_lossy(*cmd).trim(),
-                    response.trim()
-                ))
+            message_sender
+                .send(LidarMessage::StatusUpdate {
+                    id: lidar_id,
+                    message: format!(
+                        "INFO: Response for {}: {}",
+                        String::from_utf8_lossy(*cmd).trim(),
+                        response.trim()
+                    ),
+                })
                 .unwrap_or_default();
             thread::sleep(Duration::from_millis(50));
         }
 
-        status_sender
-            .send(format!("INFO: Sending command: BM"))
+        message_sender
+            .send(LidarMessage::StatusUpdate {
+                id: lidar_id,
+                message: format!("INFO: Sending command: BM"),
+            })
             .unwrap_or_default();
         let response_bm = self.connection.send_and_receive(b"BM\n")?;
-        status_sender
-            .send(format!("INFO: Response for BM: {}", response_bm.trim()))
+        message_sender
+            .send(LidarMessage::StatusUpdate {
+                id: lidar_id,
+                message: format!("INFO: Response for BM: {}", response_bm.trim()),
+            })
             .unwrap_or_default();
         thread::sleep(Duration::from_millis(50));
-        status_sender
-            .send("INFO: LiDAR initialized. Laser is ON.".to_string())
+        message_sender
+            .send(LidarMessage::StatusUpdate {
+                id: lidar_id,
+                message: "INFO: LiDAR initialized. Laser is ON.".to_string(),
+            })
             .unwrap_or_default();
         Ok(())
     }
 
-    pub fn get_distance_data(&mut self) -> Result<Vec<(f32, f32)>> {
+    pub fn get_distance_data(&mut self) -> Result<Vec<(f32, f32, f32, f32, f32, f32, f32)>> {
         let command = b"GD0000108001\n";
         let response = self.connection.send_and_receive(command)?;
 
@@ -90,7 +111,7 @@ impl LidarDriver {
         }
 
         // Parse data
-        let mut lidar_points_current_scan: Vec<(f32, f32)> = Vec::new();
+        let mut lidar_points_current_scan: Vec<(f32, f32, f32, f32, f32, f32, f32)> = Vec::new();
         let gd_params = &command[2..10];
         let start_step =
             u32::from_str_radix(&String::from_utf8_lossy(&gd_params[0..4]), 10).unwrap_or(0);
@@ -122,7 +143,9 @@ impl LidarDriver {
                         let angle_rad = current_angle.to_radians();
                         let x = distance_m * angle_rad.cos();
                         let y = distance_m * angle_rad.sin();
-                        lidar_points_current_scan.push((x, y));
+                        lidar_points_current_scan
+                            .push((x, y, distance_m, angle_rad, 0.0, 0.0, 0.0));
+                        // 0.0をfeatureとnormalの初期値として追加
                     }
                 }
                 Err(_) => {
@@ -142,66 +165,111 @@ impl LidarDriver {
 
 /// Spawns a thread to continuously fetch data from the LiDAR.
 pub fn start_lidar_thread(
+    lidar_id: usize, // Lidar IDを追加
     lidar_config: LidarInfo,
-    point_sender: mpsc::Sender<Result<Vec<(f32, f32)>>>,
-    status_sender: mpsc::Sender<String>,
+    message_sender: mpsc::Sender<LidarMessage>, // 単一のメッセージセンダー
 ) {
     thread::spawn(move || {
-        status_sender
-            .send(format!("LiDAR Path: {}", lidar_config.lidar_path))
+        // Lidar Path と Baud Rate をLidarMessageとして送信
+        message_sender
+            .send(LidarMessage::StatusUpdate {
+                id: lidar_id,
+                message: format!("LiDAR Path: {}", lidar_config.lidar_path),
+            })
             .unwrap_or_default();
-        status_sender
-            .send(format!("Baud Rate: {}", lidar_config.baud_rate))
+        message_sender
+            .send(LidarMessage::StatusUpdate {
+                id: lidar_id,
+                message: format!("Baud Rate: {}", lidar_config.baud_rate),
+            })
             .unwrap_or_default();
 
         let mut driver = match LidarDriver::new(&lidar_config) {
             Ok(d) => {
-                status_sender
-                    .send(format!(
-                        "INFO: Successfully opened port {}",
-                        lidar_config.lidar_path
-                    ))
+                message_sender
+                    .send(LidarMessage::StatusUpdate {
+                        id: lidar_id,
+                        message: format!(
+                            "INFO: Successfully opened port {}",
+                            lidar_config.lidar_path
+                        ),
+                    })
                     .unwrap_or_default();
                 d
             }
             Err(e) => {
-                status_sender
-                    .send(format!(
-                        "ERROR: Failed to open port '{}': {}",
-                        lidar_config.lidar_path, e
-                    ))
+                message_sender
+                    .send(LidarMessage::StatusUpdate {
+                        id: lidar_id,
+                        message: format!(
+                            "ERROR: Failed to open port '{}': {}",
+                            lidar_config.lidar_path, e
+                        ),
+                    })
                     .unwrap_or_default();
                 return;
             }
         };
 
-        if let Err(e) = driver.initialize(&status_sender) {
-            status_sender
-                .send(format!("ERROR: Failed to initialize LiDAR: {}", e))
+        // initialize関数にstatus_senderを渡す代わりに、message_senderを使うように変更
+        // driver.initialize()のシグネチャも変更する必要がある
+        if let Err(e) = driver.initialize(lidar_id, &message_sender) {
+            message_sender
+                .send(LidarMessage::StatusUpdate {
+                    id: lidar_id,
+                    message: format!("ERROR: Failed to initialize LiDAR: {}", e),
+                })
                 .unwrap_or_default();
             return;
         }
 
+        let mut was_connected = true; // 接続状態を追跡
+
         loop {
             match driver.get_distance_data() {
                 Ok(points) => {
-                    if point_sender.send(Ok(points)).is_err() {
-                        // Main thread has likely closed, exit loop
+                    if !was_connected {
+                        // エラー状態から回復した場合、ステータスを更新
+                        message_sender
+                            .send(LidarMessage::StatusUpdate {
+                                id: lidar_id,
+                                message: "INFO: LiDAR initialized. Laser is ON.".to_string(), // 接続成功を示すメッセージ
+                            })
+                            .unwrap_or_default();
+                        was_connected = true;
+                    }
+
+                    if message_sender
+                        .send(LidarMessage::ScanUpdate {
+                            id: lidar_id,
+                            scan: points,
+                        })
+                        .is_err()
+                    {
+                        // メインスレッドが閉じられた可能性
                         break;
                     }
                 }
                 Err(e) => {
-                    status_sender
-                        .send(format!("ERROR: Failed to get distance data: {}", e))
+                    // データ取得に失敗
+                    message_sender
+                        .send(LidarMessage::StatusUpdate {
+                            id: lidar_id,
+                            message: format!("ERROR: Failed to get distance data: {}", e),
+                        })
                         .unwrap_or_default();
+                    was_connected = false;
                 }
             }
             thread::sleep(Duration::from_millis(100));
         }
 
         driver.stop_laser();
-        status_sender
-            .send("INFO: LiDAR thread stopped. Laser is OFF.".to_string())
+        message_sender
+            .send(LidarMessage::StatusUpdate {
+                id: lidar_id,
+                message: "INFO: LiDAR thread stopped. Laser is OFF.".to_string(),
+            })
             .unwrap_or_default();
     });
 }

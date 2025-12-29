@@ -1,13 +1,14 @@
 use crate::app::{AppMode, ConsoleOutputEntry, DemoMode, MyApp};
 use chrono::Local;
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use dirs;
 use eframe::egui;
+use std::path::PathBuf;
 use std::thread;
 
 /// CLI Commands for Mobitia application
 #[derive(Parser, Debug)]
-#[command(name = "mobitia", no_binary_name(true), version, about, long_about = None, disable_help_flag = true, disable_help_subcommand = true)]
+#[command(name = "mobitia", no_binary_name(true), about, long_about = None, disable_version_flag = true, disable_help_flag = true, disable_help_subcommand = true)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
@@ -18,8 +19,16 @@ pub enum Commands {
     /// Show help for commands.
     #[command(alias = "h")]
     Help,
-    /// Enter LiDAR visualization mode.
-    Lidar,
+    /// Manage Camera related commands and settings.
+    Camera {
+        #[command(subcommand)]
+        command: Option<CameraCommands>,
+    },
+    /// Manage LiDAR related commands and settings.
+    Lidar {
+        #[command(subcommand)]
+        command: Option<LidarCommands>,
+    },
     /// Enter SLAM mode.
     Slam {
         #[command(subcommand)]
@@ -27,14 +36,14 @@ pub enum Commands {
     },
     /// Enter demo mode.
     Demo {
-        /// Demo mode to set ("scan", "ripple", "breathing", or "table").
+        /// Demo mode to set ("scan", "ripple", "breathing", or "table"). Defaults to "scan" if omitted.
         #[arg(value_parser = ["scan", "ripple", "breathing", "table"])]
-        mode: String,
+        mode: Option<String>,
     },
-    /// Set a configuration value.
-    Set {
+    /// Manage Osmo related commands and settings.
+    Osmo {
         #[command(subcommand)]
-        command: SetCommands,
+        command: Option<OsmoCommands>,
     },
     /// Manage serial port functions.
     Serial {
@@ -44,6 +53,8 @@ pub enum Commands {
     /// Show the path of the storage file.
     #[command(name = "debug-storage")] // Explicitly set name for hyphenated command
     DebugStorage,
+    /// Show the application version.
+    Version,
     /// Quit the application.
     #[command(alias = "q")]
     Quit,
@@ -54,6 +65,64 @@ pub enum Commands {
         #[command(subcommand)]
         command: SaveCommands,
     },
+    /// Manage map data.
+    #[command(alias = "m")]
+    Map {
+        #[command(subcommand)]
+        command: MapCommands,
+    },
+    /// Show function key assignments.
+    #[command(alias = "fkey")]
+    Fkeys,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum CameraCommands {
+    /// Enter Camera visualization mode.
+    #[command(alias = "mode")]
+    EnterMode,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum OsmoCommands {
+    /// Capture an image from Osmo.
+    Capture,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum MapCommands {
+    /// Load a map from a specified directory, loading submaps sequentially.
+    Load {
+        /// Path to the directory containing map data (e.g., ./slam_results/slam_result_20251220-211047).
+        path: PathBuf,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum LidarCommands {
+    /// Enter LiDAR visualization mode.
+    #[command(alias = "mode")]
+    EnterMode,
+    /// Toggle whether a Lidar is used for SLAM.
+    SlamToggle {
+        /// Lidar ID (e.g., 0, 1).
+        id: usize,
+    },
+    /// Set LiDAR related configurations.
+    #[command(subcommand)]
+    Set(SetLidarCommands),
+}
+
+#[derive(Subcommand, Debug)]
+pub enum SetLidarCommands {
+    /// Set the LiDAR device path for a specific Lidar ID.
+    Path {
+        /// Lidar ID (e.g., 0, 1).
+        id: usize,
+        /// New LiDAR device path.
+        path: String,
+    },
+    // ここに将来的にbaudrateなどの設定を追加できる
 }
 
 #[derive(Subcommand, Debug)]
@@ -61,6 +130,7 @@ pub enum SlamCommands {
     /// Get a single LiDAR scan for the SLAM map.
     GetLidar,
     /// Start continuous SLAM updates.
+    #[command(alias = "c")]
     Continuous,
     /// Pause continuous SLAM updates.
     Pause,
@@ -93,15 +163,6 @@ pub enum SerialCommands {
     },
 }
 
-#[derive(Subcommand, Debug)]
-pub enum SetCommands {
-    /// Set the LiDAR device path.
-    Path {
-        /// New LiDAR device path.
-        path: String,
-    },
-}
-
 pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
     // 新しいコマンド実行のグループIDを生成
     app.next_group_id += 1;
@@ -109,104 +170,126 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
 
     match cli.command {
         Commands::Help => {
-            app.command_history.push(ConsoleOutputEntry {
-                text: "Available commands:".to_string(),
-                group_id: current_group_id,
-            });
-            app.command_history.push(ConsoleOutputEntry {
-                text: "  help (or h)                  - Show this help message".to_string(),
-                group_id: current_group_id,
-            });
-            app.command_history.push(ConsoleOutputEntry {
-                text: "  lidar                        - Enter LiDAR visualization mode".to_string(),
-                group_id: current_group_id,
-            });
-            app.command_history.push(ConsoleOutputEntry {
-                text: "  slam                         - Enter SLAM mode".to_string(),
-                group_id: current_group_id,
-            });
-            app.command_history.push(ConsoleOutputEntry {
-                text: "  slam getlidar                - Capture a scan in SLAM mode".to_string(),
-                group_id: current_group_id,
-            });
-            app.command_history.push(ConsoleOutputEntry {
-                text: "  slam continuous              - Start continuous SLAM updates".to_string(),
-                group_id: current_group_id,
-            });
-            app.command_history.push(ConsoleOutputEntry {
-                text: "  slam pause                   - Pause continuous SLAM updates".to_string(),
-                group_id: current_group_id,
-            });
-            app.command_history.push(ConsoleOutputEntry {
-                text: "  demo <scan|ripple|breathing|table> - Enter demo mode with a specific pattern".to_string(),
-                group_id: current_group_id,
-            });
-            app.command_history.push(ConsoleOutputEntry {
-                text: "  set path <path>              - Set the LiDAR device path".to_string(),
-                group_id: current_group_id,
-            });
-            app.command_history.push(ConsoleOutputEntry {
-                text: "  serial list [--detail] [path] - List available serial ports".to_string(),
-                group_id: current_group_id,
-            });
-            app.command_history.push(ConsoleOutputEntry {
-                text: "  debug-storage                - Show the path of the storage file"
-                    .to_string(),
-                group_id: current_group_id,
-            });
-            app.command_history.push(ConsoleOutputEntry {
-                text: "  quit (or q)                  - Quit the application".to_string(),
-                group_id: current_group_id,
-            });
-            app.command_history.push(ConsoleOutputEntry {
-                text: "  clear                        - Clear console history (or Ctrl+L/Cmd+L)"
-                    .to_string(),
-                group_id: current_group_id,
-            });
-            app.command_history.push(ConsoleOutputEntry {
-                text:
-                    "  save image                   - Save current LiDAR visualization as an image"
-                        .to_string(),
-                group_id: current_group_id,
-            });
-            app.command_history.push(ConsoleOutputEntry {
-                text: "  save points (or p) [--output <file>] - Save current LiDAR point cloud to a file (.lsp format)"
-                    .to_string(), group_id: current_group_id });
+            // clapのヘルプ文字列を生成
+            let mut cmd = Cli::command();
+            // Usageを含まないようにヘルプのテンプレートをカスタマイズ
+            cmd = cmd.help_template("{about-with-newline}\n{all-args}");
+            let help_text = cmd.render_help().to_string();
+
+            // 生成されたヘルプ文字列をコンソールに1行ずつ追加
+            for line in help_text.lines() {
+                app.command_history.push(ConsoleOutputEntry {
+                    text: line.to_string(),
+                    group_id: current_group_id,
+                });
+            }
         }
-        Commands::Lidar => {
-            app.app_mode = AppMode::Lidar;
-            app.command_history.push(ConsoleOutputEntry {
-                text: "Mode set to LiDAR.".to_string(),
-                group_id: current_group_id,
-            });
+        Commands::Camera { command } => {
+            if let Some(camera_command) = command {
+                match camera_command {
+                    CameraCommands::EnterMode => {
+                        app.app_mode = AppMode::Camera;
+                        app.command_history.push(ConsoleOutputEntry {
+                            text: "Mode set to Camera.".to_string(),
+                            group_id: current_group_id,
+                        });
+                    }
+                }
+            } else {
+                app.app_mode = AppMode::Camera;
+                app.command_history.push(ConsoleOutputEntry {
+                    text: "Mode set to Camera.".to_string(),
+                    group_id: current_group_id,
+                });
+            }
+        }
+        Commands::Lidar { command } => {
+            if let Some(lidar_command) = command {
+                match lidar_command {
+                    LidarCommands::EnterMode => {
+                        app.app_mode = AppMode::Lidar;
+                        app.command_history.push(ConsoleOutputEntry {
+                            text: "Mode set to LiDAR.".to_string(),
+                            group_id: current_group_id,
+                        });
+                    }
+                    LidarCommands::SlamToggle { id } => {
+                        if let Some(lidar_state) = app.lidars.get_mut(id) {
+                            lidar_state.is_active_for_slam = !lidar_state.is_active_for_slam;
+                            let status = if lidar_state.is_active_for_slam {
+                                "active"
+                            } else {
+                                "inactive"
+                            };
+                            app.command_output_sender
+                                .send(format!("LiDAR {} is now {} for SLAM.", id, status))
+                                .unwrap_or_default();
+                        } else {
+                            app.command_output_sender
+                                .send(format!("ERROR: LiDAR ID {} not found.", id))
+                                .unwrap_or_default();
+                        }
+                    }
+                    LidarCommands::Set(set_lidar_command) => match set_lidar_command {
+                        SetLidarCommands::Path { id, path } => {
+                            if let Some(lidar_state) = app.lidars.get_mut(id) {
+                                lidar_state.path = path.clone();
+                                app.command_output_sender
+                                    .send(format!("LiDAR {} path set to: {}", id, path))
+                                    .unwrap_or_default();
+                            } else {
+                                app.command_output_sender
+                                    .send(format!(
+                                        "ERROR: No LiDAR {} configured or found to set path for.",
+                                        id
+                                    ))
+                                    .unwrap_or_default();
+                            }
+                        }
+                    },
+                }
+            } else {
+                // If 'lidar' is run without subcommands, switch to Lidar mode.
+                app.app_mode = AppMode::Lidar;
+                app.command_history.push(ConsoleOutputEntry {
+                    text: "Mode set to LiDAR.".to_string(),
+                    group_id: current_group_id,
+                });
+            }
         }
         Commands::Slam { command } => {
             app.app_mode = AppMode::Slam;
             if let Some(slam_command) = command {
                 match slam_command {
                     SlamCommands::GetLidar => {
+                        app.slam_map_bounding_box = None; // 表示範囲をリセット
                         app.single_scan_requested_by_ui = true;
                         app.command_history.push(ConsoleOutputEntry {
                             text: "Requesting single scan for SLAM.".to_string(),
                             group_id: current_group_id,
                         });
-                    },
+                    }
                     SlamCommands::Continuous => {
+                        app.slam_map_bounding_box = None; // 表示範囲をリセット
                         app.slam_mode = crate::app::SlamMode::Continuous;
-                        app.slam_command_sender.send(crate::app::SlamThreadCommand::StartContinuous).unwrap_or_default();
+                        app.slam_command_sender
+                            .send(crate::app::SlamThreadCommand::StartContinuous)
+                            .unwrap_or_default();
                         app.command_history.push(ConsoleOutputEntry {
                             text: "SLAM set to continuous mode.".to_string(),
                             group_id: current_group_id,
                         });
-                    },
+                    }
                     SlamCommands::Pause => {
                         app.slam_mode = crate::app::SlamMode::Paused;
-                        app.slam_command_sender.send(crate::app::SlamThreadCommand::Pause).unwrap_or_default();
+                        app.slam_command_sender
+                            .send(crate::app::SlamThreadCommand::Pause)
+                            .unwrap_or_default();
                         app.command_history.push(ConsoleOutputEntry {
                             text: "SLAM paused.".to_string(),
                             group_id: current_group_id,
                         });
-                    },
+                    }
                 }
             } else {
                 app.command_history.push(ConsoleOutputEntry {
@@ -214,43 +297,64 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                     group_id: current_group_id,
                 });
             }
-        },
+        }
         Commands::Demo { mode } => {
             app.app_mode = AppMode::Demo;
-            match mode.as_str() {
+            let mode_str = mode.as_deref().unwrap_or("scan");
+            match mode_str {
                 "scan" => {
-                    app.demo_mode = DemoMode::RotatingScan;
+                    app.demo_manager.set_mode(DemoMode::RotatingScan);
                     app.command_history.push(ConsoleOutputEntry {
                         text: "Mode set to Demo (Rotating Scan).".to_string(),
                         group_id: current_group_id,
                     });
                 }
                 "ripple" => {
-                    app.demo_mode = DemoMode::ExpandingRipple;
+                    app.demo_manager.set_mode(DemoMode::ExpandingRipple);
                     app.command_history.push(ConsoleOutputEntry {
                         text: "Mode set to Demo (Expanding Ripple).".to_string(),
                         group_id: current_group_id,
                     });
                 }
                 "breathing" => {
-                    app.demo_mode = DemoMode::BreathingCircle;
+                    app.demo_manager.set_mode(DemoMode::BreathingCircle);
                     app.command_history.push(ConsoleOutputEntry {
                         text: "Mode set to Demo (Breathing Circle).".to_string(),
                         group_id: current_group_id,
                     });
                 }
                 "table" => {
-                    app.demo_mode = DemoMode::Table;
+                    app.demo_manager.set_mode(DemoMode::Table);
                     app.command_history.push(ConsoleOutputEntry {
                         text: "Mode set to Demo (Table).".to_string(),
                         group_id: current_group_id,
                     });
                 }
                 _ => {
+                    // This case should not be reached due to clap's value_parser
                     app.command_history.push(ConsoleOutputEntry {
                         text: format!("ERROR: Unknown demo mode: '{}'. Use 'scan', 'ripple', 'breathing', or 'table'.",
-                            mode), group_id: current_group_id });
+                            mode_str), group_id: current_group_id });
                 }
+            }
+        }
+        Commands::Osmo { command } => {
+            if let Some(osmo_command) = command {
+                match osmo_command {
+                    OsmoCommands::Capture => {
+                        app.command_history.push(ConsoleOutputEntry {
+                            text: "Requesting Osmo image capture...".to_string(),
+                            group_id: current_group_id,
+                        });
+                        app.capture_osmo_image();
+                    }
+                }
+            } else {
+                app.app_mode = AppMode::Osmo;
+                app.command_history.push(ConsoleOutputEntry {
+                    text: "Mode set to Osmo.".to_string(),
+                    group_id: current_group_id,
+                });
             }
         }
         Commands::Quit => {
@@ -277,19 +381,13 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                 });
             }
         }
-        Commands::Set { command } => match command {
-            SetCommands::Path { path } => {
-                app.lidar_path = path.clone();
-                app.command_history.push(ConsoleOutputEntry {
-                    text: format!("LiDAR path set to: {}", path),
-                    group_id: current_group_id,
-                });
-                app.command_history.push(ConsoleOutputEntry {
-                    text: "NOTE: Restart the application to apply the new path.".to_string(),
-                    group_id: current_group_id,
-                });
-            }
-        },
+        Commands::Version => {
+            app.command_history.push(ConsoleOutputEntry {
+                text: format!("Mobitia Version: {}", env!("CARGO_PKG_VERSION")),
+                group_id: current_group_id,
+            });
+        }
+
         Commands::Serial { command } => match command {
             SerialCommands::List { path, detail } => {
                 app.command_history.push(ConsoleOutputEntry {
@@ -448,7 +546,15 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                     return;
                 }
 
-                let lidar_points_clone = app.lidar_points.clone();
+                // TODO: どのLidarの点群を保存するか指定できるようにする
+                let lidar_points_clone = if let Some(lidar_state) = app.lidars.get(0) {
+                    lidar_state.points.clone()
+                } else {
+                    sender_clone
+                        .send("ERROR: No LiDAR 0 configured to save image from.".to_string())
+                        .unwrap_or_default();
+                    return; // 点群がない場合は処理を中断
+                };
 
                 thread::spawn(move || {
                     let mut img = image::RgbImage::new(width, height);
@@ -527,5 +633,121 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                 ctx.request_repaint(); // ファイル保存リクエストのために再描画
             }
         },
+        Commands::Map { command } => match command {
+            MapCommands::Load { path } => {
+                /*
+                let msg = format!(
+                    "Queueing up individual submaps from '{}'...",
+                    path.display()
+                );
+                println!("{}", msg);
+                app.command_history.push(ConsoleOutputEntry {
+                    text: msg,
+                    group_id: current_group_id,
+                });
+                */
+
+                // ロード開始時にマップをクリア
+                app.current_map_points.clear();
+                app.submaps.clear();
+                app.robot_trajectory.clear();
+                app.slam_map_bounding_box = None;
+
+                let submaps_base_path = path.join("submaps");
+                if !submaps_base_path.exists() || !submaps_base_path.is_dir() {
+                    let msg_error = format!(
+                        "ERROR: Submaps directory not found at: {}",
+                        submaps_base_path.display()
+                    );
+                    println!("{}", msg_error);
+                    app.command_history.push(ConsoleOutputEntry {
+                        text: msg_error,
+                        group_id: current_group_id,
+                    });
+                    return;
+                }
+
+                let pattern = regex::Regex::new(r"submap_\d{3}").unwrap();
+                let mut found_submaps = Vec::new();
+
+                match std::fs::read_dir(&submaps_base_path) {
+                    Ok(entries) => {
+                        for entry in entries.filter_map(|entry| entry.ok()) {
+                            if entry.file_type().map_or(false, |ft| ft.is_dir()) {
+                                let file_name = entry.file_name();
+                                if let Some(name) = file_name.to_str() {
+                                    if pattern.is_match(name) {
+                                        found_submaps.push(entry.path());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        let msg_error = format!(
+                            "ERROR: Failed to read submaps directory '{}': {}",
+                            submaps_base_path.display(),
+                            e
+                        );
+                        println!("{}", msg_error);
+                        app.command_history.push(ConsoleOutputEntry {
+                            text: msg_error,
+                            group_id: current_group_id,
+                        });
+                        return;
+                    }
+                }
+
+                if found_submaps.is_empty() {
+                    let msg = format!(
+                        "No submaps found matching 'submap_NNN' in '{}'.",
+                        submaps_base_path.display()
+                    );
+                    println!("{}", msg);
+                    app.command_history.push(ConsoleOutputEntry {
+                        text: msg,
+                        group_id: current_group_id,
+                    });
+                    return;
+                }
+
+                found_submaps.sort(); // 名前順にソート (submap_000, submap_001, ...)
+
+                /*
+                let msg_found_count = format!("Found and queued {} submaps.", found_submaps.len());
+                println!("{}", msg_found_count);
+                app.command_history.push(ConsoleOutputEntry {
+                    text: msg_found_count,
+                    group_id: current_group_id,
+                });
+                */
+
+                // 実際のロード処理は update ループに任せる
+                app.submap_load_queue = Some(found_submaps);
+                app.last_submap_load_time = None; // タイマーをリセット
+                app.app_mode = AppMode::Slam; // 先にSlamモードに切り替え
+            }
+        },
+        Commands::Fkeys => {
+            let assignments = [
+                "F1: Navigate Up",
+                "F2: Navigate Down",
+                "F6: Select Suggestion",
+                "F9: Clear Input",
+                "F10: Clear History",
+                "F11: Submit Command",
+                "F12: Toggle Console",
+            ];
+            app.command_history.push(ConsoleOutputEntry {
+                text: "Function Key Assignments:".to_string(),
+                group_id: current_group_id,
+            });
+            for assignment in assignments {
+                app.command_history.push(ConsoleOutputEntry {
+                    text: format!("  {}", assignment),
+                    group_id: current_group_id,
+                });
+            }
+        }
     }
 }

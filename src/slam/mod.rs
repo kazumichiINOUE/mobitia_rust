@@ -1,18 +1,45 @@
-use nalgebra::{Isometry2, Point2, Vector3, Rotation2, Translation2};
-use rand::seq::SliceRandom;
-use rand::Rng;
+pub mod differential_evolution;
 
-const CSIZE: f32 = 0.025;
-const MAP_WIDTH: usize = 3200;
-const MAP_HEIGHT: usize = 3200;
-const MAP_ORIGIN_X: usize = MAP_WIDTH / 2;
-const MAP_ORIGIN_Y: usize = MAP_HEIGHT / 2;
+use bresenham::Bresenham;
+use nalgebra::{Isometry2, Point2};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::fs;
+use std::io::Write;
 
-/// Represents a 2D occupancy grid map.
+use crate::config::{MapUpdateMethod, PointRepresentationMethod, SlamConfig};
+
+/// Represents a single cell in the occupancy grid.
+#[derive(Clone, Copy, Debug)]
+pub struct CellData {
+    pub log_odds: f64,
+    pub edge_ness: f64, // 0.0: 直線, 1.0: エッジ
+    pub normal_x: f64,
+    pub normal_y: f64,
+    pub centroid_x: f64,
+    pub centroid_y: f64,
+    pub point_count: u32,
+}
+
+impl Default for CellData {
+    fn default() -> Self {
+        Self {
+            log_odds: 0.0,  // 未知
+            edge_ness: 0.5, // 不明
+            normal_x: 0.0,
+            normal_y: 0.0,
+            centroid_x: 0.0,
+            centroid_y: 0.0,
+            point_count: 0,
+        }
+    }
+}
+
+/// Represents a 2D occupancy grid map where each cell holds a log-odds value.
 pub struct OccupancyGrid {
     pub width: usize,
     pub height: usize,
-    pub data: Vec<f64>,
+    pub data: Vec<CellData>,
 }
 
 impl OccupancyGrid {
@@ -20,44 +47,23 @@ impl OccupancyGrid {
         Self {
             width,
             height,
-            data: vec![0.0; width * height],
+            data: vec![CellData::default(); width * height], // Initialize with default CellData
         }
     }
 }
 
-/// Represents a pre-calculated Gaussian kernel for scoring.
-pub struct GaussianKernel {
-    pub radius: i32,
-    pub kernel: Vec<f64>,
-}
-
-impl GaussianKernel {
-    pub fn new(sigma: f64, kernel_radius: i32) -> Self {
-        let size = (2 * kernel_radius + 1) as usize;
-        let mut kernel = vec![0.0; size * size];
-        let mut sum_val = 0.0;
-        let sigma2 = sigma * sigma;
-
-        for y in -kernel_radius..=kernel_radius {
-            for x in -kernel_radius..=kernel_radius {
-                let distance_sq = (x * x + y * y) as f64;
-                let weight = (-distance_sq / (2.0 * sigma2)).exp();
-                let index = ((y + kernel_radius) as usize * size) + (x + kernel_radius) as usize;
-                kernel[index] = weight;
-                sum_val += weight;
-            }
-        }
-
-        // Normalize the kernel
-        for val in kernel.iter_mut() {
-            *val /= sum_val;
-        }
-
-        Self {
-            radius: kernel_radius,
-            kernel,
-        }
-    }
+/// サブマップのメタデータ構造体
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Submap {
+    pub id: usize,
+    #[serde(skip)]
+    pub global_pose: Isometry2<f32>,
+    pub pose_x: f32,
+    pub pose_y: f32,
+    pub pose_theta: f32,
+    pub timestamp_ms: u128,
+    pub points_file: String,
+    pub info_file: String,
 }
 
 /// The main SLAM state manager.
@@ -65,51 +71,378 @@ pub struct SlamManager {
     is_initial_scan: bool,
     map_gmap: OccupancyGrid,
     robot_pose: Isometry2<f32>,
-    map_scans_in_world: Vec<Point2<f32>>,
-    gaussian_kernel: GaussianKernel,
+    de_solver: differential_evolution::DifferentialEvolutionSolver,
+    pub(crate) config: SlamConfig,
+    log_odds_occ: f64,
+    log_odds_free: f64,
+
+    // サブマップ関連のフィールド
+    submap_counter: usize,
+    num_scans_per_submap: usize,
+    current_submap_scan_buffer: Vec<Vec<Point2<f32>>>,
+    current_submap_robot_poses: Vec<Isometry2<f32>>,
+    current_submap_timestamps_buffer: Vec<u128>,
+    submaps: HashMap<usize, Submap>,
+    output_base_dir: std::path::PathBuf,
+
+    // キャッシュされた点群
+    cached_map_points: Vec<(Point2<f32>, f64)>,
+    is_map_dirty: bool, // 地図が更新されたかを示すフラグ
 }
 
 impl SlamManager {
-    pub fn new() -> Self {
+    pub fn new(output_base_dir: std::path::PathBuf, config: SlamConfig) -> Self {
+        let log_odds_occ = (config.prob_occupied / (1.0 - config.prob_occupied)).ln();
+        let log_odds_free = (config.prob_free / (1.0 - config.prob_free)).ln();
+
         Self {
             is_initial_scan: true,
-            map_gmap: OccupancyGrid::new(MAP_WIDTH, MAP_HEIGHT),
+            map_gmap: OccupancyGrid::new(config.map_width, config.map_height),
             robot_pose: Isometry2::identity(),
-            map_scans_in_world: Vec::new(),
-            gaussian_kernel: GaussianKernel::new(0.8, 2),
+            de_solver: differential_evolution::DifferentialEvolutionSolver::new(config.clone()),
+            submap_counter: 0,
+            num_scans_per_submap: config.num_scans_per_submap,
+            current_submap_scan_buffer: Vec::new(),
+            current_submap_robot_poses: Vec::new(),
+            current_submap_timestamps_buffer: Vec::new(),
+            submaps: HashMap::new(),
+            output_base_dir,
+            cached_map_points: Vec::new(),
+            is_map_dirty: true,
+            config,
+            log_odds_occ,
+            log_odds_free,
         }
     }
 
     /// Processes a new LiDAR scan and updates the map and pose.
-    pub fn update(&mut self, lidar_points: &[(f32, f32)]) {
-        let current_scan: Vec<Point2<f32>> =
-            lidar_points.iter().map(|p| Point2::new(p.0, p.1)).collect();
+    pub fn update(
+        &mut self,
+        raw_scan_data: &[(f32, f32, f32, f32, f32, f32, f32)],
+        interpolated_scan_data: &[(f32, f32, f32, f32, f32, f32, f32)],
+        timestamp: u128,
+    ) {
+        // --- Map Decay ---
+        if self.config.map_update_method == MapUpdateMethod::Probabilistic
+            || self.config.map_update_method == MapUpdateMethod::Hybrid
+        {
+            for cell in self.map_gmap.data.iter_mut() {
+                cell.log_odds *= self.config.decay_rate;
+                // 0.5(不明)に近づける
+                cell.edge_ness = (cell.edge_ness - 0.5) * self.config.decay_rate + 0.5;
+                // 法線も減衰（ゼロベクトルに近づける）
+                cell.normal_x *= self.config.decay_rate;
+                cell.normal_y *= self.config.decay_rate;
+            }
+        }
+
+        // マッチング用のスキャンデータ (補間済み・特徴量付き)
+        let matching_scan: Vec<(Point2<f32>, f32, f32, f32)> = interpolated_scan_data
+            .iter()
+            .map(|p| (Point2::new(p.0, p.1), p.4, p.5, p.6)) // (point, edge_ness, nx, ny)
+            .collect();
+
+        // 地図更新用のスキャンデータ (生データ)
+        let mapping_scan_with_features: Vec<(Point2<f32>, f32, f32, f32)> = raw_scan_data
+            .iter()
+            .map(|p| (Point2::new(p.0, p.1), p.4, p.5, p.6)) // (point, edge_ness, nx, ny)
+            .collect();
+        let mapping_scan: Vec<Point2<f32>> = mapping_scan_with_features
+            .iter()
+            .map(|(p, _, _, _)| *p)
+            .collect();
 
         if self.is_initial_scan {
-            // First scan: use it as the initial map
             self.robot_pose = Isometry2::identity();
-            self.map_scans_in_world = current_scan;
-            self.map_gmap = create_occupancy_grid(&self.map_scans_in_world);
             self.is_initial_scan = false;
         } else {
-            // Subsequent scans: perform scan matching
-            let (best_pose, _score) = optimize_de(
-                &self.map_gmap,
-                &current_scan,
-                &self.gaussian_kernel,
-                self.robot_pose,
-            );
+            // マッチングには補間済みのスキャンデータを使用
+            let (best_pose, _score) =
+                self.de_solver
+                    .optimize_de(&self.map_gmap, &matching_scan, self.robot_pose);
             self.robot_pose = best_pose;
+        }
 
-            // Add the new scan to the map, transformed by the new pose
-            let transformed_scan = current_scan.into_iter().map(|p| best_pose * p);
-            self.map_scans_in_world.extend(transformed_scan);
-            self.map_gmap = create_occupancy_grid(&self.map_scans_in_world);
+        let pose = self.robot_pose; // Copy pose to avoid borrow checker issues
+
+        // 地図更新には生の（補間されていない）スキャンデータを使用
+        match self.config.map_update_method {
+            MapUpdateMethod::Probabilistic | MapUpdateMethod::Hybrid => {
+                self.update_grid_probabilistic(&mapping_scan, &mapping_scan_with_features, &pose);
+            }
+            MapUpdateMethod::Binary => {
+                self.update_grid_binary(&mapping_scan, &pose);
+            }
+        }
+        self.is_map_dirty = true;
+
+        // --- Submap generation logic (unchanged for now) ---
+        // TODO: This part might need refactoring as it relies on storing scans,
+        // which is not ideal for long-term probabilistic mapping.
+        self.current_submap_scan_buffer.push(mapping_scan.clone());
+        self.current_submap_robot_poses.push(self.robot_pose);
+        self.current_submap_timestamps_buffer.push(timestamp);
+
+        if self.current_submap_scan_buffer.len() >= self.config.num_scans_per_submap {
+            self.generate_and_save_submap();
         }
     }
 
-    pub fn get_map_points(&self) -> &Vec<Point2<f32>> {
-        &self.map_scans_in_world
+    /// Updates the grid using a probabilistic (log-odds) model.
+    fn update_grid_probabilistic(
+        &mut self,
+        scan_for_free: &[Point2<f32>],
+        scan_for_occupied: &[(Point2<f32>, f32, f32, f32)],
+        pose: &Isometry2<f32>,
+    ) {
+        // --- Free Space Update ---
+        // This part applies the inverse sensor model to update free space probabilities.
+        // The logic is encapsulated here and can be replaced with other sensor models in the future.
+        self.update_free_space(scan_for_free, pose);
+
+        // --- Occupied Space Update ---
+        // This part updates the cells where the laser beams are considered to have hit an obstacle.
+        self.update_occupied_space(scan_for_occupied, pose);
+    }
+
+    /// Updates the cells that are considered free space based on the laser scan.
+    fn update_free_space(&mut self, scan: &[Point2<f32>], pose: &Isometry2<f32>) {
+        let robot_pos_map =
+            world_to_map_coords(pose.translation.x, pose.translation.y, &self.config);
+
+        for endpoint_local in scan.iter() {
+            let endpoint_world = pose * endpoint_local;
+            let endpoint_map =
+                world_to_map_coords(endpoint_world.x, endpoint_world.y, &self.config);
+
+            // Use Bresenham's algorithm to trace the laser beam
+            for (px, py) in Bresenham::new(robot_pos_map, endpoint_map) {
+                if px < 0
+                    || px as usize >= self.config.map_width
+                    || py < 0
+                    || py as usize >= self.config.map_height
+                {
+                    continue;
+                }
+                let index = py as usize * self.config.map_width + px as usize;
+
+                // Don't update the endpoint itself as free space
+                if (px, py) == endpoint_map {
+                    break;
+                }
+
+                // Update cell as free
+                self.map_gmap.data[index].log_odds =
+                    (self.map_gmap.data[index].log_odds + self.log_odds_free).clamp(
+                        self.config.log_odds_clamp_min,
+                        self.config.log_odds_clamp_max,
+                    );
+            }
+        }
+    }
+
+    /// Updates the cells that are considered occupied space based on the laser scan.
+    fn update_occupied_space(
+        &mut self,
+        scan: &[(Point2<f32>, f32, f32, f32)],
+        pose: &Isometry2<f32>,
+    ) {
+        for (endpoint_local, feature, nx, ny) in scan.iter() {
+            let endpoint_world = pose * endpoint_local;
+            let (ix, iy) = world_to_map_coords(endpoint_world.x, endpoint_world.y, &self.config);
+
+            if ix >= 0
+                && (ix as usize) < self.config.map_width
+                && iy >= 0
+                && (iy as usize) < self.config.map_height
+            {
+                let index = (iy as usize) * self.config.map_width + (ix as usize);
+                let cell = &mut self.map_gmap.data[index];
+
+                // log_odds を更新
+                cell.log_odds = (cell.log_odds + self.log_odds_occ).clamp(
+                    self.config.log_odds_clamp_min,
+                    self.config.log_odds_clamp_max,
+                );
+
+                // edge_ness を更新 (加重平均)
+                cell.edge_ness = (cell.edge_ness * 0.7) + (*feature as f64 * 0.3);
+
+                // 法線ベクトルを更新 (加重平均)
+                cell.normal_x = (cell.normal_x * 0.7) + (*nx as f64 * 0.3);
+                cell.normal_y = (cell.normal_y * 0.7) + (*ny as f64 * 0.3);
+                // 正規化
+                let len = (cell.normal_x.powi(2) + cell.normal_y.powi(2)).sqrt();
+                if len > 1e-9 {
+                    cell.normal_x /= len;
+                    cell.normal_y /= len;
+                }
+
+                // 重心座標を逐次計算で更新
+                let old_count = cell.point_count as f64;
+                let new_count = old_count + 1.0;
+                if cell.point_count == 0 {
+                    cell.centroid_x = endpoint_world.x as f64;
+                    cell.centroid_y = endpoint_world.y as f64;
+                } else {
+                    cell.centroid_x =
+                        (cell.centroid_x * old_count + endpoint_world.x as f64) / new_count;
+                    cell.centroid_y =
+                        (cell.centroid_y * old_count + endpoint_world.y as f64) / new_count;
+                }
+                cell.point_count += 1;
+            }
+        }
+    }
+
+    /// Updates the grid using a binary (0 or 1) model.
+    fn update_grid_binary(&mut self, scan: &[Point2<f32>], pose: &Isometry2<f32>) {
+        for point_local in scan {
+            let point_world = pose * point_local;
+            let (ix, iy) = world_to_map_coords(point_world.x, point_world.y, &self.config);
+
+            if ix >= 0
+                && (ix as usize) < self.config.map_width
+                && iy >= 0
+                && (iy as usize) < self.config.map_height
+            {
+                let index = (iy as usize) * self.config.map_width + (ix as usize);
+                self.map_gmap.data[index].log_odds = 1.0; // Occupied
+            }
+        }
+    }
+
+    /// Returns the map points for visualization.
+    /// This now generates the points from the occupancy grid.
+    pub fn get_map_points(&mut self) -> &Vec<(Point2<f32>, f64)> {
+        if !self.is_map_dirty {
+            return &self.cached_map_points;
+        }
+
+        self.cached_map_points.clear();
+        // Determine the threshold based on the map update method
+        let threshold = match self.config.map_update_method {
+            MapUpdateMethod::Probabilistic | MapUpdateMethod::Hybrid => 0.0, // log-odds > 0 means P > 0.5
+            MapUpdateMethod::Binary => 0.5, // binary map uses 1.0 for occupied
+        };
+
+        for y in 0..self.map_gmap.height {
+            for x in 0..self.map_gmap.width {
+                let index = y * self.map_gmap.width + x;
+                let cell_data = self.map_gmap.data[index];
+                let cell_log_odds = cell_data.log_odds;
+
+                if cell_log_odds > threshold {
+                    let (world_x, world_y) = match self.config.point_representation {
+                        PointRepresentationMethod::CellCenter => {
+                            // Convert map index back to world coordinates (cell center)
+                            (
+                                ((x as isize - (self.config.map_width / 2) as isize) as f32)
+                                    * self.config.csize,
+                                (-(y as isize - (self.config.map_height / 2) as isize) as f32)
+                                    * self.config.csize,
+                            )
+                        }
+                        PointRepresentationMethod::Centroid => {
+                            if cell_data.point_count > 0 {
+                                (cell_data.centroid_x as f32, cell_data.centroid_y as f32)
+                            } else {
+                                // Fallback to cell center if no points have hit the cell
+                                (
+                                    ((x as isize - (self.config.map_width / 2) as isize) as f32)
+                                        * self.config.csize,
+                                    (-(y as isize - (self.config.map_height / 2) as isize) as f32)
+                                        * self.config.csize,
+                                )
+                            }
+                        }
+                    };
+                    let probability = log_odds_to_probability(cell_log_odds);
+                    self.cached_map_points
+                        .push((Point2::new(world_x, world_y), probability));
+                }
+            }
+        }
+        self.is_map_dirty = false;
+        &self.cached_map_points
+    }
+
+    fn generate_and_save_submap(&mut self) {
+        let submap_global_pose = self.current_submap_robot_poses[0];
+
+        let mut submap_points_local: Vec<Point2<f32>> = Vec::new();
+        for (scan_local, pose_local_to_global) in self
+            .current_submap_scan_buffer
+            .iter()
+            .zip(self.current_submap_robot_poses.iter())
+        {
+            let relative_pose = submap_global_pose.inverse() * pose_local_to_global;
+            let transformed_scan = scan_local.iter().map(|p| relative_pose * p);
+            submap_points_local.extend(transformed_scan);
+        }
+
+        let submap_id = self.submap_counter;
+        let submap_dir_name = format!("submap_{:03}", submap_id);
+        let submap_path = self.output_base_dir.join("submaps").join(&submap_dir_name);
+
+        fs::create_dir_all(&submap_path).expect("Failed to create submap directory");
+
+        let trajectory_file_name = "trajectory.txt";
+        let trajectory_file_path = submap_path.join(trajectory_file_name);
+
+        let mut traj_file =
+            fs::File::create(&trajectory_file_path).expect("Failed to create trajectory.txt");
+        for (pose, timestamp) in self
+            .current_submap_robot_poses
+            .iter()
+            .zip(self.current_submap_timestamps_buffer.iter())
+        {
+            writeln!(
+                traj_file,
+                "{} {} {} {}",
+                timestamp,
+                pose.translation.x,
+                pose.translation.y,
+                pose.rotation.angle()
+            )
+            .expect("Failed to write trajectory data");
+        }
+
+        let points_file_name = "points.txt";
+        let points_file_path = submap_path.join(points_file_name);
+        let info_file_name = "info.yaml";
+        let info_file_path = submap_path.join(info_file_name);
+
+        let mut file = fs::File::create(&points_file_path).expect("Failed to create points.txt");
+        for p in &submap_points_local {
+            writeln!(file, "{} {}", p.x, p.y).expect("Failed to write point");
+        }
+
+        let submap_creation_timestamp = self
+            .current_submap_timestamps_buffer
+            .last()
+            .cloned()
+            .unwrap_or(0);
+        let submap_info = Submap {
+            id: submap_id,
+            global_pose: submap_global_pose,
+            pose_x: submap_global_pose.translation.x,
+            pose_y: submap_global_pose.translation.y,
+            pose_theta: submap_global_pose.rotation.angle(),
+            timestamp_ms: submap_creation_timestamp,
+            points_file: points_file_name.to_string(),
+            info_file: info_file_name.to_string(),
+        };
+
+        let yaml_string =
+            serde_yaml::to_string(&submap_info).expect("Failed to serialize submap info to YAML");
+        fs::write(&info_file_path, yaml_string).expect("Failed to write info.yaml");
+
+        self.submaps.insert(submap_id, submap_info);
+        self.current_submap_scan_buffer.clear();
+        self.current_submap_robot_poses.clear();
+        self.current_submap_timestamps_buffer.clear();
+        self.submap_counter += 1;
     }
 
     pub fn get_robot_pose(&self) -> &Isometry2<f32> {
@@ -117,180 +450,31 @@ impl SlamManager {
     }
 }
 
-/// Creates an occupancy grid from a point cloud.
-fn create_occupancy_grid(points: &[Point2<f32>]) -> OccupancyGrid {
-    let mut gmap = OccupancyGrid::new(MAP_WIDTH, MAP_HEIGHT);
+/// Converts world coordinates to map grid coordinates.
+fn world_to_map_coords(x: f32, y: f32, config: &SlamConfig) -> (isize, isize) {
+    let map_origin_x = config.map_width / 2;
+    let map_origin_y = config.map_height / 2;
+    let ix = (x / config.csize).round() as isize + map_origin_x as isize;
+    let iy = (-y / config.csize).round() as isize + map_origin_y as isize;
+    (ix, iy)
+}
+
+// NOTE: This function is now deprecated in favor of the new update methods.
+// It is kept here for reference or for a full-binary-regeneration mode if needed.
+#[allow(dead_code)]
+pub fn create_occupancy_grid(points: &[Point2<f32>], config: &SlamConfig) -> OccupancyGrid {
+    let mut gmap = OccupancyGrid::new(config.map_width, config.map_height);
     for p in points {
-        let ix = (p.x / CSIZE) as i32 + MAP_ORIGIN_X as i32;
-        let iy = (-p.y / CSIZE) as i32 + MAP_ORIGIN_Y as i32;
+        let (ix, iy) = world_to_map_coords(p.x, p.y, config);
         if ix >= 0 && (ix as usize) < gmap.width && iy >= 0 && (iy as usize) < gmap.height {
             let index = (iy as usize) * gmap.width + (ix as usize);
-            gmap.data[index] = 1.0; // Occupied
+            gmap.data[index].log_odds = 1.0; // Occupied
         }
     }
     gmap
 }
 
-/// Calculates the matching score of a scan against the map at a given pose.
-fn gaussian_match_count(
-    gmap: &OccupancyGrid,
-    points: &[Point2<f32>],
-    pose: &Isometry2<f32>,
-    kernel_obj: &GaussianKernel,
-) -> f64 {
-    let mut total_score = 0.0;
-    
-    let height = gmap.height as i32;
-    let width = gmap.width as i32;
-
-    let kernel_radius = kernel_obj.radius;
-    let kernel_size = (2 * kernel_radius + 1) as usize; // kernel_obj.kernel は一次元配列なのでサイズが必要
-
-    for p in points {
-        // Transform the point using the pose
-        let transformed_p = pose * p; // nalgebraのIsometry2はPoint2を直接変換できる
-
-        let gx = (transformed_p.x / CSIZE) as i32 + MAP_ORIGIN_X as i32;
-        let gy = (-transformed_p.y / CSIZE) as i32 + MAP_ORIGIN_Y as i32;
-
-        let mut point_score = 0.0;
-        for dy in -kernel_radius..=kernel_radius {
-            for dx in -kernel_radius..=kernel_radius {
-                let map_x = gx + dx;
-                let map_y = gy + dy;
-
-                if map_x >= 0 && map_x < width && map_y >= 0 && map_y < height {
-                    let map_idx = (map_y as usize) * gmap.width + (map_x as usize);
-                    if gmap.data[map_idx] > 0.0 {
-                        let kernel_idx = ((dy + kernel_radius) as usize) * kernel_size + ((dx + kernel_radius) as usize);
-                        point_score += kernel_obj.kernel[kernel_idx];
-                    }
-                }
-            }
-        }
-        total_score += point_score;
-    }
-    total_score
-}
-
-/// Optimizes the robot's pose using Differential Evolution.
-fn optimize_de(
-    gmap: &OccupancyGrid,
-    points: &[Point2<f32>],
-    kernel_obj: &GaussianKernel,
-    initial_pose: Isometry2<f32>,
-) -> (Isometry2<f32>, f64) {
-    // DE Parameters
-    const WXY: f32 = 0.8;                     // Search range for x, y [m]
-    const WA: f32 = std::f32::consts::PI / 8.0; // Search range for angle [rad], 22.5 deg = PI / 8
-    const POPULATION_SIZE: usize = 200;       // Increased for better search
-    const GENERATIONS: usize = 100;           // Increased for better search
-    const F: f32 = 0.5;                       // Mutation factor
-    const CR: f32 = 0.2;                      // Crossover rate
-
-    let mut rng = rand::thread_rng();
-
-    // Extract initial pose parameters
-    let initial_x = initial_pose.translation.x;
-    let initial_y = initial_pose.translation.y;
-    let initial_a = initial_pose.rotation.angle();
-
-    // 1. Initialize population around initial_pose_params
-    let mut population: Vec<Vector3<f32>> = Vec::with_capacity(POPULATION_SIZE);
-    for _ in 0..POPULATION_SIZE {
-        let x = rng.gen_range(-WXY..=WXY) + initial_x;
-        let y = rng.gen_range(-WXY..=WXY) + initial_y;
-        let a = rng.gen_range(-WA..=WA) + initial_a;
-        population.push(Vector3::new(x, y, a));
-    }
-
-    // Evaluate initial population
-    let mut scores: Vec<f64> = Vec::with_capacity(POPULATION_SIZE);
-    for i in 0..POPULATION_SIZE {
-        let current_x = population[i].x;
-        let current_y = population[i].y;
-        let current_a = population[i].z; // angle is in z component
-
-        let rotation = Rotation2::new(current_a);
-        let translation = Translation2::new(current_x, current_y);
-        let pose = Isometry2::from_parts(translation, rotation.into());
-        
-        scores.push(gaussian_match_count(gmap, points, &pose, kernel_obj));
-    }
-
-    let mut best_idx = 0;
-    let mut best_eval = scores[0];
-    for i in 1..POPULATION_SIZE {
-        if scores[i] > best_eval {
-            best_eval = scores[i];
-            best_idx = i;
-        }
-    }
-    let mut best_pose_params = population[best_idx];
-
-    // 2. Generation loop
-    for _gen in 0..GENERATIONS {
-        for i in 0..POPULATION_SIZE {
-            // Mutation
-            let mut candidates: Vec<usize> = (0..POPULATION_SIZE).filter(|&idx| idx != i).collect();
-            candidates.shuffle(&mut rng);
-            let r1 = candidates[0];
-            let r2 = candidates[1];
-            let r3 = candidates[2];
-            
-            let p_r1 = &population[r1];
-            let p_r2 = &population[r2];
-            let p_r3 = &population[r3];
-
-            // v = p_r1 + F * (p_r2 - p_r3)
-            let vx = p_r1.x + F * (p_r2.x - p_r3.x);
-            let vy = p_r1.y + F * (p_r2.y - p_r3.y);
-            
-            // Angle mutation with wrap-around handling
-            let ax1 = p_r1.z.cos();
-            let ay1 = p_r1.z.sin();
-            let ax2 = p_r2.z.cos();
-            let ay2 = p_r2.z.sin();
-            let ax3 = p_r3.z.cos();
-            let ay3 = p_r3.z.sin();
-
-            let vax = ax1 + F * (ax2 - ax3);
-            let vay = ay1 + F * (ay2 - ay3);
-            let va = vay.atan2(vax);
-
-            // Crossover
-            let mut trial_pose = population[i];
-            let j_rand = rng.gen_range(0..3);
-            
-            if rng.gen::<f32>() < CR || j_rand == 0 { trial_pose.x = vx; }
-            if rng.gen::<f32>() < CR || j_rand == 1 { trial_pose.y = vy; }
-            if rng.gen::<f32>() < CR || j_rand == 2 { trial_pose.z = va; }
-
-            // Selection
-            let rotation_trial = Rotation2::new(trial_pose.z);
-            let translation_trial = Translation2::new(trial_pose.x, trial_pose.y);
-            let pose_trial = Isometry2::from_parts(translation_trial, rotation_trial.into());
-            let eval_trial = gaussian_match_count(gmap, points, &pose_trial, kernel_obj);
-
-            if eval_trial > scores[i] {
-                population[i] = trial_pose;
-                scores[i] = eval_trial;
-                if eval_trial > best_eval {
-                    best_eval = eval_trial;
-                    best_pose_params = trial_pose;
-                }
-            }
-        }
-    }
-
-    // Create final transformation matrix
-    let x = best_pose_params.x;
-    let y = best_pose_params.y;
-    let a = best_pose_params.z;
-
-    let final_rotation = Rotation2::new(a);
-    let final_translation = Translation2::new(x, y);
-    let best_transform = Isometry2::from_parts(final_translation, final_rotation.into());
-    
-    (best_transform, best_eval)
+/// Converts a log-odds value to a probability (0.0 to 1.0).
+fn log_odds_to_probability(log_odds: f64) -> f64 {
+    1.0 / (1.0 + (-log_odds).exp())
 }
