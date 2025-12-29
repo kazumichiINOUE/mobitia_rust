@@ -222,6 +222,8 @@ pub struct MyApp {
     /// F10キーによるクリアコマンドが要求されたか
     pub(crate) clear_command_requested: bool,
 
+    pub(crate) osmo_capture_session_path: Option<PathBuf>,
+
     pub(crate) config: crate::config::Config, // 追加
 }
 
@@ -509,6 +511,7 @@ impl MyApp {
             suggestion_completion_requested: false,
             command_submission_requested: false,
             clear_command_requested: false,
+            osmo_capture_session_path: None,
             config,
         }
     }
@@ -530,26 +533,31 @@ impl MyApp {
             }
         };
 
-        // タイムスタンプに基づいた保存ディレクトリのパスを決定
-        let now = Local::now();
-        let timestamp_dir_str = now.format("%Y%m%d-%H%M%S").to_string();
-        let base_path = PathBuf::from("./osmo_images");
-        let result_path = base_path.join(format!("osmo_result_{}", timestamp_dir_str));
+        // セッションパスが未設定の場合のみ、新しいパスを生成・設定する
+        if self.osmo_capture_session_path.is_none() {
+            let now = Local::now();
+            let timestamp_dir_str = now.format("%Y%m%d-%H%M%S").to_string();
+            let base_path = PathBuf::from("./osmo_images");
+            let new_path = base_path.join(format!("osmo_result_{}", timestamp_dir_str));
 
-        // 別スレッドでファイルI/Oを実行
-        thread::spawn(move || {
-            // ディレクトリを作成
-            if let Err(e) = std::fs::create_dir_all(&result_path) {
+            if let Err(e) = std::fs::create_dir_all(&new_path) {
                 sender_clone
                     .send(format!(
                         "ERROR: Failed to create directory '{}': {}",
-                        result_path.display(),
+                        new_path.display(),
                         e
                     ))
                     .unwrap_or_default();
-                return;
+                return; // ディレクトリ作成に失敗したらここで終了
             }
+            self.osmo_capture_session_path = Some(new_path);
+        }
 
+        // `osmo_capture_session_path` が Some であることを確信して unwrap
+        let result_path = self.osmo_capture_session_path.clone().unwrap();
+
+        // 別スレッドでファイルI/Oを実行
+        thread::spawn(move || {
             // egui::ColorImage を image::RgbaImage に変換
             // この変換は egui の Color32 (RGBA a=premultiplied) から image の Rgba (straight alpha) への変換
             let pixels: Vec<u8> = image_to_save
@@ -584,7 +592,7 @@ impl MyApp {
                 };
 
             // ファイルパスを生成
-            let timestamp_file_str = now.format("%H%M%S_%f").to_string();
+            let timestamp_file_str = Local::now().format("%H%M%S_%f").to_string();
             let filename = format!("osmo_{}.png", timestamp_file_str);
             let save_path = result_path.join(filename);
 
