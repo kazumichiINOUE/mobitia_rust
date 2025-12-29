@@ -40,6 +40,8 @@ pub enum Commands {
         #[arg(value_parser = ["scan", "ripple", "breathing", "table"])]
         mode: Option<String>,
     },
+    /// Enter Osmo mode.
+    Osmo,
     /// Manage serial port functions.
     Serial {
         #[command(subcommand)]
@@ -326,6 +328,13 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                             mode_str), group_id: current_group_id });
                 }
             }
+        }
+        Commands::Osmo => {
+            app.app_mode = AppMode::Osmo;
+            app.command_history.push(ConsoleOutputEntry {
+                text: "Mode set to Osmo.".to_string(),
+                group_id: current_group_id,
+            });
         }
         Commands::Quit => {
             app.command_history.push(ConsoleOutputEntry {

@@ -19,6 +19,7 @@ use crate::cli::Cli;
 use crate::demo::DemoManager;
 pub use crate::demo::DemoMode;
 use crate::lidar::{load_lidar_configurations, start_lidar_thread, LidarInfo};
+use crate::osmo::{start_osmo_thread, OsmoInfo, OsmoMessage};
 use crate::slam::SlamManager; // Add SlamManager
 use crate::xppen::{start_xppen_thread, XppenMessage};
 
@@ -31,6 +32,17 @@ pub(crate) struct CameraState {
     pub(crate) connection_status: String,
     pub(crate) stop_flag: Arc<AtomicBool>,
 }
+
+// Osmo一台分の状態を保持する構造体
+#[derive(Clone)]
+pub(crate) struct OsmoState {
+    pub(crate) id: usize,
+    pub(crate) name: String,
+    pub(crate) texture: Option<egui::TextureHandle>,
+    pub(crate) connection_status: String,
+    pub(crate) stop_flag: Arc<AtomicBool>,
+}
+
 
 // Lidar一台分の状態を保持する構造体
 #[derive(Clone)]
@@ -59,6 +71,7 @@ pub enum AppMode {
     Slam,
     Demo,
     Camera,
+    Osmo,
 }
 
 #[derive(PartialEq)]
@@ -135,10 +148,12 @@ pub struct MyApp {
     pub(crate) suggestion_selection_index: Option<usize>, // サジェスト候補の選択インデックス
     pub(crate) lidars: Vec<LidarState>, // 複数Lidarの状態を管理
     pub(crate) cameras: Vec<CameraState>, // 複数Cameraの状態を管理
+    pub(crate) osmo: OsmoState,          // Osmoの状態を管理
 
     // スレッドからのデータ/ステータス受信を統合
     pub(crate) lidar_message_receiver: mpsc::Receiver<LidarMessage>,
     pub(crate) camera_message_receiver: mpsc::Receiver<CameraMessage>,
+    pub(crate) osmo_message_receiver: mpsc::Receiver<OsmoMessage>,
     pub(crate) xppen_message_receiver: mpsc::Receiver<XppenMessage>,
     pub(crate) xppen_trigger_sender: mpsc::Sender<()>,
     pub(crate) xppen_connection_triggered: bool,
@@ -227,6 +242,8 @@ impl MyApp {
         let (lidar_message_sender, lidar_message_receiver) = mpsc::channel();
         // Cameraメッセージング用の単一チャネルを作成
         let (camera_message_sender, camera_message_receiver) = mpsc::channel();
+        // Osmoメッセージング用の単一チャネルを作成
+        let (osmo_message_sender, osmo_message_receiver) = mpsc::channel();
         // XPPenメッセージング用の単一チャネルを作成
         let (xppen_message_sender, xppen_message_receiver) = mpsc::channel();
         // XPPenトリガー用のチャネルを作成
@@ -303,6 +320,21 @@ impl MyApp {
                 .send("WARNING: No camera found or internal camera not identified.".to_string())
                 .unwrap_or_default();
         }
+
+        // Osmoの初期化
+        let osmo_stop_flag = Arc::new(AtomicBool::new(false));
+        let osmo_state = OsmoState {
+            id: 0,
+            name: "Osmo Pocket 3".to_string(),
+            texture: None,
+            connection_status: "Disconnected".to_string(),
+            stop_flag: osmo_stop_flag.clone(),
+        };
+        let osmo_info = OsmoInfo {
+            id: 0,
+            name: "Osmo Pocket 3".to_string(),
+        };
+        start_osmo_thread(osmo_info, osmo_message_sender.clone(), osmo_stop_flag);
 
         // SLAM処理中フラグの作成
         let is_slam_processing = Arc::new(AtomicBool::new(false));
@@ -438,8 +470,10 @@ impl MyApp {
             suggestion_selection_index: None,
             lidars,
             cameras,
+            osmo: osmo_state,
             lidar_message_receiver,
             camera_message_receiver,
+            osmo_message_receiver,
             xppen_message_receiver,
             xppen_trigger_sender,
             xppen_connection_triggered: false,
@@ -699,6 +733,7 @@ impl MyApp {
             "lidar",
             "slam",
             "demo",
+            "osmo",
             "set",
             "serial",
             "debug-storage",
@@ -1303,6 +1338,34 @@ impl eframe::App for MyApp {
             ctx.request_repaint();
         }
 
+        while let Ok(osmo_message) = self.osmo_message_receiver.try_recv() {
+            match osmo_message {
+                OsmoMessage::Frame { id, image } => {
+                    if self.osmo.id == id {
+                        if let Some(texture) = &mut self.osmo.texture {
+                            texture.set(image, egui::TextureOptions::LINEAR);
+                        } else {
+                            self.osmo.texture = Some(ctx.load_texture(
+                                format!("osmo_{}", id),
+                                image,
+                                egui::TextureOptions::LINEAR,
+                            ));
+                        }
+                    }
+                }
+                OsmoMessage::Status { id, message } => {
+                    if self.osmo.id == id {
+                        self.osmo.connection_status = message.clone();
+                        self.command_history.push(ConsoleOutputEntry {
+                            text: message,
+                            group_id: self.next_group_id,
+                        });
+                    }
+                }
+            }
+            ctx.request_repaint();
+        }
+
         // SLAMスレッドからの結果を受け取る
         while let Ok(slam_result) = self.slam_result_receiver.try_recv() {
             self.current_map_points = slam_result.map_points;
@@ -1669,6 +1732,25 @@ impl eframe::App for MyApp {
                 }
                 ui.heading("Console");
 
+                // Osmo Status
+                egui::Frame::group(ui.style()).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label(format!("[OSMO {}]", self.osmo.id));
+                    ui.label(format!("  Name: {}", self.osmo.name));
+                    let status_text = format!("  Status: {}", self.osmo.connection_status);
+                    let status_color = if self.osmo.connection_status.contains("successfully") {
+                        egui::Color32::GREEN
+                    } else if self.osmo.connection_status.contains("Spawning") {
+                        egui::Color32::YELLOW
+                    } else if self.osmo.connection_status.contains("ERROR") {
+                        egui::Color32::RED
+                    } else {
+                        egui::Color32::GRAY
+                    };
+                    ui.label(egui::RichText::new(status_text).color(status_color));
+                });
+                ui.separator();
+
                 for camera_state in &self.cameras {
                     egui::Frame::group(ui.style()).show(ui, |ui| {
                         ui.set_width(ui.available_width());
@@ -1981,6 +2063,38 @@ impl eframe::App for MyApp {
             AppMode::Demo => {
                 self.demo_manager.update_and_draw(ui);
             }
+            AppMode::Osmo => {
+                ui.heading("Osmo Mode");
+                if let Some(texture) = &self.osmo.texture {
+                    // 利用可能な描画領域のサイズを取得
+                    let available_size = ui.available_size();
+                    let image_size = texture.size_vec2();
+
+                    if image_size.y > 0.0 {
+                        let image_aspect = image_size.x / image_size.y;
+                        let available_aspect = available_size.x / available_size.y;
+
+                        let new_size = if image_aspect > available_aspect {
+                            // 画像が描画領域より横長 -> 幅に合わせる
+                            let new_height = available_size.x / image_aspect;
+                            egui::vec2(available_size.x, new_height)
+                        } else {
+                            // 画像が描画領域より縦長 -> 高さに合わせる
+                            let new_width = available_size.y * image_aspect;
+                            egui::vec2(new_width, available_size.y)
+                        };
+
+                        // 画像を中央揃えで描画
+                        ui.centered_and_justified(|ui| {
+                            ui.add(egui::Image::new(texture).fit_to_exact_size(new_size));
+                        });
+                    }
+                } else {
+                    ui.centered_and_justified(|ui| {
+                        ui.label(&self.osmo.connection_status);
+                    });
+                }
+            }
             AppMode::Camera => {
                 ui.heading("Camera Mode");
                 if let Some(camera_state) = self.cameras.get(0) {
@@ -2031,6 +2145,8 @@ impl Drop for MyApp {
         for camera_state in &self.cameras {
             camera_state.stop_flag.store(true, Ordering::SeqCst);
         }
+        // Osmoスレッドにも停止を通知
+        self.osmo.stop_flag.store(true, Ordering::SeqCst);
     }
 }
 

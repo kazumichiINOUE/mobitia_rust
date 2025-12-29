@@ -8,7 +8,7 @@ use eframe::egui;
 use image::ImageBuffer;
 use nokhwa::{
     pixel_format::RgbFormat,
-    utils::{ApiBackend, CameraIndex, RequestedFormat, RequestedFormatType},
+    utils::{CameraIndex, RequestedFormat, RequestedFormatType},
     Camera,
 };
 
