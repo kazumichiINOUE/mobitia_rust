@@ -44,6 +44,12 @@ pub(crate) struct OsmoState {
     pub(crate) latest_image: Option<egui::ColorImage>,
 }
 
+// XPPenデバイスの状態を保持する構造体
+#[derive(Clone)]
+pub(crate) struct XppenState {
+    pub(crate) connection_status: String,
+}
+
 // Lidar一台分の状態を保持する構造体
 #[derive(Clone)]
 pub(crate) struct LidarState {
@@ -149,14 +155,15 @@ pub struct MyApp {
     pub(crate) lidars: Vec<LidarState>, // 複数Lidarの状態を管理
     pub(crate) cameras: Vec<CameraState>, // 複数Cameraの状態を管理
     pub(crate) osmo: OsmoState,      // Osmoの状態を管理
+    pub(crate) xppen: XppenState,     // XPPenの状態を管理
 
     // スレッドからのデータ/ステータス受信を統合
     pub(crate) lidar_message_receiver: mpsc::Receiver<LidarMessage>,
     pub(crate) camera_message_receiver: mpsc::Receiver<CameraMessage>,
     pub(crate) osmo_message_receiver: mpsc::Receiver<OsmoMessage>,
     pub(crate) xppen_message_receiver: mpsc::Receiver<XppenMessage>,
+    pub(crate) xppen_status_receiver: mpsc::Receiver<String>,
     pub(crate) xppen_trigger_sender: mpsc::Sender<()>,
-    pub(crate) xppen_connection_triggered: bool,
 
     // SLAM用に各Lidarの最新スキャンを保持
     pub(crate) pending_scans: Vec<Option<Vec<(f32, f32, f32, f32, f32, f32, f32)>>>,
@@ -250,6 +257,8 @@ impl MyApp {
         let (xppen_message_sender, xppen_message_receiver) = mpsc::channel();
         // XPPenトリガー用のチャネルを作成
         let (xppen_trigger_sender, xppen_trigger_receiver) = mpsc::channel();
+        // XPPenステータス用のチャネルを作成
+        let (xppen_status_sender, xppen_status_receiver) = mpsc::channel();
 
         // コンソールコマンド出力用のチャネルを作成
         let (command_output_sender, command_output_receiver) = mpsc::channel();
@@ -257,7 +266,7 @@ impl MyApp {
         // XPPenスレッドを起動
         start_xppen_thread(
             xppen_message_sender,
-            command_output_sender.clone(),
+            xppen_status_sender.clone(),
             xppen_trigger_receiver,
         );
 
@@ -478,8 +487,8 @@ impl MyApp {
             camera_message_receiver,
             osmo_message_receiver,
             xppen_message_receiver,
+            xppen_status_receiver,
             xppen_trigger_sender,
-            xppen_connection_triggered: false,
             pending_scans,
             command_output_receiver,
             command_output_sender,
@@ -512,6 +521,9 @@ impl MyApp {
             command_submission_requested: false,
             clear_command_requested: false,
             osmo_capture_session_path: None,
+            xppen: XppenState {
+                connection_status: "Disconnected".to_string(),
+            },
             config,
         }
     }
@@ -1075,14 +1087,14 @@ impl eframe::App for MyApp {
     /// フレームごとに呼ばれ、UIを描画する
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // --- Trigger XPPen connection on first update ---
-        if !self.xppen_connection_triggered {
-            // Send the trigger signal. The `if let Err` handles the case where the thread dies.
+        if self.xppen.connection_status == "Disconnected".to_string() {
             if let Err(e) = self.xppen_trigger_sender.send(()) {
                 self.command_output_sender
-                    .send(format!("Failed to trigger XPPen thread: {}", e))
+                    .send(format!("ERROR: Failed to trigger XPPen thread: {}", e))
                     .unwrap_or_default();
+            } else {
+                self.xppen.connection_status = "Connecting...".to_string();
             }
-            self.xppen_connection_triggered = true;
         }
 
         // --- サブマップの逐次読み込み処理 ---
@@ -1222,6 +1234,12 @@ impl eframe::App for MyApp {
                     self.show_command_window = !self.show_command_window;
                 }
             }
+            ctx.request_repaint();
+        }
+
+        // XPPenからのステータスメッセージを処理
+        while let Ok(status_message) = self.xppen_status_receiver.try_recv() {
+            self.xppen.connection_status = status_message;
             ctx.request_repaint();
         }
 
@@ -1847,6 +1865,27 @@ impl eframe::App for MyApp {
                     } else if self.osmo.connection_status.contains("Spawning") {
                         egui::Color32::YELLOW
                     } else if self.osmo.connection_status.contains("ERROR") {
+                        egui::Color32::RED
+                    } else {
+                        egui::Color32::GRAY
+                    };
+                    ui.label(egui::RichText::new(status_text).color(status_color));
+                });
+                ui.separator();
+
+                // XPPen Status
+                egui::Frame::group(ui.style()).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label("[XPPen Shortcut Device]");
+                    let status_text = format!("  Status: {}", self.xppen.connection_status);
+                    let status_color = if self.xppen.connection_status.contains("connected") {
+                        egui::Color32::GREEN
+                    } else if self.xppen.connection_status.contains("Connecting") {
+                        egui::Color32::YELLOW
+                    } else if self.xppen.connection_status.contains("Failed")
+                        || self.xppen.connection_status.contains("ERROR")
+                        || self.xppen.connection_status.contains("exiting")
+                    {
                         egui::Color32::RED
                     } else {
                         egui::Color32::GRAY
