@@ -36,7 +36,7 @@ pub fn start_osmo_thread(
             .unwrap_or_default();
 
         let mut child = match Command::new("python3")
-            .arg("osmo_capture.py")
+            .arg("./src/osmo/osmo_capture.py")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
