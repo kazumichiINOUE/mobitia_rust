@@ -155,7 +155,7 @@ pub struct MyApp {
     pub(crate) lidars: Vec<LidarState>, // 複数Lidarの状態を管理
     pub(crate) cameras: Vec<CameraState>, // 複数Cameraの状態を管理
     pub(crate) osmo: OsmoState,      // Osmoの状態を管理
-    pub(crate) xppen: XppenState,     // XPPenの状態を管理
+    pub(crate) xppen: XppenState,    // XPPenの状態を管理
 
     // スレッドからのデータ/ステータス受信を統合
     pub(crate) lidar_message_receiver: mpsc::Receiver<LidarMessage>,
