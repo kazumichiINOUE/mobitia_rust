@@ -1858,6 +1858,19 @@ impl eframe::App for MyApp {
                 egui::Frame::group(ui.style()).show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.label(format!("[OSMO {}]", self.osmo.id));
+
+                    // ライブ映像の表示
+                    if let Some(texture) = &self.osmo.texture {
+                        let image_size = texture.size_vec2();
+                        if image_size.x > 0.0 && image_size.y > 0.0 {
+                            let available_width = ui.available_width();
+                            let image_aspect = image_size.x / image_size.y;
+                            let new_height = available_width / image_aspect;
+                            let new_size = egui::vec2(available_width, new_height);
+                            ui.add(egui::Image::new(texture).fit_to_exact_size(new_size));
+                        }
+                    }
+
                     ui.label(format!("  Name: {}", self.osmo.name));
                     let status_text = format!("  Status: {}", self.osmo.connection_status);
                     let status_color = if self.osmo.connection_status.contains("successfully") {
