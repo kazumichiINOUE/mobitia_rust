@@ -43,7 +43,6 @@ pub(crate) struct OsmoState {
     pub(crate) stop_flag: Arc<AtomicBool>,
 }
 
-
 // Lidar一台分の状態を保持する構造体
 #[derive(Clone)]
 pub(crate) struct LidarState {
@@ -148,7 +147,7 @@ pub struct MyApp {
     pub(crate) suggestion_selection_index: Option<usize>, // サジェスト候補の選択インデックス
     pub(crate) lidars: Vec<LidarState>, // 複数Lidarの状態を管理
     pub(crate) cameras: Vec<CameraState>, // 複数Cameraの状態を管理
-    pub(crate) osmo: OsmoState,          // Osmoの状態を管理
+    pub(crate) osmo: OsmoState,      // Osmoの状態を管理
 
     // スレッドからのデータ/ステータス受信を統合
     pub(crate) lidar_message_receiver: mpsc::Receiver<LidarMessage>,

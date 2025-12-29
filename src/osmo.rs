@@ -7,14 +7,8 @@ use std::thread;
 
 // Osmoからのメッセージを定義
 pub enum OsmoMessage {
-    Frame {
-        id: usize,
-        image: egui::ColorImage,
-    },
-    Status {
-        id: usize,
-        message: String,
-    },
+    Frame { id: usize, image: egui::ColorImage },
+    Status { id: usize, message: String },
 }
 
 // Osmoデバイスの情報を保持する構造体
@@ -34,7 +28,10 @@ pub fn start_osmo_thread(
         sender
             .send(OsmoMessage::Status {
                 id: info.id,
-                message: format!("[Osmo {}] Thread started. Spawning python script...", info.name),
+                message: format!(
+                    "[Osmo {}] Thread started. Spawning python script...",
+                    info.name
+                ),
             })
             .unwrap_or_default();
 
@@ -135,8 +132,17 @@ pub fn start_osmo_thread(
             let data_len = u64::from_le_bytes(len_buf) as usize;
 
             if data_len != width * height * channels {
-                 sender.send(OsmoMessage::Status { id: info.id, message: format!("[Osmo] ERROR: Data length mismatch. Expected {}, got {}", width * height * channels, data_len) }).unwrap_or_default();
-                 continue;
+                sender
+                    .send(OsmoMessage::Status {
+                        id: info.id,
+                        message: format!(
+                            "[Osmo] ERROR: Data length mismatch. Expected {}, got {}",
+                            width * height * channels,
+                            data_len
+                        ),
+                    })
+                    .unwrap_or_default();
+                continue;
             }
 
             // 3. フレームデータ
@@ -155,7 +161,10 @@ pub fn start_osmo_thread(
             let image = egui::ColorImage::from_rgb([width, height], &rgb_data);
 
             // UIスレッドに送信
-            if sender.send(OsmoMessage::Frame { id: info.id, image }).is_err() {
+            if sender
+                .send(OsmoMessage::Frame { id: info.id, image })
+                .is_err()
+            {
                 // UIスレッドが終了した場合
                 break;
             }
@@ -167,7 +176,7 @@ pub fn start_osmo_thread(
                 message: "[Osmo] Thread finished. Killing python script.".to_string(),
             })
             .unwrap_or_default();
-        
+
         // 子プロセスを終了させる
         child.kill().ok();
         child.wait().ok();
