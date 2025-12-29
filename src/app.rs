@@ -41,6 +41,7 @@ pub(crate) struct OsmoState {
     pub(crate) texture: Option<egui::TextureHandle>,
     pub(crate) connection_status: String,
     pub(crate) stop_flag: Arc<AtomicBool>,
+    pub(crate) latest_image: Option<egui::ColorImage>,
 }
 
 // Lidar一台分の状態を保持する構造体
@@ -328,6 +329,7 @@ impl MyApp {
             texture: None,
             connection_status: "Disconnected".to_string(),
             stop_flag: osmo_stop_flag.clone(),
+            latest_image: None,
         };
         let osmo_info = OsmoInfo {
             id: 0,
@@ -513,6 +515,89 @@ impl MyApp {
 
     pub fn request_save_points(&mut self, path: String) {
         self.requested_point_save_path = Some(path);
+    }
+
+    pub fn capture_osmo_image(&mut self) {
+        let sender_clone = self.command_output_sender.clone();
+
+        let image_to_save = match self.osmo.latest_image.clone() {
+            Some(img) => img,
+            None => {
+                sender_clone
+                    .send("ERROR: No Osmo image available to capture.".to_string())
+                    .unwrap_or_default();
+                return;
+            }
+        };
+
+        // タイムスタンプに基づいた保存ディレクトリのパスを決定
+        let now = Local::now();
+        let timestamp_dir_str = now.format("%Y%m%d-%H%M%S").to_string();
+        let base_path = PathBuf::from("./osmo_images");
+        let result_path = base_path.join(format!("osmo_result_{}", timestamp_dir_str));
+
+        // 別スレッドでファイルI/Oを実行
+        thread::spawn(move || {
+            // ディレクトリを作成
+            if let Err(e) = std::fs::create_dir_all(&result_path) {
+                sender_clone
+                    .send(format!(
+                        "ERROR: Failed to create directory '{}': {}",
+                        result_path.display(),
+                        e
+                    ))
+                    .unwrap_or_default();
+                return;
+            }
+
+            // egui::ColorImage を image::RgbaImage に変換
+            // この変換は egui の Color32 (RGBA a=premultiplied) から image の Rgba (straight alpha) への変換
+            let pixels: Vec<u8> = image_to_save
+                .pixels
+                .iter()
+                .flat_map(|color| {
+                    if color.a() == 0 {
+                        [0, 0, 0, 0]
+                    } else {
+                        // Un-premultiply alpha
+                        let r = (color.r() as f32 * 255.0 / color.a() as f32) as u8;
+                        let g = (color.g() as f32 * 255.0 / color.a() as f32) as u8;
+                        let b = (color.b() as f32 * 255.0 / color.a() as f32) as u8;
+                        [r, g, b, color.a()]
+                    }
+                })
+                .collect();
+
+            let buffer: image::ImageBuffer<image::Rgba<u8>, Vec<u8>> =
+                match image::ImageBuffer::from_raw(
+                    image_to_save.width() as u32,
+                    image_to_save.height() as u32,
+                    pixels,
+                ) {
+                    Some(buffer) => buffer,
+                    None => {
+                        sender_clone
+                            .send("ERROR: Failed to create image buffer.".to_string())
+                            .unwrap_or_default();
+                        return;
+                    }
+                };
+
+            // ファイルパスを生成
+            let timestamp_file_str = now.format("%H%M%S_%f").to_string();
+            let filename = format!("osmo_{}.png", timestamp_file_str);
+            let save_path = result_path.join(filename);
+
+            // ファイルに保存
+            match buffer.save(&save_path) {
+                Ok(_) => sender_clone
+                    .send(format!("Osmo image saved to: {}", save_path.display()))
+                    .unwrap_or_default(),
+                Err(e) => sender_clone
+                    .send(format!("ERROR: Failed to save Osmo image: {}", e))
+                    .unwrap_or_default(),
+            }
+        });
     }
 
     pub fn load_single_submap(&mut self, ctx: &egui::Context, submap_path_str: &str) -> Result<()> {
@@ -1341,6 +1426,7 @@ impl eframe::App for MyApp {
             match osmo_message {
                 OsmoMessage::Frame { id, image } => {
                     if self.osmo.id == id {
+                        self.osmo.latest_image = Some(image.clone());
                         if let Some(texture) = &mut self.osmo.texture {
                             texture.set(image, egui::TextureOptions::LINEAR);
                         } else {

@@ -40,8 +40,11 @@ pub enum Commands {
         #[arg(value_parser = ["scan", "ripple", "breathing", "table"])]
         mode: Option<String>,
     },
-    /// Enter Osmo mode.
-    Osmo,
+    /// Manage Osmo related commands and settings.
+    Osmo {
+        #[command(subcommand)]
+        command: Option<OsmoCommands>,
+    },
     /// Manage serial port functions.
     Serial {
         #[command(subcommand)]
@@ -78,6 +81,12 @@ pub enum CameraCommands {
     /// Enter Camera visualization mode.
     #[command(alias = "mode")]
     EnterMode,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum OsmoCommands {
+    /// Capture an image from Osmo.
+    Capture,
 }
 
 #[derive(Subcommand, Debug)]
@@ -329,12 +338,24 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                 }
             }
         }
-        Commands::Osmo => {
-            app.app_mode = AppMode::Osmo;
-            app.command_history.push(ConsoleOutputEntry {
-                text: "Mode set to Osmo.".to_string(),
-                group_id: current_group_id,
-            });
+        Commands::Osmo { command } => {
+            if let Some(osmo_command) = command {
+                match osmo_command {
+                    OsmoCommands::Capture => {
+                        app.command_history.push(ConsoleOutputEntry {
+                            text: "Requesting Osmo image capture...".to_string(),
+                            group_id: current_group_id,
+                        });
+                        app.capture_osmo_image();
+                    }
+                }
+            } else {
+                app.app_mode = AppMode::Osmo;
+                app.command_history.push(ConsoleOutputEntry {
+                    text: "Mode set to Osmo.".to_string(),
+                    group_id: current_group_id,
+                });
+            }
         }
         Commands::Quit => {
             app.command_history.push(ConsoleOutputEntry {
