@@ -592,7 +592,7 @@ impl MyApp {
                 };
 
             // ファイルパスを生成
-            let timestamp_file_str = Local::now().format("%H%M%S_%f").to_string();
+            let timestamp_file_str = Local::now().format("%Y%m%d_%H%M%S").to_string();
             let filename = format!("osmo_{}.png", timestamp_file_str);
             let save_path = result_path.join(filename);
 
