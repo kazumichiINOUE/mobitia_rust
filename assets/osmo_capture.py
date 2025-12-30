@@ -26,13 +26,17 @@ def osmo_capture(camera_index=0):
                 sys.stderr.flush()
                 break
             
-            # Capture frame
+            # Capture frame with retry
             ret, frame = cap.read()
-
             if not ret:
-                print("ERROR: Could not read frame from camera.", file=sys.stderr)
-                sys.stderr.flush()
-                continue
+                # Retry once after a short delay
+                import time
+                time.sleep(0.1) # 100ms wait
+                ret, frame = cap.read()
+                if not ret:
+                    print("ERROR: Could not read frame from camera after retry.", file=sys.stderr)
+                    sys.stderr.flush()
+                    continue
             
             # --- Crop the frame ---
             # Assuming a 1080x1920 vertical frame containing a centered 16:9 (1080x608) image.

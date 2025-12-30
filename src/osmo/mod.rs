@@ -139,8 +139,10 @@ pub fn start_osmo_thread(
         });
 
         // メインのフレーム取得ループ
+        sender.send(OsmoMessage::Status { id: info.id, message: "[Osmo] Entering capture loop...".to_string() }).unwrap_or_default();
         while !stop_flag.load(Ordering::SeqCst) {
             // Pythonにキャプチャを要求
+            sender.send(OsmoMessage::Status { id: info.id, message: "[Osmo] Sending 'capture' command...".to_string() }).unwrap_or_default();
             if let Err(e) = stdin.write_all(b"capture\n") {
                 sender
                     .send(OsmoMessage::Status {
