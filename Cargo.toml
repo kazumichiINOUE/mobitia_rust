@@ -37,5 +37,5 @@ pretty_assertions = "1.4.1"
 name = "Mobitia" # アプリケーション名
 identifier = "com.kazumichiinoue.mobitia" # バンドル識別子 (ユニークなもの)
 icon = ["icons/icon.icns"] # macOSアプリのアイコンファイル (後で作成)
-resources = [] # アプリケーションに含めるリソースファイル (フォントなど)
+resources = ["assets/"] # アプリケーションに含めるリソースファイル (フォントなど)
 category = "Utility" # macOSでのカテゴリ (Optional)

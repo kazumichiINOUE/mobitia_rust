@@ -1,5 +1,7 @@
 use eframe::egui;
+use std::env;
 use std::io::{BufRead, BufReader, Read, Write};
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
@@ -35,8 +37,55 @@ pub fn start_osmo_thread(
             })
             .unwrap_or_default();
 
+        let script_name = "osmo_capture.py";
+
+        // --- クロスプラットフォーム対応のパス解決ロジック ---
+        let script_path = {
+            let exe_path = env::current_exe().expect("Failed to get current exe path");
+            let exe_dir = exe_path.parent().expect("Failed to get parent directory");
+
+            // 探索するパスの候補リスト
+            let mut candidates: Vec<PathBuf> = Vec::new();
+
+            // --- プラットフォーム固有のパス候補 (`cargo bundle`用) ---
+
+            #[cfg(target_os = "macos")]
+            {
+                // macOSの.appバンドルでは、Resourcesは実行可能ファイルの親ディレクトリの兄弟
+                candidates.push(exe_dir.join("../Resources/assets").join(script_name));
+            }
+
+            #[cfg(target_os = "windows")]
+            {
+                // Windowsでは、実行可能ファイルと同じディレクトリにあると想定
+                candidates.push(exe_dir.join("assets").join(script_name));
+            }
+
+            #[cfg(target_os = "linux")]
+            {
+                // Linuxでは、実行可能ファイルと同じ場所 (AppImageなど)
+                candidates.push(exe_dir.join("assets").join(script_name));
+                // または、共有リソースディレクトリ (debパッケージなど)
+                candidates.push(exe_dir.join("../share/assets").join(script_name));
+            }
+
+            // --- 全プラットフォーム共通のフォールバック (`cargo run`用) ---
+
+            // `target/{release|debug}/` からプロジェクトルートを遡る
+            candidates.push(exe_dir.join("../../assets").join(script_name));
+            // プロジェクトルートで `cargo run` した場合
+            candidates.push(PathBuf::from("assets").join(script_name));
+
+
+            // 候補の中から最初に見つかった有効なパスを使用
+            candidates.into_iter().find(|path| path.exists()).unwrap_or_else(|| {
+                panic!("Python script '{}' not found in any of the expected locations.", script_name);
+            })
+        };
+        // --- パス解決ロジックここまで ---
+
         let mut child = match Command::new("python3")
-            .arg("./src/osmo/osmo_capture.py")
+            .arg(&script_path) // 最終的に見つかったパスを使用
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
