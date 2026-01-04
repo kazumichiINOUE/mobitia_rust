@@ -45,6 +45,9 @@ pub enum Commands {
         #[command(subcommand)]
         command: Option<OsmoCommands>,
     },
+    /// Analyze LiDAR data features.
+    #[command(alias = "la")]
+    LidarAnalysis,
     /// Manage serial port functions.
     Serial {
         #[command(subcommand)]
@@ -103,6 +106,8 @@ pub enum LidarCommands {
     /// Enter LiDAR visualization mode.
     #[command(alias = "mode")]
     EnterMode,
+    /// Analyze LiDAR data features (edge_ness, normals).
+    Analyze,
     /// Toggle whether a Lidar is used for SLAM.
     SlamToggle {
         /// Lidar ID (e.g., 0, 1).
@@ -203,6 +208,13 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                 });
             }
         }
+        Commands::LidarAnalysis => {
+            app.app_mode = AppMode::LidarAnalysis;
+            app.command_history.push(ConsoleOutputEntry {
+                text: "Mode set to LiDAR Analysis.".to_string(),
+                group_id: current_group_id,
+            });
+        }
         Commands::Lidar { command } => {
             if let Some(lidar_command) = command {
                 match lidar_command {
@@ -210,6 +222,13 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                         app.app_mode = AppMode::Lidar;
                         app.command_history.push(ConsoleOutputEntry {
                             text: "Mode set to LiDAR.".to_string(),
+                            group_id: current_group_id,
+                        });
+                    }
+                    LidarCommands::Analyze => {
+                        app.app_mode = AppMode::LidarAnalysis;
+                        app.command_history.push(ConsoleOutputEntry {
+                            text: "Mode set to LiDAR Analysis.".to_string(),
                             group_id: current_group_id,
                         });
                     }
