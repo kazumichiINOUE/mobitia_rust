@@ -914,7 +914,7 @@ impl MyApp {
                     self.current_suggestions.clear();
                 }
                 ["lidar", partial_subcommand] => {
-                    let options = vec!["entermode", "mode", "set", "slam-toggle"];
+                    let options = vec!["entermode", "mode", "set", "slam-toggle", "analyze"];
                     self.current_suggestions = options
                         .into_iter()
                         .filter(|opt| opt.starts_with(partial_subcommand))
@@ -927,6 +927,7 @@ impl MyApp {
                         "mode".to_string(),
                         "set".to_string(),
                         "slam-toggle".to_string(),
+                        "analyze".to_string(),
                     ];
                 }
                 ["osmo"] if ends_with_space => {
