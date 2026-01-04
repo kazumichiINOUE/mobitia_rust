@@ -1360,13 +1360,10 @@ impl eframe::App for MyApp {
                                 }
                             }
 
-                            // 特徴量を計算
-                            let scan_with_features = self.compute_features(&raw_combined_scan);
-
                             // 結合した生スキャンデータを補間
                             // FIXME: 閾値と間隔は調整が必要
                             let interpolated_combined_scan = self.interpolate_lidar_scan(
-                                &scan_with_features,
+                                &raw_combined_scan,
                                 0.1,  // min_dist_threshold (10cm)
                                 2.0,  // max_dist_threshold (2m)
                                 0.05, // interpolation_interval (5cm)
