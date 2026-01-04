@@ -1893,8 +1893,7 @@ impl eframe::App for MyApp {
 
                         ui.label(format!("  Name: {}", self.osmo.name));
                         let status_text = format!("  Status: {}", self.osmo.connection_status);
-                        let status_color = if self.osmo.connection_status.contains("successfully")
-                        {
+                        let status_color = if self.osmo.connection_status.contains("successfully") {
                             egui::Color32::GREEN
                         } else if self.osmo.connection_status.contains("Spawning") {
                             egui::Color32::YELLOW
@@ -2141,11 +2140,7 @@ impl eframe::App for MyApp {
 
                 // ロボットの原点 (0,0) を描画
                 let robot_origin_screen = to_screen.transform_pos(egui::pos2(0.0, 0.0));
-                painter.circle_filled(
-                    robot_origin_screen,
-                    5.0,
-                    egui::Color32::from_rgb(255, 0, 0),
-                );
+                painter.circle_filled(robot_origin_screen, 5.0, egui::Color32::from_rgb(255, 0, 0));
 
                 // 各LiDARの点群を描画
                 for lidar_state in &self.lidars {
@@ -2175,18 +2170,20 @@ impl eframe::App for MyApp {
 
                         // edge_ness に基づいて色を決定
                         let color = egui::Color32::from_rgb(
-                            (edge_ness * 255.0) as u8,      // エッジらしさが高いほど赤が強く
+                            (edge_ness * 255.0) as u8,         // エッジらしさが高いほど赤が強く
                             ((1.0 - edge_ness) * 255.0) as u8, // 低いほど緑が強く
-                            0,                                // 青は常に0
+                            0,                                 // 青は常に0
                         );
                         painter.circle_filled(screen_pos, 2.0, color);
 
                         // 法線ベクトルを描画 (edge_ness が閾値以上の場合のみ)
-                        if edge_ness > 0.1 { // ある程度エッジらしい点のみ法線を描画
+                        if edge_ness > 0.1 {
+                            // ある程度エッジらしい点のみ法線を描画
                             let normal_len = 0.1; // 法線ベクトルの長さ (ワールド座標)
                             let normal_end_x = world_x + nx_rotated * normal_len;
                             let normal_end_y = world_y + ny_rotated * normal_len;
-                            let normal_end_screen = to_screen.transform_pos(egui::pos2(normal_end_x, normal_end_y));
+                            let normal_end_screen =
+                                to_screen.transform_pos(egui::pos2(normal_end_x, normal_end_y));
                             painter.line_segment(
                                 [screen_pos, normal_end_screen],
                                 egui::Stroke::new(1.0, egui::Color32::YELLOW),

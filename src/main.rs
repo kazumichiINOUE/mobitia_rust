@@ -14,8 +14,8 @@ mod osmo;
 mod slam;
 mod xppen;
 
-use app::MyApp;
-use crate::config::Config; // 追加
+use crate::config::Config;
+use app::MyApp; // 追加
 
 fn main() -> Result<(), eframe::Error> {
     // --- Config loading ---

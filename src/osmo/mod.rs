@@ -76,11 +76,16 @@ pub fn start_osmo_thread(
             // プロジェクトルートで `cargo run` した場合
             candidates.push(PathBuf::from("assets").join(script_name));
 
-
             // 候補の中から最初に見つかった有効なパスを使用
-            candidates.into_iter().find(|path| path.exists()).unwrap_or_else(|| {
-                panic!("Python script '{}' not found in any of the expected locations.", script_name);
-            })
+            candidates
+                .into_iter()
+                .find(|path| path.exists())
+                .unwrap_or_else(|| {
+                    panic!(
+                        "Python script '{}' not found in any of the expected locations.",
+                        script_name
+                    );
+                })
         };
         // --- パス解決ロジックここまで ---
 
@@ -139,7 +144,12 @@ pub fn start_osmo_thread(
         });
 
         // メインのフレーム取得ループ
-        sender.send(OsmoMessage::Status { id: info.id, message: "[Osmo] Entering capture loop...".to_string() }).unwrap_or_default();
+        sender
+            .send(OsmoMessage::Status {
+                id: info.id,
+                message: "[Osmo] Entering capture loop...".to_string(),
+            })
+            .unwrap_or_default();
         while !stop_flag.load(Ordering::SeqCst) {
             // Pythonにキャプチャを要求
             //sender.send(OsmoMessage::Status { id: info.id, message: "[Osmo] Sending 'capture' command...".to_string() }).unwrap_or_default();
