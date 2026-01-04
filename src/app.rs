@@ -719,6 +719,23 @@ impl MyApp {
                 (eigenvalues[1], eigenvalues[0], eigenvectors.column(0))
             };
 
+            // ここに法線ベクトルの向きを修正するロジックを挿入
+            // 点 (px, py) と法線ベクトル (nx, ny) の内積を計算し、Lidar側を向くように調整
+            let px = scan[i].0;
+            let py = scan[i].1;
+            let nx = normal_vector[0];
+            let ny = normal_vector[1];
+
+            // Lidarの原点 (0,0) から点 (px, py) へのベクトルと法線ベクトルの内積を計算
+            // 内積が負の場合、法線ベクトルはLidarと反対方向を向いているため反転させる
+            let dot_product = px * nx + py * ny;
+
+            let (corrected_nx, corrected_ny) = if dot_product < 0.0 {
+                (-nx, -ny)
+            } else {
+                (nx, ny)
+            };
+
             // 5. 特徴量（直線らしさ）を計算
             let linearity = if lambda_1 > 1e-9 {
                 (lambda_1 - lambda_2) / lambda_1
@@ -733,8 +750,8 @@ impl MyApp {
 
             // 結果を格納
             scan_with_features[i].4 = edge_ness;
-            scan_with_features[i].5 = normal_vector[0];
-            scan_with_features[i].6 = normal_vector[1];
+            scan_with_features[i].5 = corrected_nx; // 修正後の法線ベクトルを格納
+            scan_with_features[i].6 = corrected_ny; // 修正後の法線ベクトルを格納
         }
 
         scan_with_features
