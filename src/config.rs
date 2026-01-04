@@ -35,8 +35,16 @@ pub struct Config {
     #[serde(default)]
     pub map: MapConfig,
     // 将来の拡張用
-    // #[serde(default)]
-    // pub ui: UiConfig,
+    #[serde(default)]
+    pub ui: UiConfig,
+}
+
+// UI関連のパラメータ
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct UiConfig {
+    pub show_xppen_panel: bool,
+    pub show_camera_panel: bool,
+    pub show_osmo_panel: bool,
 }
 
 // map関連のパラメータ
@@ -100,6 +108,18 @@ impl Default for Config {
         Self {
             slam: SlamConfig::default(),
             map: MapConfig::default(),
+            ui: UiConfig::default(),
+        }
+    }
+}
+
+// `UiConfig` のデフォルト値を定義
+impl Default for UiConfig {
+    fn default() -> Self {
+        Self {
+            show_xppen_panel: true,
+            show_camera_panel: true,
+            show_osmo_panel: true,
         }
     }
 }

@@ -1874,75 +1874,84 @@ impl eframe::App for MyApp {
                 ui.heading("Console");
 
                 // Osmo Status
-                egui::Frame::group(ui.style()).show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.label(format!("[OSMO {}]", self.osmo.id));
-
-                    // ライブ映像の表示
-                    if let Some(texture) = &self.osmo.texture {
-                        let image_size = texture.size_vec2();
-                        if image_size.x > 0.0 && image_size.y > 0.0 {
-                            let available_width = ui.available_width();
-                            let image_aspect = image_size.x / image_size.y;
-                            let new_height = available_width / image_aspect;
-                            let new_size = egui::vec2(available_width, new_height);
-                            ui.add(egui::Image::new(texture).fit_to_exact_size(new_size));
-                        }
-                    }
-
-                    ui.label(format!("  Name: {}", self.osmo.name));
-                    let status_text = format!("  Status: {}", self.osmo.connection_status);
-                    let status_color = if self.osmo.connection_status.contains("successfully") {
-                        egui::Color32::GREEN
-                    } else if self.osmo.connection_status.contains("Spawning") {
-                        egui::Color32::YELLOW
-                    } else if self.osmo.connection_status.contains("ERROR") {
-                        egui::Color32::RED
-                    } else {
-                        egui::Color32::GRAY
-                    };
-                    ui.label(egui::RichText::new(status_text).color(status_color));
-                });
-                ui.separator();
-
-                // XPPen Status
-                egui::Frame::group(ui.style()).show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.label("[XPPen Shortcut Device]");
-                    let status_text = format!("  Status: {}", self.xppen.connection_status);
-                    let status_color = if self.xppen.connection_status.contains("connected") {
-                        egui::Color32::GREEN
-                    } else if self.xppen.connection_status.contains("Connecting") {
-                        egui::Color32::YELLOW
-                    } else if self.xppen.connection_status.contains("Failed")
-                        || self.xppen.connection_status.contains("ERROR")
-                        || self.xppen.connection_status.contains("exiting")
-                    {
-                        egui::Color32::RED
-                    } else {
-                        egui::Color32::GRAY
-                    };
-                    ui.label(egui::RichText::new(status_text).color(status_color));
-                });
-                ui.separator();
-
-                for camera_state in &self.cameras {
+                if self.config.ui.show_osmo_panel {
                     egui::Frame::group(ui.style()).show(ui, |ui| {
                         ui.set_width(ui.available_width());
-                        ui.label(format!("[CAMERA {}]", camera_state.id));
-                        ui.label(format!("  Name: {}", camera_state.name));
-                        let status_text = format!("  Status: {}", camera_state.connection_status);
-                        let status_color = if camera_state.connection_status.contains("Connected") {
+                        ui.label(format!("[OSMO {}]", self.osmo.id));
+
+                        // ライブ映像の表示
+                        if let Some(texture) = &self.osmo.texture {
+                            let image_size = texture.size_vec2();
+                            if image_size.x > 0.0 && image_size.y > 0.0 {
+                                let available_width = ui.available_width();
+                                let image_aspect = image_size.x / image_size.y;
+                                let new_height = available_width / image_aspect;
+                                let new_size = egui::vec2(available_width, new_height);
+                                ui.add(egui::Image::new(texture).fit_to_exact_size(new_size));
+                            }
+                        }
+
+                        ui.label(format!("  Name: {}", self.osmo.name));
+                        let status_text = format!("  Status: {}", self.osmo.connection_status);
+                        let status_color = if self.osmo.connection_status.contains("successfully")
+                        {
                             egui::Color32::GREEN
-                        } else if camera_state.connection_status.contains("Trying") {
+                        } else if self.osmo.connection_status.contains("Spawning") {
                             egui::Color32::YELLOW
-                        } else {
+                        } else if self.osmo.connection_status.contains("ERROR") {
                             egui::Color32::RED
+                        } else {
+                            egui::Color32::GRAY
                         };
                         ui.label(egui::RichText::new(status_text).color(status_color));
                     });
+                    ui.separator();
                 }
-                ui.separator();
+
+                // XPPen Status
+                if self.config.ui.show_xppen_panel {
+                    egui::Frame::group(ui.style()).show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.label("[XPPen Shortcut Device]");
+                        let status_text = format!("  Status: {}", self.xppen.connection_status);
+                        let status_color = if self.xppen.connection_status.contains("connected") {
+                            egui::Color32::GREEN
+                        } else if self.xppen.connection_status.contains("Connecting") {
+                            egui::Color32::YELLOW
+                        } else if self.xppen.connection_status.contains("Failed")
+                            || self.xppen.connection_status.contains("ERROR")
+                            || self.xppen.connection_status.contains("exiting")
+                        {
+                            egui::Color32::RED
+                        } else {
+                            egui::Color32::GRAY
+                        };
+                        ui.label(egui::RichText::new(status_text).color(status_color));
+                    });
+                    ui.separator();
+                }
+
+                if self.config.ui.show_camera_panel {
+                    for camera_state in &self.cameras {
+                        egui::Frame::group(ui.style()).show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.label(format!("[CAMERA {}]", camera_state.id));
+                            ui.label(format!("  Name: {}", camera_state.name));
+                            let status_text =
+                                format!("  Status: {}", camera_state.connection_status);
+                            let status_color =
+                                if camera_state.connection_status.contains("Connected") {
+                                    egui::Color32::GREEN
+                                } else if camera_state.connection_status.contains("Trying") {
+                                    egui::Color32::YELLOW
+                                } else {
+                                    egui::Color32::RED
+                                };
+                            ui.label(egui::RichText::new(status_text).color(status_color));
+                        });
+                    }
+                    ui.separator();
+                }
 
                 for lidar_state in &self.lidars {
                     egui::Frame::group(ui.style()).show(ui, |ui| {
