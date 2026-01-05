@@ -26,7 +26,7 @@ use crate::xppen::{start_xppen_thread, XppenMessage};
 
 // Camera一台分の状態を保持する構造体
 #[derive(Clone)]
-pub(crate) struct CameraState {
+pub struct CameraState {
     pub(crate) id: usize,
     pub(crate) name: String,
     pub(crate) texture: Option<egui::TextureHandle>,
@@ -36,7 +36,7 @@ pub(crate) struct CameraState {
 
 // Osmo一台分の状態を保持する構造体
 #[derive(Clone)]
-pub(crate) struct OsmoState {
+pub struct OsmoState {
     pub(crate) id: usize,
     pub(crate) name: String,
     pub(crate) texture: Option<egui::TextureHandle>,
@@ -53,7 +53,7 @@ pub(crate) struct XppenState {
 
 // Lidar一台分の状態を保持する構造体
 #[derive(Clone)]
-pub(crate) struct LidarState {
+pub struct LidarState {
     pub(crate) id: usize,
     pub(crate) path: String,
     pub(crate) baud_rate: u32,
@@ -234,6 +234,14 @@ pub struct MyApp {
     pub(crate) osmo_capture_session_path: Option<PathBuf>,
 
     pub(crate) config: crate::config::Config, // 追加
+
+    // --- UI Screen States ---
+    pub(crate) lidar_screen: crate::ui::lidar_screen::LidarScreen,
+    pub(crate) lidar_analysis_screen: crate::ui::lidar_analysis_screen::LidarAnalysisScreen,
+    pub(crate) slam_screen: crate::ui::slam_screen::SlamScreen,
+    pub(crate) demo_screen: crate::ui::demo_screen::DemoScreen,
+    pub(crate) osmo_screen: crate::ui::osmo_screen::OsmoScreen,
+    pub(crate) camera_screen: crate::ui::camera_screen::CameraScreen,
 }
 
 impl MyApp {
@@ -418,7 +426,7 @@ impl MyApp {
                                     let slam_start_time = web_time::Instant::now();
                                     slam_manager.update(&raw_scan, &interpolated_scan, timestamp);
                                     let slam_duration = slam_start_time.elapsed();
-                                    println!("[SLAM Thread] Update took: {:?}", slam_duration);
+                                    //println!("[SLAM Thread] Update took: {:?}", slam_duration);
 
                                     slam_result_sender
                                         .send(SlamThreadResult {
@@ -527,6 +535,14 @@ impl MyApp {
                 connection_status: "Disconnected".to_string(),
             },
             config,
+
+            // --- UI Screen States ---
+            lidar_screen: crate::ui::lidar_screen::LidarScreen::new(),
+            lidar_analysis_screen: crate::ui::lidar_analysis_screen::LidarAnalysisScreen::new(),
+            slam_screen: crate::ui::slam_screen::SlamScreen::new(),
+            demo_screen: crate::ui::demo_screen::DemoScreen::new(),
+            osmo_screen: crate::ui::osmo_screen::OsmoScreen::new(),
+            camera_screen: crate::ui::camera_screen::CameraScreen::new(),
         }
     }
 
@@ -1370,7 +1386,7 @@ impl eframe::App for MyApp {
             ctx.request_repaint();
         }
         while let Ok(msg) = self.command_output_receiver.try_recv() {
-            println!("{}", msg); // ここで標準出力にメッセージを出力
+            //println!("{}", msg); // ここで標準出力にメッセージを出力
             self.command_history.push(ConsoleOutputEntry {
                 text: msg,
                 group_id: self.next_group_id,
@@ -1845,445 +1861,37 @@ impl eframe::App for MyApp {
         // 2. 右側のパネル（グラフィック表示）
         egui::CentralPanel::default().show(ctx, |ui| match self.app_mode {
             AppMode::Lidar => {
-                ui.heading("LiDAR Data Visualization");
-                let (response, painter) =
-                    ui.allocate_painter(ui.available_size(), egui::Sense::hover());
-                let rect = response.rect;
-                self.lidar_draw_rect = Some(rect);
-
-                // --- 全Lidar共通の描画設定 ---
-                let side = rect.height();
-                let square_rect =
-                    egui::Rect::from_center_size(rect.center(), egui::vec2(side, side));
-
-                let half_view_size = self.config.slam.online_slam_view_size / 2.0;
-                // ワールド座標からスクリーン座標への変換を定義
-                // Y軸を反転させるため、fromに渡すRectのYのmin/maxを入れ替える
-                let world_to_screen_rect = egui::Rect::from_min_max(
-                    egui::pos2(-half_view_size, half_view_size), // ワールドの左上 (min_x, max_y)
-                    egui::pos2(half_view_size, -half_view_size), // ワールドの右下 (max_x, min_y)
-                );
-                let to_screen =
-                    egui::emath::RectTransform::from_to(world_to_screen_rect, square_rect);
-
-                // 背景とグリッドを描画
-                painter.rect_filled(square_rect, 0.0, egui::Color32::from_rgb(20, 20, 20));
-                painter.hline(
-                    square_rect.x_range(),
-                    to_screen.transform_pos(egui::pos2(0.0, 0.0)).y,
-                    egui::Stroke::new(0.5, egui::Color32::DARK_GRAY),
-                );
-                painter.vline(
-                    to_screen.transform_pos(egui::pos2(0.0, 0.0)).x,
-                    square_rect.y_range(),
-                    egui::Stroke::new(0.5, egui::Color32::DARK_GRAY),
-                );
-
-                let mut any_lidar_connected = false;
-
-                // --- 各Lidarのデータを描画 ---
-                for (i, lidar_state) in self.lidars.iter().enumerate() {
-                    if lidar_state.connection_status.starts_with("Connected") {
-                        any_lidar_connected = true;
-
-                        let lidar_origin_world = lidar_state.origin;
-                        let lidar_color = match i {
-                            0 => egui::Color32::GREEN,
-                            1 => egui::Color32::YELLOW,
-                            2 => egui::Color32::BLUE,
-                            _ => egui::Color32::WHITE,
-                        };
-
-                        // Lidarの原点を描画
-                        let lidar_origin_screen =
-                            to_screen.transform_pos(lidar_origin_world.to_pos2());
-                        painter.circle_filled(lidar_origin_screen, 5.0, lidar_color);
-                        painter.text(
-                            lidar_origin_screen + egui::vec2(10.0, -10.0),
-                            egui::Align2::LEFT_BOTTOM,
-                            format!("LIDAR {}", lidar_state.id),
-                            egui::FontId::default(),
-                            egui::Color32::WHITE,
-                        );
-
-                        // Lidarの点群を描画
-                        for point in &lidar_state.points {
-                            // Lidar座標系での点 (px, py)
-                            let pxx = point.0;
-                            let pyy = point.1;
-                            let px_raw = pxx;
-                            let py_raw = pyy;
-                            //let px_raw = -pyy;
-                            //let py_raw = -pxx;
-
-                            // Lidarの回転を適用
-                            let rotation = lidar_state.rotation;
-                            let px_rotated = px_raw * rotation.cos() - py_raw * rotation.sin();
-                            let py_rotated = px_raw * rotation.sin() + py_raw * rotation.cos();
-
-                            // ワールド座標に変換 (Lidarの原点オフセットを加える)
-                            let world_pos = egui::pos2(px_rotated, py_rotated) + lidar_origin_world;
-
-                            // スクリーン座標に変換
-                            let screen_pos = to_screen.transform_pos(world_pos);
-
-                            if square_rect.contains(screen_pos) {
-                                painter.circle_filled(screen_pos, 2.0, lidar_color);
-                            }
-                        }
-                    }
-                }
-
-                // どのLidarも接続されていない場合にメッセージを表示
-                if !any_lidar_connected {
-                    ui.allocate_ui_at_rect(rect, |ui| {
-                        ui.centered_and_justified(|ui| {
-                            // 最初のLidarのステータスを代表として表示（暫定）
-                            let status = self
-                                .lidars
-                                .get(0)
-                                .map_or("No Lidars configured", |l| &l.connection_status);
-                            let text = egui::RichText::new(status)
-                                .color(egui::Color32::WHITE)
-                                .font(egui::FontId::proportional(24.0));
-                            ui.add(egui::Label::new(text).wrap(true));
-                        });
-                    });
-                }
+                self.lidar_screen
+                    .draw(ui, &self.config, &self.lidars, &mut self.lidar_draw_rect);
             }
             AppMode::LidarAnalysis => {
-                ui.heading("LiDAR Feature Analysis");
-                let (response, painter) =
-                    ui.allocate_painter(ui.available_size(), egui::Sense::hover());
-                let rect = response.rect;
-                self.lidar_draw_rect = Some(rect);
-
-                // --- 描画設定 ---
-                let side = rect.height();
-                let square_rect =
-                    egui::Rect::from_center_size(rect.center(), egui::vec2(side, side));
-
-                let half_view_size = self.config.slam.online_slam_view_size / 2.0;
-                let world_to_screen_rect = egui::Rect::from_min_max(
-                    egui::pos2(-half_view_size, half_view_size), // ワールドの左上 (min_x, max_y)
-                    egui::pos2(half_view_size, -half_view_size), // ワールドの右下 (max_x, min_y)
+                self.lidar_analysis_screen.draw(
+                    ui,
+                    &self.config,
+                    &self.lidars,
+                    &mut self.lidar_draw_rect,
                 );
-                let to_screen =
-                    egui::emath::RectTransform::from_to(world_to_screen_rect, square_rect);
-
-                // 背景とグリッドを描画
-                painter.rect_filled(square_rect, 0.0, egui::Color32::from_rgb(20, 20, 20));
-                painter.hline(
-                    square_rect.x_range(),
-                    to_screen.transform_pos(egui::pos2(0.0, 0.0)).y,
-                    egui::Stroke::new(0.5, egui::Color32::DARK_GRAY),
-                );
-                painter.vline(
-                    to_screen.transform_pos(egui::pos2(0.0, 0.0)).x,
-                    square_rect.y_range(),
-                    egui::Stroke::new(0.5, egui::Color32::DARK_GRAY),
-                );
-
-                // ロボットの原点 (0,0) を描画
-                let robot_origin_screen = to_screen.transform_pos(egui::pos2(0.0, 0.0));
-                painter.circle_filled(robot_origin_screen, 5.0, egui::Color32::from_rgb(255, 0, 0));
-
-                // 各LiDARの点群を描画 (フェーズ1: 通常の点と法線)
-                for lidar_state in &self.lidars {
-                    let rotation = lidar_state.rotation;
-                    let origin = lidar_state.origin;
-
-                    for point in &lidar_state.points {
-                        let px_raw = point.0;
-                        let py_raw = point.1;
-                        let edge_ness = point.4;
-                        let nx_raw = point.5;
-                        let ny_raw = point.6;
-                        let corner_ness = point.7;
-
-                        // Lidarの回転を適用
-                        let px_rotated = px_raw * rotation.cos() - py_raw * rotation.sin();
-                        let py_rotated = px_raw * rotation.sin() + py_raw * rotation.cos();
-
-                        let nx_rotated = nx_raw * rotation.cos() - ny_raw * rotation.sin();
-                        let ny_rotated = nx_raw * rotation.sin() + ny_raw * rotation.cos();
-
-                        // ワールド座標に変換 (Lidarの原点オフセットを加える)
-                        let world_x = px_rotated + origin.x;
-                        let world_y = py_rotated + origin.y;
-
-                        let screen_pos = to_screen.transform_pos(egui::pos2(world_x, world_y));
-
-                        let corner_threshold = 0.5; // この閾値は調整可能
-                        if corner_ness <= corner_threshold {
-                            // コーナーでない点
-                            // edge_ness に基づいて色を決定
-                            let color = egui::Color32::from_rgb(
-                                (edge_ness * 255.0) as u8,         // エッジらしさが高いほど赤が強く
-                                ((1.0 - edge_ness) * 255.0) as u8, // 低いほど緑が強く
-                                0,                                 // 青は常に0
-                            );
-                            painter.circle_filled(screen_pos, 2.0, color);
-
-                            // 法線ベクトルを描画 (edge_ness が閾値以上の場合のみ)
-                            if edge_ness > 0.1 {
-                                // ある程度エッジらしい点のみ法線を描画
-                                let normal_len = 0.1; // 法線ベクトルの長さ (ワールド座標)
-                                let normal_end_x = world_x + nx_rotated * normal_len;
-                                let normal_end_y = world_y + ny_rotated * normal_len;
-                                let normal_end_screen =
-                                    to_screen.transform_pos(egui::pos2(normal_end_x, normal_end_y));
-                                painter.line_segment(
-                                    [screen_pos, normal_end_screen],
-                                    egui::Stroke::new(1.0, egui::Color32::YELLOW),
-                                );
-                            }
-                        }
-                    }
-                }
-
-                // 各LiDARの点群を描画 (フェーズ2: コーナー点のみを最前面に描画)
-                for lidar_state in &self.lidars {
-                    let rotation = lidar_state.rotation;
-                    let origin = lidar_state.origin;
-
-                    for point in &lidar_state.points {
-                        let px_raw = point.0;
-                        let py_raw = point.1;
-                        let corner_ness = point.7;
-
-                        // Lidarの回転を適用
-                        let px_rotated = px_raw * rotation.cos() - py_raw * rotation.sin();
-                        let py_rotated = px_raw * rotation.sin() + py_raw * rotation.cos();
-
-                        // ワールド座標に変換 (Lidarの原点オフセットを加える)
-                        let world_x = px_rotated + origin.x;
-                        let world_y = py_rotated + origin.y;
-
-                        let screen_pos = to_screen.transform_pos(egui::pos2(world_x, world_y));
-
-                        let corner_threshold = 0.5; // この閾値は調整可能
-                        if corner_ness > corner_threshold {
-                            // コーナー点のみを描画
-                            painter.circle_filled(
-                                screen_pos,
-                                5.0,
-                                egui::Color32::from_rgb(255, 0, 255),
-                            ); // マゼンタ色で大きく描画
-                        }
-                    }
-                }
             }
             AppMode::Slam => {
-                ui.heading("SLAM Mode");
-                let (response, painter) =
-                    ui.allocate_painter(ui.available_size(), egui::Sense::hover());
-                let rect = response.rect;
-                self.lidar_draw_rect = Some(rect);
-                painter.rect_filled(rect, 0.0, egui::Color32::from_rgb(20, 20, 20));
-
-                // Draw robot pose
-                let robot_pose = &self.current_robot_pose;
-                // 描画範囲を決定
-                let map_view_rect = if let Some(bounds) = self.slam_map_bounding_box {
-                    // ロードした地図がある場合、そのバウンディングボックスを表示範囲とする
-                    let new_bounds = bounds.expand(bounds.width() * 0.1); // 先に少しマージンを追加
-
-                    let screen_aspect = rect.width() / rect.height();
-                    if !screen_aspect.is_nan() {
-                        let bounds_aspect = new_bounds.width() / new_bounds.height();
-                        let center = new_bounds.center();
-                        let (width, height) = if bounds_aspect > screen_aspect {
-                            // バウンディングボックスの方が横長 -> 高さを増やす
-                            (new_bounds.width(), new_bounds.width() / screen_aspect)
-                        } else {
-                            // バウンディングボックスの方が縦長 -> 幅を増やす
-                            (new_bounds.height() * screen_aspect, new_bounds.height())
-                        };
-                        egui::Rect::from_center_size(center, egui::vec2(width, height))
-                    } else {
-                        new_bounds
-                    }
-                } else {
-                    // オンラインSLAM中の場合、これまで通りロボットを中心に表示
-                    let robot_center_world =
-                        egui::pos2(robot_pose.translation.x, robot_pose.translation.y);
-                    let map_view_size = self.config.slam.online_slam_view_size; // 追従時の表示サイズ
-                    egui::Rect::from_center_size(
-                        robot_center_world,
-                        egui::vec2(map_view_size, map_view_size),
-                    )
-                };
-
-                // Y軸を反転させるため、map_view_rectのYのmin/maxを入れ替える
-                let mut inverted_map_view_rect = map_view_rect;
-                inverted_map_view_rect.min.y = map_view_rect.max.y;
-                inverted_map_view_rect.max.y = map_view_rect.min.y;
-                let to_screen = egui::emath::RectTransform::from_to(
-                    inverted_map_view_rect,
-                    rect, // 実際の描画エリア
-                );
-
-                // 軌跡の線と向き（三角形）を描画
-                if self.robot_trajectory.len() > 1 {
-                    // 軌跡の線
-                    let trajectory_line_points: Vec<egui::Pos2> = self
-                        .robot_trajectory
-                        .iter()
-                        .map(|(world_pos, _angle)| to_screen.transform_pos(*world_pos))
-                        .collect();
-                    let line_stroke = egui::Stroke::new(1.0, egui::Color32::DARK_GRAY);
-                    painter.add(egui::Shape::line(trajectory_line_points, line_stroke));
-
-                    // 向きを示す三角形
-                    let triangle_color = egui::Color32::GRAY;
-                    for (i, (world_pos, angle)) in self.robot_trajectory.iter().enumerate() {
-                        if i > 0 {
-                            // 始点を除くすべての点で描画
-                            let center_screen = to_screen.transform_pos(*world_pos);
-
-                            // 三角形の頂点を定義
-                            let triangle_size = 20.0; // 三角形の大きさ
-                            let p1 = center_screen
-                                + egui::vec2(angle.cos(), -angle.sin()) * triangle_size; // 先端
-                            let angle_left = *angle + (150.0f32).to_radians();
-                            let p2 = center_screen
-                                + egui::vec2(angle_left.cos(), -angle_left.sin())
-                                    * triangle_size
-                                    * 0.7;
-                            let angle_right = *angle - (150.0f32).to_radians();
-                            let p3 = center_screen
-                                + egui::vec2(angle_right.cos(), -angle_right.sin())
-                                    * triangle_size
-                                    * 0.7;
-
-                            painter.add(egui::Shape::convex_polygon(
-                                vec![p1, p2, p3],
-                                triangle_color,
-                                egui::Stroke::NONE,
-                            ));
-                        }
-                    }
-                }
-
-                // Draw the map points
-                for (point, probability) in &self.current_map_points {
-                    // Right = +X, Up = +Y
-                    let screen_pos = to_screen.transform_pos(egui::pos2(point.x, point.y));
-                    if rect.contains(screen_pos) {
-                        // 占有確率に基づいて色を調整
-                        let intensity = (*probability as f32 * 255.0).min(255.0).max(0.0);
-                        let color = egui::Color32::from_rgb(
-                            (intensity * 0.4).min(255.0) as u8, // 青みを強くするためR,Gを低めに
-                            (intensity * 0.4).min(255.0) as u8,
-                            intensity as u8,
-                        );
-                        painter.circle_filled(screen_pos, 2.0, color);
-                    }
-                }
-
-                // 最新のスキャンデータを別の色で描画
-                for point in &self.latest_scan_for_draw {
-                    let local_point = nalgebra::Point2::new(point.0, point.1);
-                    let world_point = self.current_robot_pose * local_point;
-                    let screen_pos =
-                        to_screen.transform_pos(egui::pos2(world_point.x, world_point.y));
-                    if rect.contains(screen_pos) {
-                        painter.circle_filled(
-                            screen_pos,
-                            2.5, // 少し大きくして目立たせる
-                            egui::Color32::YELLOW,
-                        );
-                    }
-                }
-
-                // Draw robot pose (この部分は変更しない)
-                let robot_pos_on_screen = to_screen.transform_pos(egui::pos2(
-                    robot_pose.translation.x,
-                    robot_pose.translation.y,
-                ));
-                let angle = robot_pose.rotation.angle();
-                painter.circle_filled(robot_pos_on_screen, 5.0, egui::Color32::RED);
-                painter.line_segment(
-                    [
-                        robot_pos_on_screen,
-                        robot_pos_on_screen + egui::vec2(angle.cos(), -angle.sin()) * 20.0,
-                    ],
-                    egui::Stroke::new(2.0, egui::Color32::RED),
+                self.slam_screen.draw(
+                    ui,
+                    &self.config,
+                    &mut self.lidar_draw_rect,
+                    &self.current_robot_pose,
+                    &self.slam_map_bounding_box,
+                    &self.robot_trajectory,
+                    &self.current_map_points,
+                    &self.latest_scan_for_draw,
                 );
             }
             AppMode::Demo => {
-                self.demo_manager.update_and_draw(ui);
+                self.demo_screen.draw(ui, &mut self.demo_manager);
             }
             AppMode::Osmo => {
-                ui.heading("Osmo Mode");
-                if let Some(texture) = &self.osmo.texture {
-                    // 利用可能な描画領域のサイズを取得
-                    let available_size = ui.available_size();
-                    let image_size = texture.size_vec2();
-
-                    if image_size.y > 0.0 {
-                        let image_aspect = image_size.x / image_size.y;
-                        let available_aspect = available_size.x / available_size.y;
-
-                        let new_size = if image_aspect > available_aspect {
-                            // 画像が描画領域より横長 -> 幅に合わせる
-                            let new_height = available_size.x / image_aspect;
-                            egui::vec2(available_size.x, new_height)
-                        } else {
-                            // 画像が描画領域より縦長 -> 高さに合わせる
-                            let new_width = available_size.y * image_aspect;
-                            egui::vec2(new_width, available_size.y)
-                        };
-
-                        // 画像を中央揃えで描画
-                        ui.centered_and_justified(|ui| {
-                            ui.add(egui::Image::new(texture).fit_to_exact_size(new_size));
-                        });
-                    }
-                } else {
-                    ui.centered_and_justified(|ui| {
-                        ui.label(&self.osmo.connection_status);
-                    });
-                }
+                self.osmo_screen.draw(ui, &self.osmo);
             }
             AppMode::Camera => {
-                ui.heading("Camera Mode");
-                if let Some(camera_state) = self.cameras.get(0) {
-                    if let Some(texture) = &camera_state.texture {
-                        // 利用可能な描画領域のサイズを取得
-                        let available_size = ui.available_size();
-                        let image_size = texture.size_vec2();
-
-                        if image_size.y > 0.0 {
-                            let image_aspect = image_size.x / image_size.y;
-                            let available_aspect = available_size.x / available_size.y;
-
-                            let new_size = if image_aspect > available_aspect {
-                                // 画像が描画領域より横長 -> 幅に合わせる
-                                let new_height = available_size.x / image_aspect;
-                                egui::vec2(available_size.x, new_height)
-                            } else {
-                                // 画像が描画領域より縦長 -> 高さに合わせる
-                                let new_width = available_size.y * image_aspect;
-                                egui::vec2(new_width, available_size.y)
-                            };
-
-                            // 画像を中央揃えで描画
-                            ui.centered_and_justified(|ui| {
-                                ui.add(egui::Image::new(texture).fit_to_exact_size(new_size));
-                            });
-                        }
-                    } else {
-                        ui.centered_and_justified(|ui| {
-                            ui.label(&camera_state.connection_status);
-                        });
-                    }
-                } else {
-                    ui.centered_and_justified(|ui| {
-                        ui.label("No camera available.");
-                    });
-                }
+                self.camera_screen.draw(ui, &self.cameras);
             }
         });
 

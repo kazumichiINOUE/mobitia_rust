@@ -12,6 +12,7 @@ mod demo;
 mod lidar;
 mod osmo;
 mod slam;
+mod ui;
 mod xppen;
 
 use crate::config::Config;

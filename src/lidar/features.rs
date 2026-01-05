@@ -86,10 +86,12 @@ pub fn compute_features(
                 // 点が密な場合のみ、コーナー検出ロジックを実行
                 let dot_product_normals = normal_before.dot(&normal_after);
                 corner_ness = 1.0 - dot_product_normals.abs();
+                /*
                 println!(
                     "[C_Debug] corner_ness updated for index {}: {:.3}",
                     i, corner_ness
                 );
+                */
             } else {
                 // 疎な領域では corner_ness は計算しない (0のまま)
                 // このデバッグ出力はログが多すぎる場合はコメントアウトする
@@ -133,7 +135,7 @@ pub fn compute_features(
                     let linearity_threshold_for_corner = 0.8; // 0.8以上なら直線的と判断
 
                     if linearity_at_step_edge > linearity_threshold_for_corner {
-                        println!("[S_Debug] Step edge candidate found at index {}. DistNext: {:.3}, LidarDist: {:.3}, AdaptiveThresh: {:.3}, Linearity: {:.3}", i, distance_to_next, distance_from_lidar, adaptive_step_edge_threshold, linearity_at_step_edge);
+                        //println!("[S_Debug] Step edge candidate found at index {}. DistNext: {:.3}, LidarDist: {:.3}, AdaptiveThresh: {:.3}, Linearity: {:.3}", i, distance_to_next, distance_from_lidar, adaptive_step_edge_threshold, linearity_at_step_edge);
                         step_edge_candidates.push((i, linearity_at_step_edge));
                     }
                 }
@@ -144,7 +146,7 @@ pub fn compute_features(
         }
 
         if corner_ness > 0.0 {
-            println!("[Debug] Final corner_ness for point {}: {}", i, corner_ness);
+            //println!("[Debug] Final corner_ness for point {}: {}", i, corner_ness);
         }
         scan_with_features[i].7 = corner_ness;
     }
@@ -155,16 +157,18 @@ pub fn compute_features(
         // そのまま高めのcorner_nessとして設定
         // ただし、既に高いcorner_nessが設定されている場合は、より高い方を採用する
         scan_with_features[idx].7 = scan_with_features[idx].7.max(linearity_val);
+        /*
         println!(
             "[S_Debug] Updated corner_ness for step edge at index {}: {:.3}",
             idx, scan_with_features[idx].7
         );
+        */
     }
 
     // Temporary debug print
     for (i, point) in scan_with_features.iter().enumerate() {
         if point.7 > 0.1 {
-            println!("[features] corner_ness for point {}: {}", i, point.7);
+            //println!("[features] corner_ness for point {}: {}", i, point.7);
         }
     }
 

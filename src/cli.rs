@@ -678,7 +678,7 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                         "ERROR: Submaps directory not found at: {}",
                         submaps_base_path.display()
                     );
-                    println!("{}", msg_error);
+                    //println!("{}", msg_error);
                     app.command_history.push(ConsoleOutputEntry {
                         text: msg_error,
                         group_id: current_group_id,
@@ -708,7 +708,7 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                             submaps_base_path.display(),
                             e
                         );
-                        println!("{}", msg_error);
+                        //println!("{}", msg_error);
                         app.command_history.push(ConsoleOutputEntry {
                             text: msg_error,
                             group_id: current_group_id,
@@ -722,7 +722,7 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                         "No submaps found matching 'submap_NNN' in '{}'.",
                         submaps_base_path.display()
                     );
-                    println!("{}", msg);
+                    //println!("{}", msg);
                     app.command_history.push(ConsoleOutputEntry {
                         text: msg,
                         group_id: current_group_id,
