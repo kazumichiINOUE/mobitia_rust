@@ -92,7 +92,7 @@ impl LidarDriver {
         Ok(())
     }
 
-    pub fn get_distance_data(&mut self) -> Result<Vec<(f32, f32, f32, f32, f32, f32, f32)>> {
+    pub fn get_distance_data(&mut self) -> Result<Vec<(f32, f32, f32, f32, f32, f32, f32, f32)>> {
         let command = b"GD0000108001\n";
         let response = self.connection.send_and_receive(command)?;
 
@@ -111,7 +111,7 @@ impl LidarDriver {
         }
 
         // Parse data
-        let mut lidar_points_current_scan: Vec<(f32, f32, f32, f32, f32, f32, f32)> = Vec::new();
+        let mut lidar_points_current_scan: Vec<(f32, f32, f32, f32, f32, f32, f32, f32)> = Vec::new();
         let gd_params = &command[2..10];
         let start_step =
             u32::from_str_radix(&String::from_utf8_lossy(&gd_params[0..4]), 10).unwrap_or(0);
@@ -144,7 +144,7 @@ impl LidarDriver {
                         let x = distance_m * angle_rad.cos();
                         let y = distance_m * angle_rad.sin();
                         lidar_points_current_scan
-                            .push((x, y, distance_m, angle_rad, 0.0, 0.0, 0.0));
+                            .push((x, y, distance_m, angle_rad, 0.0, 0.0, 0.0, 0.0)); // 0.0をcorner_nessの初期値として追加
                         // 0.0をfeatureとnormalの初期値として追加
                     }
                 }

@@ -19,6 +19,7 @@ pub struct CellData {
     pub centroid_x: f64,
     pub centroid_y: f64,
     pub point_count: u32,
+    pub corner_ness: f64, // 追加
 }
 
 impl Default for CellData {
@@ -31,6 +32,7 @@ impl Default for CellData {
             centroid_x: 0.0,
             centroid_y: 0.0,
             point_count: 0,
+            corner_ness: 0.0, // 追加
         }
     }
 }
@@ -118,8 +120,8 @@ impl SlamManager {
     /// Processes a new LiDAR scan and updates the map and pose.
     pub fn update(
         &mut self,
-        raw_scan_data: &[(f32, f32, f32, f32, f32, f32, f32)],
-        interpolated_scan_data: &[(f32, f32, f32, f32, f32, f32, f32)],
+        raw_scan_data: &[(f32, f32, f32, f32, f32, f32, f32, f32)],
+        interpolated_scan_data: &[(f32, f32, f32, f32, f32, f32, f32, f32)],
         timestamp: u128,
     ) {
         // --- Map Decay ---
@@ -143,13 +145,13 @@ impl SlamManager {
             .collect();
 
         // 地図更新用のスキャンデータ (生データ)
-        let mapping_scan_with_features: Vec<(Point2<f32>, f32, f32, f32)> = raw_scan_data
+        let mapping_scan_with_features: Vec<(Point2<f32>, f32, f32, f32, f32)> = raw_scan_data
             .iter()
-            .map(|p| (Point2::new(p.0, p.1), p.4, p.5, p.6)) // (point, edge_ness, nx, ny)
+            .map(|p| (Point2::new(p.0, p.1), p.4, p.5, p.6, p.7)) // (point, edge_ness, nx, ny, corner_ness)
             .collect();
         let mapping_scan: Vec<Point2<f32>> = mapping_scan_with_features
             .iter()
-            .map(|(p, _, _, _)| *p)
+            .map(|(p, _, _, _, _)| *p)
             .collect();
 
         if self.is_initial_scan {
@@ -192,7 +194,7 @@ impl SlamManager {
     fn update_grid_probabilistic(
         &mut self,
         scan_for_free: &[Point2<f32>],
-        scan_for_occupied: &[(Point2<f32>, f32, f32, f32)],
+        scan_for_occupied: &[(Point2<f32>, f32, f32, f32, f32)], // ここを修正
         pose: &Isometry2<f32>,
     ) {
         // --- Free Space Update ---
@@ -244,10 +246,10 @@ impl SlamManager {
     /// Updates the cells that are considered occupied space based on the laser scan.
     fn update_occupied_space(
         &mut self,
-        scan: &[(Point2<f32>, f32, f32, f32)],
+        scan: &[(Point2<f32>, f32, f32, f32, f32)], // 5要素に修正 (point, edge_ness, nx, ny, corner_ness)
         pose: &Isometry2<f32>,
     ) {
-        for (endpoint_local, feature, nx, ny) in scan.iter() {
+        for (endpoint_local, feature, nx, ny, corner_feature) in scan.iter() { // ここも修正
             let endpoint_world = pose * endpoint_local;
             let (ix, iy) = world_to_map_coords(endpoint_world.x, endpoint_world.y, &self.config);
 
@@ -267,6 +269,9 @@ impl SlamManager {
 
                 // edge_ness を更新 (加重平均)
                 cell.edge_ness = (cell.edge_ness * 0.7) + (*feature as f64 * 0.3);
+
+                // corner_ness を更新 (加重平均)
+                cell.corner_ness = (cell.corner_ness * 0.7) + (*corner_feature as f64 * 0.3);
 
                 // 法線ベクトルを更新 (加重平均)
                 cell.normal_x = (cell.normal_x * 0.7) + (*nx as f64 * 0.3);

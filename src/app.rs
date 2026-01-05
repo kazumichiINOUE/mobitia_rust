@@ -56,7 +56,7 @@ pub(crate) struct LidarState {
     pub(crate) id: usize,
     pub(crate) path: String,
     pub(crate) baud_rate: u32,
-    pub(crate) points: Vec<(f32, f32, f32, f32, f32, f32, f32)>,
+    pub(crate) points: Vec<(f32, f32, f32, f32, f32, f32, f32, f32)>,
     pub(crate) connection_status: String,
     pub(crate) status_messages: Vec<String>,
     // ワールド座標におけるこのLidarの原点オフセット
@@ -91,7 +91,7 @@ pub enum SlamMode {
 pub enum LidarMessage {
     ScanUpdate {
         id: usize,
-        scan: Vec<(f32, f32, f32, f32, f32, f32, f32)>,
+        scan: Vec<(f32, f32, f32, f32, f32, f32, f32, f32)>,
     },
     StatusUpdate {
         id: usize,
@@ -110,13 +110,13 @@ pub enum SlamThreadCommand {
     Pause,
     Resume,
     UpdateScan {
-        raw_scan: Vec<(f32, f32, f32, f32, f32, f32, f32)>,
-        interpolated_scan: Vec<(f32, f32, f32, f32, f32, f32, f32)>,
+        raw_scan: Vec<(f32, f32, f32, f32, f32, f32, f32, f32)>,
+        interpolated_scan: Vec<(f32, f32, f32, f32, f32, f32, f32, f32)>,
         timestamp: u128,
     }, // LiDARからの新しいスキャンデータ
     ProcessSingleScan {
-        raw_scan: Vec<(f32, f32, f32, f32, f32, f32, f32)>,
-        interpolated_scan: Vec<(f32, f32, f32, f32, f32, f32, f32)>,
+        raw_scan: Vec<(f32, f32, f32, f32, f32, f32, f32, f32)>,
+        interpolated_scan: Vec<(f32, f32, f32, f32, f32, f32, f32, f32)>,
         timestamp: u128,
     }, // 単一スキャン処理要求
     Shutdown,
@@ -125,7 +125,7 @@ pub enum SlamThreadCommand {
 pub struct SlamThreadResult {
     pub map_points: Vec<(nalgebra::Point2<f32>, f64)>,
     pub robot_pose: nalgebra::Isometry2<f32>,
-    pub scan_used: Vec<(f32, f32, f32, f32, f32, f32, f32)>,
+    pub scan_used: Vec<(f32, f32, f32, f32, f32, f32, f32, f32)>,
 }
 
 /// サブマップのメタデータ構造体 (app.rsに移動)
@@ -167,7 +167,7 @@ pub struct MyApp {
     pub(crate) xppen_trigger_sender: mpsc::Sender<()>,
 
     // SLAM用に各Lidarの最新スキャンを保持
-    pub(crate) pending_scans: Vec<Option<Vec<(f32, f32, f32, f32, f32, f32, f32)>>>,
+    pub(crate) pending_scans: Vec<Option<Vec<(f32, f32, f32, f32, f32, f32, f32, f32)>>>,
 
     // UI関連
     pub(crate) command_output_receiver: mpsc::Receiver<String>,
@@ -205,7 +205,7 @@ pub struct MyApp {
 
     pub(crate) single_scan_requested_by_ui: bool,
 
-    pub(crate) latest_scan_for_draw: Vec<(f32, f32, f32, f32, f32, f32, f32)>,
+    pub(crate) latest_scan_for_draw: Vec<(f32, f32, f32, f32, f32, f32, f32, f32)>,
 
     pub(crate) robot_trajectory: Vec<(egui::Pos2, f32)>,
 
@@ -681,8 +681,8 @@ impl MyApp {
 
     fn compute_features(
         &self,
-        scan: &Vec<(f32, f32, f32, f32, f32, f32, f32)>,
-    ) -> Vec<(f32, f32, f32, f32, f32, f32, f32)> {
+        scan: &Vec<(f32, f32, f32, f32, f32, f32, f32, f32)>,
+    ) -> Vec<(f32, f32, f32, f32, f32, f32, f32, f32)> {
         let mut scan_with_features = scan.clone();
         let neighborhood_size = 5; // 片側5点、合計11点を近傍とする
         if scan.len() < (neighborhood_size * 2 + 1) {
@@ -763,11 +763,11 @@ impl MyApp {
     /// interpolation_interval_angle: 補間された点の角度間隔 (ラジアン)
     fn interpolate_lidar_scan(
         &self,
-        scan: &Vec<(f32, f32, f32, f32, f32, f32, f32)>,
+        scan: &Vec<(f32, f32, f32, f32, f32, f32, f32, f32)>,
         min_dist_threshold: f32,
         max_dist_threshold: f32,
         interpolation_interval: f32,
-    ) -> Vec<(f32, f32, f32, f32, f32, f32, f32)> {
+    ) -> Vec<(f32, f32, f32, f32, f32, f32, f32, f32)> {
         if scan.is_empty() {
             return Vec::new();
         }
@@ -829,6 +829,7 @@ impl MyApp {
                         let interpolated_edge_ness = p1.4 * (1.0 - fraction) + p2.4 * fraction;
                         let mut interpolated_nx = p1.5 * (1.0 - fraction) + p2.5 * fraction;
                         let mut interpolated_ny = p1.6 * (1.0 - fraction) + p2.6 * fraction;
+                        let interpolated_corner_ness = p1.7 * (1.0 - fraction) + p2.7 * fraction; // ここを追加
 
                         // 法線ベクトルを正規化
                         let len =
@@ -846,6 +847,7 @@ impl MyApp {
                             interpolated_edge_ness,
                             interpolated_nx,
                             interpolated_ny,
+                            interpolated_corner_ness, // ここを追加
                         ));
                     }
                 }
@@ -1279,7 +1281,7 @@ impl eframe::App for MyApp {
         while let Ok(lidar_message) = self.lidar_message_receiver.try_recv() {
             match lidar_message {
                 LidarMessage::ScanUpdate { id, scan } => {
-                    let mut filtered_scan: Vec<(f32, f32, f32, f32, f32, f32, f32)> = Vec::new();
+                    let mut filtered_scan: Vec<(f32, f32, f32, f32, f32, f32, f32, f32)> = Vec::new();
                     // 該当するLidarStateからフィルタリング角度を取得
                     let (min_angle_rad, max_angle_rad) =
                         if let Some(lidar_state_for_filter) = self.lidars.get(id) {
@@ -1292,10 +1294,10 @@ impl eframe::App for MyApp {
                             (f32::NEG_INFINITY, f32::INFINITY)
                         };
 
-                    for &(x, y, r, theta, feature, nx, ny) in &scan {
+                    for &(x, y, r, theta, feature, nx, ny, corner) in &scan {
                         // フィルタリング範囲内にあるかチェック (角度は受信データから直接利用)
                         if theta >= min_angle_rad && theta <= max_angle_rad {
-                            filtered_scan.push((x, y, r, theta, feature, nx, ny));
+                            filtered_scan.push((x, y, r, theta, feature, nx, ny, corner));
                         }
                     }
 
@@ -1328,7 +1330,7 @@ impl eframe::App for MyApp {
                         });
 
                         if all_active_scans_received {
-                            let mut raw_combined_scan: Vec<(f32, f32, f32, f32, f32, f32, f32)> =
+                            let mut raw_combined_scan: Vec<(f32, f32, f32, f32, f32, f32, f32, f32)> =
                                 Vec::new();
 
                             // SLAMが有効な各Lidarのスキャンをロボット座標系に変換して結合
@@ -1370,6 +1372,7 @@ impl eframe::App for MyApp {
                                             feature_val,
                                             nx_rotated,
                                             ny_rotated,
+                                            0.0, // corner_nessの初期値として0.0を追加
                                         ));
                                     }
                                 }
@@ -2162,12 +2165,13 @@ impl eframe::App for MyApp {
                     let origin = lidar_state.origin;
 
                     for point in &lidar_state.points {
-                        // Lidar座標系での点 (px, py, r, theta, feature, nx, ny)
+                        // Lidar座標系での点 (px, py, r, theta, feature, nx, ny, corner)
                         let px_raw = point.0;
                         let py_raw = point.1;
                         let edge_ness = point.4;
                         let nx_raw = point.5;
                         let ny_raw = point.6;
+                        let corner_ness = point.7; // corner_nessを取得
 
                         // Lidarの回転を適用
                         let px_rotated = px_raw * rotation.cos() - py_raw * rotation.sin();
@@ -2182,13 +2186,19 @@ impl eframe::App for MyApp {
 
                         let screen_pos = to_screen.transform_pos(egui::pos2(world_x, world_y));
 
-                        // edge_ness に基づいて色を決定
-                        let color = egui::Color32::from_rgb(
-                            (edge_ness * 255.0) as u8,         // エッジらしさが高いほど赤が強く
-                            ((1.0 - edge_ness) * 255.0) as u8, // 低いほど緑が強く
-                            0,                                 // 青は常に0
-                        );
-                        painter.circle_filled(screen_pos, 2.0, color);
+                        // corner_ness が閾値以上の場合、色をマゼンタに、サイズを大きくする
+                        let corner_threshold = 0.5; // この閾値は調整が必要
+                        if corner_ness > corner_threshold {
+                            painter.circle_filled(screen_pos, 3.0, egui::Color32::from_rgb(255, 0, 255)); // マゼンタ色
+                        } else {
+                            // edge_ness に基づいて色を決定
+                            let color = egui::Color32::from_rgb(
+                                (edge_ness * 255.0) as u8,         // エッジらしさが高いほど赤が強く
+                                ((1.0 - edge_ness) * 255.0) as u8, // 低いほど緑が強く
+                                0,                                 // 青は常に0
+                            );
+                            painter.circle_filled(screen_pos, 2.0, color);
+                        }
 
                         // 法線ベクトルを描画 (edge_ness が閾値以上の場合のみ)
                         if edge_ness > 0.1 {
