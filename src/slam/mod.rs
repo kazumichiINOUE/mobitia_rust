@@ -249,7 +249,8 @@ impl SlamManager {
         scan: &[(Point2<f32>, f32, f32, f32, f32)], // 5要素に修正 (point, edge_ness, nx, ny, corner_ness)
         pose: &Isometry2<f32>,
     ) {
-        for (endpoint_local, feature, nx, ny, corner_feature) in scan.iter() { // ここも修正
+        for (endpoint_local, feature, nx, ny, corner_feature) in scan.iter() {
+            // ここも修正
             let endpoint_world = pose * endpoint_local;
             let (ix, iy) = world_to_map_coords(endpoint_world.x, endpoint_world.y, &self.config);
 

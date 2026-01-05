@@ -69,23 +69,27 @@ pub fn compute_features(
             let normal_after_sum: nalgebra::Vector2<f32> = normals_after.iter().sum();
             let normal_before = normal_before_sum.normalize();
             let normal_after = normal_after_sum.normalize();
-            
+
             // --- 密度チェックロジック ---
             let point_current = nalgebra::Point2::new(scan[i].0, scan[i].1);
-            let point_prev = nalgebra::Point2::new(scan[i-1].0, scan[i-1].1);
-            let point_next = nalgebra::Point2::new(scan[i+1].0, scan[i+1].1);
+            let point_prev = nalgebra::Point2::new(scan[i - 1].0, scan[i - 1].1);
+            let point_next = nalgebra::Point2::new(scan[i + 1].0, scan[i + 1].1);
             let dist_to_prev = (point_current - point_prev).norm();
             let dist_to_next = (point_current - point_next).norm();
 
             // 密度を判断するための距離閾値 (要調整)
             let max_local_distance_threshold = 0.05; // 隣接点との距離が10cm以下の場合のみを密と判断
 
-            if dist_to_prev < max_local_distance_threshold && dist_to_next < max_local_distance_threshold {
+            if dist_to_prev < max_local_distance_threshold
+                && dist_to_next < max_local_distance_threshold
+            {
                 // 点が密な場合のみ、コーナー検出ロジックを実行
                 let dot_product_normals = normal_before.dot(&normal_after);
                 corner_ness = 1.0 - dot_product_normals.abs();
-                println!("[C_Debug] corner_ness updated for index {}: {:.3}", i, corner_ness);
-
+                println!(
+                    "[C_Debug] corner_ness updated for index {}: {:.3}",
+                    i, corner_ness
+                );
             } else {
                 // 疎な領域では corner_ness は計算しない (0のまま)
                 // このデバッグ出力はログが多すぎる場合はコメントアウトする
@@ -95,8 +99,10 @@ pub fn compute_features(
         // --- ステップエッジ検出ロジック ---
         // 次の点が存在する場合のみ評価
         if i + 1 < scan_with_features.len() {
-            let point_current_coords = nalgebra::Point2::new(scan_with_features[i].0, scan_with_features[i].1);
-            let point_next_coords = nalgebra::Point2::new(scan_with_features[i + 1].0, scan_with_features[i + 1].1);
+            let point_current_coords =
+                nalgebra::Point2::new(scan_with_features[i].0, scan_with_features[i].1);
+            let point_next_coords =
+                nalgebra::Point2::new(scan_with_features[i + 1].0, scan_with_features[i + 1].1);
             let distance_to_next = (point_next_coords - point_current_coords).norm();
 
             // 点iのLiDARからの距離を取得 (タプルの3番目の要素 .2 が距離r)
@@ -106,8 +112,9 @@ pub fn compute_features(
             // 例: 距離1mあたり5cmずつ閾値を大きくする
             let step_edge_distance_threshold_base = 0.1; // ベースの閾値 10cm
             let step_edge_distance_increase_per_meter = 0.05; // 1mあたり5cmずつ閾値を増加
-            let adaptive_step_edge_threshold = step_edge_distance_threshold_base + distance_from_lidar * step_edge_distance_increase_per_meter;
-            
+            let adaptive_step_edge_threshold = step_edge_distance_threshold_base
+                + distance_from_lidar * step_edge_distance_increase_per_meter;
+
             // 遠距離の点をフィルタリングするための距離閾値 (要調整)
             let max_distance_for_step_edge = 5.0; // 5メートル以上離れている点は対象外とする
 
@@ -135,7 +142,7 @@ pub fn compute_features(
                 // println!("[S_Debug] Step edge at index {} ignored due to large distance from lidar: {:.3}", i, distance_from_lidar);
             }
         }
-        
+
         if corner_ness > 0.0 {
             println!("[Debug] Final corner_ness for point {}: {}", i, corner_ness);
         }
@@ -148,7 +155,10 @@ pub fn compute_features(
         // そのまま高めのcorner_nessとして設定
         // ただし、既に高いcorner_nessが設定されている場合は、より高い方を採用する
         scan_with_features[idx].7 = scan_with_features[idx].7.max(linearity_val);
-        println!("[S_Debug] Updated corner_ness for step edge at index {}: {:.3}", idx, scan_with_features[idx].7);
+        println!(
+            "[S_Debug] Updated corner_ness for step edge at index {}: {:.3}",
+            idx, scan_with_features[idx].7
+        );
     }
 
     // Temporary debug print
@@ -169,10 +179,14 @@ fn calculate_one_sided_linearity(
     use_before: bool, // trueなら手前側、falseなら後側
 ) -> f32 {
     let start_idx = if use_before {
-        if center_idx < neighborhood_size { return 0.0; } // 範囲外
+        if center_idx < neighborhood_size {
+            return 0.0;
+        } // 範囲外
         center_idx - neighborhood_size
     } else {
-        if center_idx + neighborhood_size >= scan.len() { return 0.0; } // 範囲外
+        if center_idx + neighborhood_size >= scan.len() {
+            return 0.0;
+        } // 範囲外
         center_idx
     };
     let end_idx = if use_before {
@@ -190,7 +204,8 @@ fn calculate_one_sided_linearity(
         .map(|j| nalgebra::Point2::new(scan[j].0, scan[j].1))
         .collect();
 
-    if neighborhood.len() < 2 { // 2点未満では直線性を計算できない
+    if neighborhood.len() < 2 {
+        // 2点未満では直線性を計算できない
         return 0.0;
     }
 

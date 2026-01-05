@@ -3,8 +3,8 @@
 mod comm;
 pub mod config;
 mod driver;
-mod protocol;
 pub mod features;
+mod protocol;
 
 // 2. Re-export the public API from the sub-modules.
 // This is the official public API of the `lidar` module.

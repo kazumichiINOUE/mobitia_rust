@@ -1101,7 +1101,8 @@ impl eframe::App for MyApp {
         while let Ok(lidar_message) = self.lidar_message_receiver.try_recv() {
             match lidar_message {
                 LidarMessage::ScanUpdate { id, scan } => {
-                    let mut filtered_scan: Vec<(f32, f32, f32, f32, f32, f32, f32, f32)> = Vec::new();
+                    let mut filtered_scan: Vec<(f32, f32, f32, f32, f32, f32, f32, f32)> =
+                        Vec::new();
                     // 該当するLidarStateからフィルタリング角度を取得
                     let (min_angle_rad, max_angle_rad) =
                         if let Some(lidar_state_for_filter) = self.lidars.get(id) {
@@ -1150,8 +1151,16 @@ impl eframe::App for MyApp {
                         });
 
                         if all_active_scans_received {
-                            let mut raw_combined_scan: Vec<(f32, f32, f32, f32, f32, f32, f32, f32)> =
-                                Vec::new();
+                            let mut raw_combined_scan: Vec<(
+                                f32,
+                                f32,
+                                f32,
+                                f32,
+                                f32,
+                                f32,
+                                f32,
+                                f32,
+                            )> = Vec::new();
 
                             // SLAMが有効な各Lidarのスキャンをロボット座標系に変換して結合
                             for lidar_state in active_lidars {
@@ -2006,7 +2015,8 @@ impl eframe::App for MyApp {
                         let screen_pos = to_screen.transform_pos(egui::pos2(world_x, world_y));
 
                         let corner_threshold = 0.5; // この閾値は調整可能
-                        if corner_ness <= corner_threshold { // コーナーでない点
+                        if corner_ness <= corner_threshold {
+                            // コーナーでない点
                             // edge_ness に基づいて色を決定
                             let color = egui::Color32::from_rgb(
                                 (edge_ness * 255.0) as u8,         // エッジらしさが高いほど赤が強く
@@ -2053,8 +2063,13 @@ impl eframe::App for MyApp {
                         let screen_pos = to_screen.transform_pos(egui::pos2(world_x, world_y));
 
                         let corner_threshold = 0.5; // この閾値は調整可能
-                        if corner_ness > corner_threshold { // コーナー点のみを描画
-                            painter.circle_filled(screen_pos, 5.0, egui::Color32::from_rgb(255, 0, 255)); // マゼンタ色で大きく描画
+                        if corner_ness > corner_threshold {
+                            // コーナー点のみを描画
+                            painter.circle_filled(
+                                screen_pos,
+                                5.0,
+                                egui::Color32::from_rgb(255, 0, 255),
+                            ); // マゼンタ色で大きく描画
                         }
                     }
                 }
