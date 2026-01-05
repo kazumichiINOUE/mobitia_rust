@@ -166,9 +166,12 @@ impl SlamManager {
             self.is_initial_scan = false;
         } else {
             // マッチングには補間済みのスキャンデータを使用
-            let (best_pose, _score) =
-                self.de_solver
-                    .optimize_de(&self.map_gmap, &matching_scan, &raw_corner_points, self.robot_pose);
+            let (best_pose, _score) = self.de_solver.optimize_de(
+                &self.map_gmap,
+                &matching_scan,
+                &raw_corner_points,
+                self.robot_pose,
+            );
             self.robot_pose = best_pose;
         }
 

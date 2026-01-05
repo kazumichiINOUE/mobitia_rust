@@ -169,17 +169,18 @@ impl DifferentialEvolutionSolver {
         for (p_coord_corner, scan_corner_ness) in raw_corner_points {
             let transformed_p_corner = pose * p_coord_corner;
 
-            let gx_corner =
-                (transformed_p_corner.x / self.config.csize) as i32 + (self.config.map_width / 2) as i32;
-            let gy_corner =
-                (-transformed_p_corner.y / self.config.csize) as i32 + (self.config.map_height / 2) as i32;
-            
+            let gx_corner = (transformed_p_corner.x / self.config.csize) as i32
+                + (self.config.map_width / 2) as i32;
+            let gy_corner = (-transformed_p_corner.y / self.config.csize) as i32
+                + (self.config.map_height / 2) as i32;
+
             if gx_corner >= 0 && gx_corner < width && gy_corner >= 0 && gy_corner < height {
                 let map_idx_corner = (gy_corner as usize) * gmap.width + (gx_corner as usize);
                 let cell_data_corner = gmap.data[map_idx_corner];
-                
+
                 // 地図上のコーナーらしさも考慮
-                if cell_data_corner.corner_ness > 0.5 { // 地図のコーナー閾値 (要調整)
+                if cell_data_corner.corner_ness > 0.5 {
+                    // 地図のコーナー閾値 (要調整)
                     let map_point_for_comparison = match self.config.point_representation {
                         PointRepresentationMethod::CellCenter => {
                             Self::map_grid_to_world_center(gx_corner, gy_corner, &self.config)
@@ -196,16 +197,18 @@ impl DifferentialEvolutionSolver {
                         }
                     };
 
-                    let dist_to_map_corner = (transformed_p_corner - map_point_for_comparison).norm();
+                    let dist_to_map_corner =
+                        (transformed_p_corner - map_point_for_comparison).norm();
                     if dist_to_map_corner < corner_match_threshold {
                         // スキャンと地図のコーナーネスが高いほどスコアも高く
-                        corner_match_score += (cell_data_corner.corner_ness * *scan_corner_ness as f64);
+                        corner_match_score +=
+                            (cell_data_corner.corner_ness * *scan_corner_ness as f64);
                     }
                 }
             }
         }
         total_score += corner_match_score * self.config.corner_score_weight;
-        
+
         total_score
     }
 
@@ -305,7 +308,8 @@ impl DifferentialEvolutionSolver {
                 let rotation_trial = Rotation2::new(trial_pose.z);
                 let translation_trial = Translation2::new(trial_pose.x, trial_pose.y);
                 let pose_trial = Isometry2::from_parts(translation_trial, rotation_trial.into());
-                let eval_trial = self.gaussian_match_count(gmap, points, raw_corner_points, &pose_trial);
+                let eval_trial =
+                    self.gaussian_match_count(gmap, points, raw_corner_points, &pose_trial);
 
                 if eval_trial > scores[i] {
                     population[i] = trial_pose;
