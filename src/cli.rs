@@ -1,4 +1,5 @@
 use crate::app::{AppMode, ConsoleOutputEntry, DemoMode, MyApp};
+use crate::slam::OccupancyGrid;
 use chrono::Local;
 use clap::{CommandFactory, Parser, Subcommand};
 use dirs;
@@ -671,6 +672,10 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                 app.submaps.clear();
                 app.robot_trajectory.clear();
                 app.slam_map_bounding_box = None;
+                app.offline_map = Some(OccupancyGrid::new(
+                    app.config.slam.map_width,
+                    app.config.slam.map_height,
+                ));
 
                 let submaps_base_path = path.join("submaps");
                 if !submaps_base_path.exists() || !submaps_base_path.is_dir() {

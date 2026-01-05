@@ -27,6 +27,7 @@ bresenham = "0.1.1"
 lazy_static = "1.5.0"
 nokhwa = { version = "0.10.10", features = ["input-avfoundation"] }
 hidapi = "2.6.4"
+serde_json = "1.0.148"
 
 [dev-dependencies]
 assert_cmd = "2"

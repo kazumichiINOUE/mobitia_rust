@@ -55,7 +55,7 @@ impl OccupancyGrid {
 }
 
 /// サブマップのメタデータ構造体
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Submap {
     pub id: usize,
     #[serde(skip)]
@@ -64,8 +64,39 @@ pub struct Submap {
     pub pose_y: f32,
     pub pose_theta: f32,
     pub timestamp_ms: u128,
-    pub points_file: String,
+    #[serde(default = "default_scans_file")]
+    pub scans_file: String,
     pub info_file: String,
+}
+
+fn default_scans_file() -> String {
+    "scans.json".to_string()
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct ScanData {
+    pub timestamp: u128,
+    pub relative_pose: Pose,
+    pub scan_points: Vec<ScanPoint>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct Pose {
+    pub x: f32,
+    pub y: f32,
+    pub theta: f32,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct ScanPoint {
+    pub x: f32,
+    pub y: f32,
+    pub r: f32,
+    pub theta: f32,
+    pub feature: f32,
+    pub nx: f32,
+    pub ny: f32,
+    pub corner: f32,
 }
 
 /// The main SLAM state manager.
@@ -81,7 +112,7 @@ pub struct SlamManager {
     // サブマップ関連のフィールド
     submap_counter: usize,
     num_scans_per_submap: usize,
-    current_submap_scan_buffer: Vec<Vec<Point2<f32>>>,
+    current_submap_scan_buffer: Vec<Vec<(f32, f32, f32, f32, f32, f32, f32, f32)>>,
     current_submap_robot_poses: Vec<Isometry2<f32>>,
     current_submap_timestamps_buffer: Vec<u128>,
     submaps: HashMap<usize, Submap>,
@@ -191,7 +222,8 @@ impl SlamManager {
         // --- Submap generation logic (unchanged for now) ---
         // TODO: This part might need refactoring as it relies on storing scans,
         // which is not ideal for long-term probabilistic mapping.
-        self.current_submap_scan_buffer.push(mapping_scan.clone());
+        self.current_submap_scan_buffer
+            .push(raw_scan_data.to_vec());
         self.current_submap_robot_poses.push(self.robot_pose);
         self.current_submap_timestamps_buffer.push(timestamp);
 
@@ -384,61 +416,70 @@ impl SlamManager {
     }
 
     fn generate_and_save_submap(&mut self) {
-        let submap_global_pose = self.current_submap_robot_poses[0];
+        if self.current_submap_robot_poses.is_empty() {
+            return;
+        }
 
-        let mut submap_points_local: Vec<Point2<f32>> = Vec::new();
-        for (scan_local, pose_local_to_global) in self
+        let submap_global_pose = self.current_submap_robot_poses[0];
+        let submap_id = self.submap_counter;
+
+        let mut scans_data: Vec<ScanData> = Vec::new();
+
+        for ((scan, pose), timestamp) in self
             .current_submap_scan_buffer
             .iter()
             .zip(self.current_submap_robot_poses.iter())
-        {
-            let relative_pose = submap_global_pose.inverse() * pose_local_to_global;
-            let transformed_scan = scan_local.iter().map(|p| relative_pose * p);
-            submap_points_local.extend(transformed_scan);
-        }
-
-        let submap_id = self.submap_counter;
-        let submap_dir_name = format!("submap_{:03}", submap_id);
-        let submap_path = self.output_base_dir.join("submaps").join(&submap_dir_name);
-
-        fs::create_dir_all(&submap_path).expect("Failed to create submap directory");
-
-        let trajectory_file_name = "trajectory.txt";
-        let trajectory_file_path = submap_path.join(trajectory_file_name);
-
-        let mut traj_file =
-            fs::File::create(&trajectory_file_path).expect("Failed to create trajectory.txt");
-        for (pose, timestamp) in self
-            .current_submap_robot_poses
-            .iter()
             .zip(self.current_submap_timestamps_buffer.iter())
         {
-            writeln!(
-                traj_file,
-                "{} {} {} {}",
-                timestamp,
-                pose.translation.x,
-                pose.translation.y,
-                pose.rotation.angle()
-            )
-            .expect("Failed to write trajectory data");
+            let relative_pose_isometry = submap_global_pose.inverse() * pose;
+            let relative_pose = Pose {
+                x: relative_pose_isometry.translation.x,
+                y: relative_pose_isometry.translation.y,
+                theta: relative_pose_isometry.rotation.angle(),
+            };
+
+            let scan_points = scan
+                .iter()
+                .map(|p| ScanPoint {
+                    x: p.0,
+                    y: p.1,
+                    r: p.2,
+                    theta: p.3,
+                    feature: p.4,
+                    nx: p.5,
+                    ny: p.6,
+                    corner: p.7,
+                })
+                .collect();
+
+            scans_data.push(ScanData {
+                timestamp: *timestamp,
+                relative_pose,
+                scan_points,
+            });
         }
 
-        let points_file_name = "points.txt";
-        let points_file_path = submap_path.join(points_file_name);
+        // --- Save files ---
+        let submap_dir_name = format!("submap_{:03}", submap_id);
+        let submap_path = self.output_base_dir.join("submaps").join(&submap_dir_name);
+        fs::create_dir_all(&submap_path).expect("Failed to create submap directory");
+
+        // Save scans.json
+        let scans_file_name = "scans.json";
+        let scans_file_path = submap_path.join(scans_file_name);
+        let scans_file = fs::File::create(&scans_file_path).expect("Failed to create scans.json");
+        serde_json::to_writer_pretty(scans_file, &scans_data)
+            .expect("Failed to write scans.json");
+
+        // Save info.yaml
         let info_file_name = "info.yaml";
         let info_file_path = submap_path.join(info_file_name);
-
-        let mut file = fs::File::create(&points_file_path).expect("Failed to create points.txt");
-        for p in &submap_points_local {
-            writeln!(file, "{} {}", p.x, p.y).expect("Failed to write point");
-        }
-
         let submap_creation_timestamp = self
             .current_submap_timestamps_buffer
             .last()
             .cloned()
             .unwrap_or(0);
+
         let submap_info = Submap {
             id: submap_id,
             global_pose: submap_global_pose,
@@ -446,7 +487,7 @@ impl SlamManager {
             pose_y: submap_global_pose.translation.y,
             pose_theta: submap_global_pose.rotation.angle(),
             timestamp_ms: submap_creation_timestamp,
-            points_file: points_file_name.to_string(),
+            scans_file: scans_file_name.to_string(),
             info_file: info_file_name.to_string(),
         };
 
@@ -454,6 +495,7 @@ impl SlamManager {
             serde_yaml::to_string(&submap_info).expect("Failed to serialize submap info to YAML");
         fs::write(&info_file_path, yaml_string).expect("Failed to write info.yaml");
 
+        // --- Clear buffers ---
         self.submaps.insert(submap_id, submap_info);
         self.current_submap_scan_buffer.clear();
         self.current_submap_robot_poses.clear();
@@ -467,7 +509,7 @@ impl SlamManager {
 }
 
 /// Converts world coordinates to map grid coordinates.
-fn world_to_map_coords(x: f32, y: f32, config: &SlamConfig) -> (isize, isize) {
+pub fn world_to_map_coords(x: f32, y: f32, config: &SlamConfig) -> (isize, isize) {
     let map_origin_x = config.map_width / 2;
     let map_origin_y = config.map_height / 2;
     let ix = (x / config.csize).round() as isize + map_origin_x as isize;
@@ -491,6 +533,6 @@ pub fn create_occupancy_grid(points: &[Point2<f32>], config: &SlamConfig) -> Occ
 }
 
 /// Converts a log-odds value to a probability (0.0 to 1.0).
-fn log_odds_to_probability(log_odds: f64) -> f64 {
+pub fn log_odds_to_probability(log_odds: f64) -> f64 {
     1.0 / (1.0 + (-log_odds).exp())
 }

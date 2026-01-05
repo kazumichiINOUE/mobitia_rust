@@ -1,4 +1,5 @@
 use anyhow::Result;
+use bresenham::Bresenham;
 use chrono::Local;
 use clap::Parser;
 use eframe::egui;
@@ -16,12 +17,16 @@ use std::time::{Duration, Instant, SystemTime};
 
 use crate::camera::{start_camera_thread, CameraInfo, CameraMessage};
 use crate::cli::Cli;
+use crate::config::SlamConfig;
 use crate::demo::DemoManager;
 pub use crate::demo::DemoMode;
 use crate::lidar::features::{compute_features, interpolate_lidar_scan};
 use crate::lidar::{load_lidar_configurations, start_lidar_thread, LidarInfo};
 use crate::osmo::{start_osmo_thread, OsmoInfo, OsmoMessage};
-use crate::slam::SlamManager; // Add SlamManager
+use crate::slam::{
+    log_odds_to_probability, world_to_map_coords, CellData, OccupancyGrid, ScanData, SlamManager,
+    Submap,
+};
 use crate::xppen::{start_xppen_thread, XppenMessage};
 
 // Camera一台分の状態を保持する構造体
@@ -129,18 +134,6 @@ pub struct SlamThreadResult {
     pub scan_used: Vec<(f32, f32, f32, f32, f32, f32, f32, f32)>,
 }
 
-/// サブマップのメタデータ構造体 (app.rsに移動)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Submap {
-    pub id: usize,
-    pub pose_x: f32,
-    pub pose_y: f32,
-    pub pose_theta: f32,
-    pub timestamp_ms: u128,
-    pub points_file: String,
-    pub info_file: String,
-}
-
 // アプリケーション全体の状態を管理する構造体
 pub struct ConsoleOutputEntry {
     pub text: String,
@@ -221,6 +214,8 @@ pub struct MyApp {
     pub(crate) submap_load_queue: Option<Vec<PathBuf>>,
     /// 最後にサブマップを読み込んだ時刻
     pub(crate) last_submap_load_time: Option<Instant>,
+    /// 地図読み込みセッション中に使用される共有占有グリッド
+    pub(crate) offline_map: Option<OccupancyGrid>,
 
     /// F6キーによるサジェスト補完が要求されたか
     pub(crate) suggestion_completion_requested: bool,
@@ -527,6 +522,7 @@ impl MyApp {
 
             submap_load_queue: None,
             last_submap_load_time: None,
+            offline_map: None,
             suggestion_completion_requested: false,
             command_submission_requested: false,
             clear_command_requested: false,
@@ -641,56 +637,132 @@ impl MyApp {
     pub fn load_single_submap(&mut self, ctx: &egui::Context, submap_path_str: &str) -> Result<()> {
         let path = std::path::PathBuf::from(submap_path_str);
         let info_path = path.join("info.yaml");
-        let points_path = path.join("points.txt");
+        let scans_path = path.join("scans.json");
 
-        if !info_path.exists() || !points_path.exists() {
+        if !info_path.exists() || !scans_path.exists() {
             return Err(anyhow::anyhow!(
-                "Submap info.yaml or points.txt not found in: {}",
+                "Submap info.yaml or scans.json not found in: {}",
                 path.display()
             ));
         }
 
-        // メタデータを読み込み
+        // --- Get the shared grid ---
+        let grid = match &mut self.offline_map {
+            Some(g) => g,
+            None => {
+                return Err(anyhow::anyhow!(
+                    "Offline map grid was not initialized before loading submap."
+                ));
+            }
+        };
+
+        // --- Load metadata and scans ---
         let info_file = fs::File::open(info_path)?;
         let submap_info: Submap = serde_yaml::from_reader(info_file)?;
-
-        // Isometry2を復元
-        let global_pose = Isometry2::new(
+        let submap_global_pose = Isometry2::new(
             nalgebra::Vector2::new(submap_info.pose_x, submap_info.pose_y),
             submap_info.pose_theta,
         );
 
-        // 点群データを読み込み
-        let points_data = fs::read_to_string(points_path)?;
-        let submap_points_local: Vec<Point2<f32>> = points_data
-            .lines()
-            .filter_map(|line| {
-                let mut parts = line.split_whitespace();
-                let x = parts.next()?.parse::<f32>().ok()?;
-                let y = parts.next()?.parse::<f32>().ok()?;
-                Some(Point2::new(x, y))
-            })
-            .collect();
+        let scans_file = fs::File::open(scans_path)?;
+        let scans_data: Vec<ScanData> =
+            serde_json::from_reader(scans_file).expect("Failed to parse scans.json");
 
-        // ワールド座標に変換
-        let transformed_points: Vec<Point2<f32>> = submap_points_local
-            .into_iter()
-            .map(|p| global_pose * p)
-            .collect();
+        // --- Define probability constants ---
+        let log_odds_occ =
+            (self.config.slam.prob_occupied / (1.0 - self.config.slam.prob_occupied)).ln();
+        let log_odds_free =
+            (self.config.slam.prob_free / (1.0 - self.config.slam.prob_free)).ln();
 
-        // 描画用のcurrent_map_pointsに現在のサブマップの点群を追加
-        self.current_map_points.extend(
-            transformed_points.into_iter().map(|p| (p, 1.0)), // 占有確率1.0として追加
-        );
+        // --- Process each scan to update the shared occupancy grid ---
+        for scan_data in scans_data {
+            let scan_pose_relative = Isometry2::new(
+                nalgebra::Vector2::new(scan_data.relative_pose.x, scan_data.relative_pose.y),
+                scan_data.relative_pose.theta,
+            );
+            let scan_pose_world = submap_global_pose * scan_pose_relative;
 
-        // サブマップリストと軌跡リストに追加
+            self.robot_trajectory.push((
+                egui::pos2(scan_pose_world.translation.x, scan_pose_world.translation.y),
+                scan_pose_world.rotation.angle(),
+            ));
+
+            let robot_pos_map = world_to_map_coords(
+                scan_pose_world.translation.x,
+                scan_pose_world.translation.y,
+                &self.config.slam,
+            );
+
+            for scan_point in scan_data.scan_points {
+                let endpoint_local = Point2::new(scan_point.x, scan_point.y);
+                let endpoint_world = scan_pose_world * endpoint_local;
+                let endpoint_map =
+                    world_to_map_coords(endpoint_world.x, endpoint_world.y, &self.config.slam);
+
+                // Update free space
+                for (px, py) in Bresenham::new(robot_pos_map, endpoint_map) {
+                    if px < 0
+                        || (px as usize) >= grid.width
+                        || py < 0
+                        || (py as usize) >= grid.height
+                    {
+                        continue;
+                    }
+
+                    // Stop updating free space when we get close to the endpoint
+                    let manhattan_dist = (px - endpoint_map.0).abs() + (py - endpoint_map.1).abs();
+                    if manhattan_dist <= 1 {
+                        break;
+                    }
+
+                    let index = py as usize * grid.width + px as usize;
+                    grid.data[index].log_odds = (grid.data[index].log_odds + log_odds_free)
+                        .clamp(
+                            self.config.slam.log_odds_clamp_min,
+                            self.config.slam.log_odds_clamp_max,
+                        );
+                }
+
+                // Update occupied space
+                if endpoint_map.0 >= 0
+                    && (endpoint_map.0 as usize) < grid.width
+                    && endpoint_map.1 >= 0
+                    && (endpoint_map.1 as usize) < grid.height
+                {
+                    let index = endpoint_map.1 as usize * grid.width + endpoint_map.0 as usize;
+                    grid.data[index].log_odds = (grid.data[index].log_odds + log_odds_occ).clamp(
+                        self.config.slam.log_odds_clamp_min,
+                        self.config.slam.log_odds_clamp_max,
+                    );
+                }
+            }
+        }
+
+        // --- Convert the final grid to points for visualization ---
+        // We do this after each submap to show the progress
+        self.current_map_points.clear();
+        for y in 0..grid.height {
+            for x in 0..grid.width {
+                let index = y * grid.width + x;
+                let cell_log_odds = grid.data[index].log_odds;
+
+                if (cell_log_odds - 0.0).abs() > 1e-6 {
+                    let world_x =
+                        ((x as isize - (self.config.slam.map_width / 2) as isize) as f32)
+                            * self.config.slam.csize;
+                    let world_y =
+                        (-(y as isize - (self.config.slam.map_height / 2) as isize) as f32)
+                            * self.config.slam.csize;
+
+                    let probability = log_odds_to_probability(cell_log_odds);
+                    self.current_map_points
+                        .push((Point2::new(world_x, world_y), probability));
+                }
+            }
+        }
+
+        // --- Final UI updates ---
         self.submaps.insert(submap_info.id, submap_info.clone());
-        self.robot_trajectory.push((
-            egui::pos2(global_pose.translation.x, global_pose.translation.y),
-            global_pose.rotation.angle(),
-        ));
-
-        // UIの更新をリクエスト
         ctx.request_repaint();
 
         Ok(())

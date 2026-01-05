@@ -24,6 +24,19 @@ impl SlamScreen {
         latest_scan_for_draw: &[(f32, f32, f32, f32, f32, f32, f32, f32)],
     ) {
         ui.heading("SLAM Mode");
+
+        // --- DEBUG INFO ---
+        ui.vertical(|ui| {
+            ui.label(format!("Trajectory points: {}", robot_trajectory.len()));
+            if let Some((pos, angle)) = robot_trajectory.first() {
+                ui.label(format!(
+                    "First point: ({:.2}, {:.2}), Angle: {:.2}",
+                    pos.x, pos.y, angle
+                ));
+            }
+        });
+        // --- END DEBUG INFO ---
+
         let (response, painter) = ui.allocate_painter(ui.available_size(), egui::Sense::hover());
         let rect = response.rect;
         *lidar_draw_rect = Some(rect);
@@ -77,11 +90,11 @@ impl SlamScreen {
                 .iter()
                 .map(|(world_pos, _angle)| to_screen.transform_pos(*world_pos))
                 .collect();
-            let line_stroke = egui::Stroke::new(1.0, egui::Color32::DARK_GRAY);
+            let line_stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
             painter.add(egui::Shape::line(trajectory_line_points, line_stroke));
 
             // 向きを示す三角形
-            let triangle_color = egui::Color32::GRAY;
+            let triangle_color = egui::Color32::YELLOW;
             for (i, (world_pos, angle)) in robot_trajectory.iter().enumerate() {
                 if i > 0 {
                     // 始点を除くすべての点で描画
@@ -111,14 +124,29 @@ impl SlamScreen {
             // Right = +X, Up = +Y
             let screen_pos = to_screen.transform_pos(egui::pos2(point.x, point.y));
             if rect.contains(screen_pos) {
-                // 占有確率に基づいて色を調整
-                let intensity = (*probability as f32 * 255.0).min(255.0).max(0.0);
-                let color = egui::Color32::from_rgb(
-                    (intensity * 0.4).min(255.0) as u8, // 青みを強くするためR,Gを低めに
-                    (intensity * 0.4).min(255.0) as u8,
-                    intensity as u8,
-                );
-                painter.circle_filled(screen_pos, 2.0, color);
+                let prob_f32 = *probability as f32;
+
+                // Probability == 0.5 is the initial state (unknown), so we don't draw it.
+                if (prob_f32 - 0.5).abs() < 1e-6 {
+                    continue;
+                }
+
+                // Occupied space (P > 0.5) -> Blueish, brighter with higher prob
+                if prob_f32 > 0.5 {
+                    let intensity = (prob_f32 - 0.5) / 0.5; // Normalize 0.5-1.0 to 0-1
+                    let color = egui::Color32::from_rgb(
+                        (intensity * 100.0) as u8,
+                        (intensity * 100.0) as u8,
+                        (intensity * 255.0) as u8,
+                    );
+                    painter.circle_filled(screen_pos, 2.0, color);
+                }
+                // Free space (P < 0.5) -> Dark gray
+                else {
+                    let gray_value = 35; // A constant, visible dark gray
+                    let color = egui::Color32::from_gray(gray_value);
+                    painter.circle_filled(screen_pos, 1.0, color);
+                }
             }
         }
 
