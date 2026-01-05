@@ -222,8 +222,7 @@ impl SlamManager {
         // --- Submap generation logic (unchanged for now) ---
         // TODO: This part might need refactoring as it relies on storing scans,
         // which is not ideal for long-term probabilistic mapping.
-        self.current_submap_scan_buffer
-            .push(raw_scan_data.to_vec());
+        self.current_submap_scan_buffer.push(raw_scan_data.to_vec());
         self.current_submap_robot_poses.push(self.robot_pose);
         self.current_submap_timestamps_buffer.push(timestamp);
 
@@ -468,8 +467,7 @@ impl SlamManager {
         let scans_file_name = "scans.json";
         let scans_file_path = submap_path.join(scans_file_name);
         let scans_file = fs::File::create(&scans_file_path).expect("Failed to create scans.json");
-        serde_json::to_writer_pretty(scans_file, &scans_data)
-            .expect("Failed to write scans.json");
+        serde_json::to_writer_pretty(scans_file, &scans_data).expect("Failed to write scans.json");
 
         // Save info.yaml
         let info_file_name = "info.yaml";

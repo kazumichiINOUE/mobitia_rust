@@ -31,7 +31,7 @@ impl SlamScreen {
 
         // Draw robot pose
         let robot_pose = current_robot_pose;
-        
+
         // In online SLAM, always center the view on the robot
         let robot_center_world = egui::pos2(robot_pose.translation.x, robot_pose.translation.y);
         let map_view_size = config.slam.online_slam_view_size;
@@ -81,7 +81,7 @@ impl SlamScreen {
                 }
             }
         }
-        
+
         // Draw the map points
         for (point, probability) in current_map_points {
             let screen_pos = to_screen.transform_pos(egui::pos2(point.x, point.y));
@@ -91,8 +91,9 @@ impl SlamScreen {
                 if (prob_f32 - 0.5).abs() < 1e-6 {
                     continue; // Don't draw unknown cells
                 }
-                
-                if prob_f32 > 0.5 { // Occupied
+
+                if prob_f32 > 0.5 {
+                    // Occupied
                     let intensity = (prob_f32 - 0.5) / 0.5;
                     let color = egui::Color32::from_rgb(
                         (intensity * 100.0) as u8,
@@ -100,7 +101,8 @@ impl SlamScreen {
                         (intensity * 255.0) as u8,
                     );
                     painter.circle_filled(screen_pos, 2.0, color);
-                } else { // Free
+                } else {
+                    // Free
                     let color = egui::Color32::from_gray(35);
                     painter.circle_filled(screen_pos, 1.0, color);
                 }
@@ -113,14 +115,10 @@ impl SlamScreen {
             let world_point = current_robot_pose * local_point;
             let screen_pos = to_screen.transform_pos(egui::pos2(world_point.x, world_point.y));
             if rect.contains(screen_pos) {
-                painter.circle_filled(
-                    screen_pos,
-                    2.5,
-                    egui::Color32::YELLOW,
-                );
+                painter.circle_filled(screen_pos, 2.5, egui::Color32::YELLOW);
             }
         }
-        
+
         // Draw the robot's current pose
         let robot_pos_on_screen = to_screen.transform_pos(egui::pos2(
             robot_pose.translation.x,

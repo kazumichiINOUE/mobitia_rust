@@ -674,8 +674,7 @@ impl MyApp {
         // --- Define probability constants ---
         let log_odds_occ =
             (self.config.slam.prob_occupied / (1.0 - self.config.slam.prob_occupied)).ln();
-        let log_odds_free =
-            (self.config.slam.prob_free / (1.0 - self.config.slam.prob_free)).ln();
+        let log_odds_free = (self.config.slam.prob_free / (1.0 - self.config.slam.prob_free)).ln();
 
         // --- Process each scan to update the shared occupancy grid ---
         for scan_data in scans_data {
@@ -719,11 +718,10 @@ impl MyApp {
                     }
 
                     let index = py as usize * grid.width + px as usize;
-                    grid.data[index].log_odds = (grid.data[index].log_odds + log_odds_free)
-                        .clamp(
-                            self.config.slam.log_odds_clamp_min,
-                            self.config.slam.log_odds_clamp_max,
-                        );
+                    grid.data[index].log_odds = (grid.data[index].log_odds + log_odds_free).clamp(
+                        self.config.slam.log_odds_clamp_min,
+                        self.config.slam.log_odds_clamp_max,
+                    );
                 }
 
                 // Update occupied space
@@ -752,12 +750,11 @@ impl MyApp {
                 let cell_log_odds = grid.data[index].log_odds;
 
                 if (cell_log_odds - 0.0).abs() > 1e-6 {
-                    let world_x =
-                        ((x as isize - (self.config.slam.map_width / 2) as isize) as f32)
-                            * self.config.slam.csize;
-                    let world_y =
-                        (-(y as isize - (self.config.slam.map_height / 2) as isize) as f32)
-                            * self.config.slam.csize;
+                    let world_x = ((x as isize - (self.config.slam.map_width / 2) as isize) as f32)
+                        * self.config.slam.csize;
+                    let world_y = (-(y as isize - (self.config.slam.map_height / 2) as isize)
+                        as f32)
+                        * self.config.slam.csize;
 
                     let probability = log_odds_to_probability(cell_log_odds);
                     self.current_map_points
