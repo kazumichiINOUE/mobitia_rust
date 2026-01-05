@@ -749,7 +749,7 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                 // 実際のロード処理は update ループに任せる
                 app.submap_load_queue = Some(found_submaps);
                 app.last_submap_load_time = None; // タイマーをリセット
-                app.app_mode = AppMode::Slam; // 先にSlamモードに切り替え
+                app.app_mode = AppMode::Map; // 先にMapモードに切り替え
             }
         },
         Commands::Fkeys => {

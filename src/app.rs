@@ -85,6 +85,7 @@ pub enum AppMode {
     Camera,
     Osmo,
     LidarAnalysis,
+    Map,
 }
 
 #[derive(PartialEq)]
@@ -234,6 +235,7 @@ pub struct MyApp {
     pub(crate) lidar_screen: crate::ui::lidar_screen::LidarScreen,
     pub(crate) lidar_analysis_screen: crate::ui::lidar_analysis_screen::LidarAnalysisScreen,
     pub(crate) slam_screen: crate::ui::slam_screen::SlamScreen,
+    pub(crate) map_screen: crate::ui::map_screen::MapScreen,
     pub(crate) demo_screen: crate::ui::demo_screen::DemoScreen,
     pub(crate) osmo_screen: crate::ui::osmo_screen::OsmoScreen,
     pub(crate) camera_screen: crate::ui::camera_screen::CameraScreen,
@@ -536,6 +538,7 @@ impl MyApp {
             lidar_screen: crate::ui::lidar_screen::LidarScreen::new(),
             lidar_analysis_screen: crate::ui::lidar_analysis_screen::LidarAnalysisScreen::new(),
             slam_screen: crate::ui::slam_screen::SlamScreen::new(),
+            map_screen: crate::ui::map_screen::MapScreen::new(),
             demo_screen: crate::ui::demo_screen::DemoScreen::new(),
             osmo_screen: crate::ui::osmo_screen::OsmoScreen::new(),
             camera_screen: crate::ui::camera_screen::CameraScreen::new(),
@@ -1952,10 +1955,20 @@ impl eframe::App for MyApp {
                     &self.config,
                     &mut self.lidar_draw_rect,
                     &self.current_robot_pose,
-                    &self.slam_map_bounding_box,
                     &self.robot_trajectory,
                     &self.current_map_points,
                     &self.latest_scan_for_draw,
+                );
+            }
+            AppMode::Map => {
+                self.map_screen.draw(
+                    ui,
+                    &self.config,
+                    &mut self.lidar_draw_rect,
+                    &self.current_robot_pose,
+                    &self.slam_map_bounding_box,
+                    &self.robot_trajectory,
+                    &self.current_map_points,
                 );
             }
             AppMode::Demo => {
