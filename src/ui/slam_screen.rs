@@ -34,6 +34,12 @@ impl SlamScreen {
                     pos.x, pos.y, angle
                 ));
             }
+            if let Some((pos, angle)) = robot_trajectory.last() {
+                ui.label(format!(
+                    "Last point: ({:.2}, {:.2}), Angle: {:.2}",
+                    pos.x, pos.y, angle
+                ));
+            }
         });
         // --- END DEBUG INFO ---
 

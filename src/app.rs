@@ -736,6 +736,8 @@ impl MyApp {
                     );
                 }
             }
+            // Update the current robot pose to the last scan's pose in this submap
+            self.current_robot_pose = scan_pose_world;
         }
 
         // --- Convert the final grid to points for visualization ---
