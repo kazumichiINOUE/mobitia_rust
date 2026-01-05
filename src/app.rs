@@ -824,14 +824,28 @@ impl MyApp {
                             + interpolated_y * interpolated_y)
                             .sqrt();
                         let interpolated_theta = interpolated_y.atan2(interpolated_x);
+
+                        // 特徴量も線形補間
+                        let interpolated_edge_ness = p1.4 * (1.0 - fraction) + p2.4 * fraction;
+                        let mut interpolated_nx = p1.5 * (1.0 - fraction) + p2.5 * fraction;
+                        let mut interpolated_ny = p1.6 * (1.0 - fraction) + p2.6 * fraction;
+
+                        // 法線ベクトルを正規化
+                        let len =
+                            (interpolated_nx.powi(2) + interpolated_ny.powi(2)).sqrt();
+                        if len > 1e-9 {
+                            interpolated_nx /= len;
+                            interpolated_ny /= len;
+                        }
+
                         final_scan.push((
                             interpolated_x,
                             interpolated_y,
                             interpolated_r,
                             interpolated_theta,
-                            0.0, // edge_ness
-                            0.0, // nx
-                            0.0, // ny
+                            interpolated_edge_ness,
+                            interpolated_nx,
+                            interpolated_ny,
                         ));
                     }
                 }
