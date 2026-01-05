@@ -78,7 +78,7 @@ pub fn compute_features(
             let dist_to_next = (point_current - point_next).norm();
 
             // 密度を判断するための距離閾値 (要調整)
-            let max_local_distance_threshold = 1.1; // 隣接点との距離が10cm以下の場合のみを密と判断
+            let max_local_distance_threshold = 0.05; // 隣接点との距離が10cm以下の場合のみを密と判断
 
             if dist_to_prev < max_local_distance_threshold && dist_to_next < max_local_distance_threshold {
                 // 点が密な場合のみ、コーナー検出ロジックを実行
@@ -94,34 +94,45 @@ pub fn compute_features(
         }
         // --- ステップエッジ検出ロジック ---
         // 次の点が存在する場合のみ評価
-        // scan_with_features には既に最初のループで法線などが格納されているため、scanではなくscan_with_featuresを使用
         if i + 1 < scan_with_features.len() {
             let point_current_coords = nalgebra::Point2::new(scan_with_features[i].0, scan_with_features[i].1);
             let point_next_coords = nalgebra::Point2::new(scan_with_features[i + 1].0, scan_with_features[i + 1].1);
             let distance_to_next = (point_next_coords - point_current_coords).norm();
 
-            // ステップエッジと判断する距離の閾値 (要調整)
-            // 現在のLiDARスキャンが疎な場合にステップエッジとして検出されないよう、
-            // 補間処理で使用されている max_dist_threshold を参考に閾値を設定
-            // interpolate_lidar_scanのmax_dist_threshold: 2.0 (m)
-            let step_edge_distance_threshold = 0.1; // 10cmに設定
+            // 点iのLiDARからの距離を取得 (タプルの3番目の要素 .2 が距離r)
+            let distance_from_lidar = scan_with_features[i].2;
 
-            if distance_to_next > step_edge_distance_threshold {
-                // この点がステップエッジの「手前側」の端点である可能性を評価
-                let linearity_at_step_edge = calculate_one_sided_linearity(
-                    &scan_with_features,
-                    i,
-                    neighborhood_size,
-                    true, // 手前側 (i-neighborhood_size から i まで) の点を評価
-                );
+            // 距離rに応じてステップエッジの閾値を動的に変更
+            // 例: 距離1mあたり5cmずつ閾値を大きくする
+            let step_edge_distance_threshold_base = 0.1; // ベースの閾値 10cm
+            let step_edge_distance_increase_per_meter = 0.05; // 1mあたり5cmずつ閾値を増加
+            let adaptive_step_edge_threshold = step_edge_distance_threshold_base + distance_from_lidar * step_edge_distance_increase_per_meter;
+            
+            // 遠距離の点をフィルタリングするための距離閾値 (要調整)
+            let max_distance_for_step_edge = 5.0; // 5メートル以上離れている点は対象外とする
 
-                // 直線性が高い場合に候補として記録
-                let linearity_threshold_for_corner = 0.8; // 0.8以上なら直線的と判断
+            if distance_from_lidar < max_distance_for_step_edge {
+                if distance_to_next > adaptive_step_edge_threshold {
+                    // 閾値より近い点のみ、ステップエッジコーナー検出を実行
+                    // この点がステップエッジの「手前側」の端点である可能性を評価
+                    let linearity_at_step_edge = calculate_one_sided_linearity(
+                        &scan_with_features,
+                        i,
+                        neighborhood_size,
+                        true, // 手前側 (i-neighborhood_size から i まで) の点を評価
+                    );
 
-                if linearity_at_step_edge > linearity_threshold_for_corner {
-                    println!("[S_Debug] Step edge candidate found at index {}. Distance: {:.3}, Linearity: {:.3}", i, distance_to_next, linearity_at_step_edge);
-                    step_edge_candidates.push((i, linearity_at_step_edge));
+                    // 直線性が高い場合に候補として記録
+                    let linearity_threshold_for_corner = 0.8; // 0.8以上なら直線的と判断
+
+                    if linearity_at_step_edge > linearity_threshold_for_corner {
+                        println!("[S_Debug] Step edge candidate found at index {}. DistNext: {:.3}, LidarDist: {:.3}, AdaptiveThresh: {:.3}, Linearity: {:.3}", i, distance_to_next, distance_from_lidar, adaptive_step_edge_threshold, linearity_at_step_edge);
+                        step_edge_candidates.push((i, linearity_at_step_edge));
+                    }
                 }
+            } else {
+                // 遠距離のステップエッジは無視する
+                // println!("[S_Debug] Step edge at index {} ignored due to large distance from lidar: {:.3}", i, distance_from_lidar);
             }
         }
         
