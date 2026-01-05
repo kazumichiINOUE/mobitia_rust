@@ -18,6 +18,7 @@ use crate::camera::{start_camera_thread, CameraInfo, CameraMessage};
 use crate::cli::Cli;
 use crate::demo::DemoManager;
 pub use crate::demo::DemoMode;
+use crate::lidar::features::{compute_features, interpolate_lidar_scan};
 use crate::lidar::{load_lidar_configurations, start_lidar_thread, LidarInfo};
 use crate::osmo::{start_osmo_thread, OsmoInfo, OsmoMessage};
 use crate::slam::SlamManager; // Add SlamManager
@@ -679,187 +680,6 @@ impl MyApp {
         Ok(())
     }
 
-    fn compute_features(
-        &self,
-        scan: &Vec<(f32, f32, f32, f32, f32, f32, f32, f32)>,
-    ) -> Vec<(f32, f32, f32, f32, f32, f32, f32, f32)> {
-        let mut scan_with_features = scan.clone();
-        let neighborhood_size = 5; // 片側5点、合計11点を近傍とする
-        if scan.len() < (neighborhood_size * 2 + 1) {
-            return scan_with_features;
-        }
-
-        for i in neighborhood_size..(scan.len() - neighborhood_size) {
-            // 1. 近傍点を収集 (iと、その前後5点ずつ)
-            let neighborhood: Vec<_> = (i - neighborhood_size..=i + neighborhood_size)
-                .map(|j| nalgebra::Point2::new(scan[j].0, scan[j].1))
-                .collect();
-
-            // 2. 重心を計算
-            let sum_vec: nalgebra::Vector2<f32> = neighborhood.iter().map(|p| p.coords).sum();
-            let mean = nalgebra::Point2::from(sum_vec / (neighborhood.len() as f32));
-
-            // 3. 共分散行列を計算
-            let mut covariance_matrix = nalgebra::Matrix2::<f32>::zeros();
-            for point in &neighborhood {
-                let centered_point = point - mean;
-                covariance_matrix += centered_point * centered_point.transpose();
-            }
-            covariance_matrix /= neighborhood.len() as f32;
-
-            // 4. 固有値と固有ベクトルを計算
-            let eigen = nalgebra::SymmetricEigen::new(covariance_matrix);
-            let eigenvalues = eigen.eigenvalues;
-            let eigenvectors = eigen.eigenvectors;
-
-            // 固有値をソートして、どちらが大きいか小さいか判断
-            let (lambda_1, lambda_2, normal_vector) = if eigenvalues[0] > eigenvalues[1] {
-                (eigenvalues[0], eigenvalues[1], eigenvectors.column(1))
-            } else {
-                (eigenvalues[1], eigenvalues[0], eigenvectors.column(0))
-            };
-
-            // ここに法線ベクトルの向きを修正するロジックを挿入
-            // 点 (px, py) と法線ベクトル (nx, ny) の内積を計算し、Lidar側を向くように調整
-            let px = scan[i].0;
-            let py = scan[i].1;
-            let nx = normal_vector[0];
-            let ny = normal_vector[1];
-
-            // Lidarの原点 (0,0) から点 (px, py) へのベクトルと法線ベクトルの内積を計算
-            // 内積が負の場合、法線ベクトルはLidarと反対方向を向いているため反転させる
-            let dot_product = px * nx + py * ny;
-
-            let (corrected_nx, corrected_ny) = if dot_product < 0.0 {
-                (-nx, -ny)
-            } else {
-                (nx, ny)
-            };
-
-            // 5. 特徴量（直線らしさ）を計算
-            let linearity = if lambda_1 > 1e-9 {
-                (lambda_1 - lambda_2) / lambda_1
-            } else {
-                0.0
-            };
-
-            // 6. シグモイド関数で平滑化し、「エッジらしさ」を計算
-            let sharpness = 10.0;
-            let sensitivity = 0.7;
-            let edge_ness = 1.0 - (1.0 / (1.0 + (-sharpness * (linearity - sensitivity)).exp()));
-
-            // 結果を格納
-            scan_with_features[i].4 = edge_ness;
-            scan_with_features[i].5 = corrected_nx; // 修正後の法線ベクトルを格納
-            scan_with_features[i].6 = corrected_ny; // 修正後の法線ベクトルを格納
-        }
-
-        scan_with_features
-    }
-
-    /// 隣接点間距離が一定以上離れている場合に、線形補間して点を追加する
-    /// scan: 各点の (x, y, r, theta)
-    /// angle_threshold: 補間を開始する角度差の閾値 (ラジアン)
-    /// interpolation_interval_angle: 補間された点の角度間隔 (ラジアン)
-    fn interpolate_lidar_scan(
-        &self,
-        scan: &Vec<(f32, f32, f32, f32, f32, f32, f32, f32)>,
-        min_dist_threshold: f32,
-        max_dist_threshold: f32,
-        interpolation_interval: f32,
-    ) -> Vec<(f32, f32, f32, f32, f32, f32, f32, f32)> {
-        if scan.is_empty() {
-            return Vec::new();
-        }
-
-        // 閾値を2乗しておくことで、ループ内のsqrt()計算を削減
-        let min_dist_threshold_sq = min_dist_threshold * min_dist_threshold;
-        let max_dist_threshold_sq = max_dist_threshold * max_dist_threshold;
-
-        // ステップ1: 間引き
-        let mut thinned_scan = Vec::new();
-        thinned_scan.push(scan[0]);
-        let mut last_point_thinned = scan[0]; // 最後に追加した間引き点
-
-        for i in 1..scan.len() {
-            let current_point = scan[i];
-            let dx = current_point.0 - last_point_thinned.0;
-            let dy = current_point.1 - last_point_thinned.1;
-            let distance_xy_sq = dx * dx + dy * dy;
-
-            if distance_xy_sq >= min_dist_threshold_sq {
-                thinned_scan.push(current_point);
-                last_point_thinned = current_point;
-            }
-        }
-
-        // ステップ2: 補間
-        let mut final_scan = Vec::new();
-        if thinned_scan.is_empty() {
-            return final_scan;
-        }
-
-        // 最初の間引き点を追加
-        final_scan.push(thinned_scan[0]);
-
-        // .windows(2) を使う
-        for window in thinned_scan.windows(2) {
-            let p1 = window[0];
-            let p2 = window[1];
-
-            let dx = p2.0 - p1.0;
-            let dy = p2.1 - p1.1;
-            let distance_xy_sq = dx * dx + dy * dy;
-
-            // 補間条件をチェック (2乗で比較)
-            if distance_xy_sq < max_dist_threshold_sq {
-                let distance_xy = distance_xy_sq.sqrt(); // ここで初めて平方根を計算
-                let num_steps = (distance_xy / interpolation_interval).floor() as usize;
-                if num_steps > 0 {
-                    for step in 1..=num_steps {
-                        let fraction = step as f32 * interpolation_interval / distance_xy;
-                        let interpolated_x = p1.0 + dx * fraction;
-                        let interpolated_y = p1.1 + dy * fraction;
-                        let interpolated_r = (interpolated_x * interpolated_x
-                            + interpolated_y * interpolated_y)
-                            .sqrt();
-                        let interpolated_theta = interpolated_y.atan2(interpolated_x);
-
-                        // 特徴量も線形補間
-                        let interpolated_edge_ness = p1.4 * (1.0 - fraction) + p2.4 * fraction;
-                        let mut interpolated_nx = p1.5 * (1.0 - fraction) + p2.5 * fraction;
-                        let mut interpolated_ny = p1.6 * (1.0 - fraction) + p2.6 * fraction;
-                        let interpolated_corner_ness = p1.7 * (1.0 - fraction) + p2.7 * fraction; // ここを追加
-
-                        // 法線ベクトルを正規化
-                        let len =
-                            (interpolated_nx.powi(2) + interpolated_ny.powi(2)).sqrt();
-                        if len > 1e-9 {
-                            interpolated_nx /= len;
-                            interpolated_ny /= len;
-                        }
-
-                        final_scan.push((
-                            interpolated_x,
-                            interpolated_y,
-                            interpolated_r,
-                            interpolated_theta,
-                            interpolated_edge_ness,
-                            interpolated_nx,
-                            interpolated_ny,
-                            interpolated_corner_ness, // ここを追加
-                        ));
-                    }
-                }
-            }
-
-            // p2 を追加 (thinned_scan の各点を最終結果に追加)
-            final_scan.push(p2);
-        }
-
-        final_scan
-    }
-
     /// Updates the suggestion list based on the current input string.
     fn update_suggestions(&mut self) {
         let input = self.input_string.trim_start();
@@ -1302,7 +1122,7 @@ impl eframe::App for MyApp {
                     }
 
                     // フィルタリング後のスキャンに対して特徴量を計算
-                    let scan_with_features = self.compute_features(&filtered_scan);
+                    let scan_with_features = compute_features(&filtered_scan);
 
                     // UI用に点群を更新 (特徴量計算済み)
                     if let Some(lidar_state) = self.lidars.get_mut(id) {
@@ -1380,7 +1200,7 @@ impl eframe::App for MyApp {
 
                             // 結合した生スキャンデータを補間
                             // FIXME: 閾値と間隔は調整が必要
-                            let interpolated_combined_scan = self.interpolate_lidar_scan(
+                            let interpolated_combined_scan = interpolate_lidar_scan(
                                 &raw_combined_scan,
                                 0.1,  // min_dist_threshold (10cm)
                                 2.0,  // max_dist_threshold (2m)
@@ -2159,19 +1979,18 @@ impl eframe::App for MyApp {
                 let robot_origin_screen = to_screen.transform_pos(egui::pos2(0.0, 0.0));
                 painter.circle_filled(robot_origin_screen, 5.0, egui::Color32::from_rgb(255, 0, 0));
 
-                // 各LiDARの点群を描画
+                // 各LiDARの点群を描画 (フェーズ1: 通常の点と法線)
                 for lidar_state in &self.lidars {
                     let rotation = lidar_state.rotation;
                     let origin = lidar_state.origin;
 
                     for point in &lidar_state.points {
-                        // Lidar座標系での点 (px, py, r, theta, feature, nx, ny, corner)
                         let px_raw = point.0;
                         let py_raw = point.1;
                         let edge_ness = point.4;
                         let nx_raw = point.5;
                         let ny_raw = point.6;
-                        let corner_ness = point.7; // corner_nessを取得
+                        let corner_ness = point.7;
 
                         // Lidarの回転を適用
                         let px_rotated = px_raw * rotation.cos() - py_raw * rotation.sin();
@@ -2186,11 +2005,8 @@ impl eframe::App for MyApp {
 
                         let screen_pos = to_screen.transform_pos(egui::pos2(world_x, world_y));
 
-                        // corner_ness が閾値以上の場合、色をマゼンタに、サイズを大きくする
-                        let corner_threshold = 0.5; // この閾値は調整が必要
-                        if corner_ness > corner_threshold {
-                            painter.circle_filled(screen_pos, 3.0, egui::Color32::from_rgb(255, 0, 255)); // マゼンタ色
-                        } else {
+                        let corner_threshold = 0.5; // この閾値は調整可能
+                        if corner_ness <= corner_threshold { // コーナーでない点
                             // edge_ness に基づいて色を決定
                             let color = egui::Color32::from_rgb(
                                 (edge_ness * 255.0) as u8,         // エッジらしさが高いほど赤が強く
@@ -2198,20 +2014,47 @@ impl eframe::App for MyApp {
                                 0,                                 // 青は常に0
                             );
                             painter.circle_filled(screen_pos, 2.0, color);
-                        }
 
-                        // 法線ベクトルを描画 (edge_ness が閾値以上の場合のみ)
-                        if edge_ness > 0.1 {
-                            // ある程度エッジらしい点のみ法線を描画
-                            let normal_len = 0.1; // 法線ベクトルの長さ (ワールド座標)
-                            let normal_end_x = world_x + nx_rotated * normal_len;
-                            let normal_end_y = world_y + ny_rotated * normal_len;
-                            let normal_end_screen =
-                                to_screen.transform_pos(egui::pos2(normal_end_x, normal_end_y));
-                            painter.line_segment(
-                                [screen_pos, normal_end_screen],
-                                egui::Stroke::new(1.0, egui::Color32::YELLOW),
-                            );
+                            // 法線ベクトルを描画 (edge_ness が閾値以上の場合のみ)
+                            if edge_ness > 0.1 {
+                                // ある程度エッジらしい点のみ法線を描画
+                                let normal_len = 0.1; // 法線ベクトルの長さ (ワールド座標)
+                                let normal_end_x = world_x + nx_rotated * normal_len;
+                                let normal_end_y = world_y + ny_rotated * normal_len;
+                                let normal_end_screen =
+                                    to_screen.transform_pos(egui::pos2(normal_end_x, normal_end_y));
+                                painter.line_segment(
+                                    [screen_pos, normal_end_screen],
+                                    egui::Stroke::new(1.0, egui::Color32::YELLOW),
+                                );
+                            }
+                        }
+                    }
+                }
+
+                // 各LiDARの点群を描画 (フェーズ2: コーナー点のみを最前面に描画)
+                for lidar_state in &self.lidars {
+                    let rotation = lidar_state.rotation;
+                    let origin = lidar_state.origin;
+
+                    for point in &lidar_state.points {
+                        let px_raw = point.0;
+                        let py_raw = point.1;
+                        let corner_ness = point.7;
+
+                        // Lidarの回転を適用
+                        let px_rotated = px_raw * rotation.cos() - py_raw * rotation.sin();
+                        let py_rotated = px_raw * rotation.sin() + py_raw * rotation.cos();
+
+                        // ワールド座標に変換 (Lidarの原点オフセットを加える)
+                        let world_x = px_rotated + origin.x;
+                        let world_y = py_rotated + origin.y;
+
+                        let screen_pos = to_screen.transform_pos(egui::pos2(world_x, world_y));
+
+                        let corner_threshold = 0.5; // この閾値は調整可能
+                        if corner_ness > corner_threshold { // コーナー点のみを描画
+                            painter.circle_filled(screen_pos, 5.0, egui::Color32::from_rgb(255, 0, 255)); // マゼンタ色で大きく描画
                         }
                     }
                 }

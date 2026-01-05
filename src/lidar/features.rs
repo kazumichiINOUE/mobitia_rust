@@ -69,25 +69,27 @@ pub fn compute_features(
             let normal_after_sum: nalgebra::Vector2<f32> = normals_after.iter().sum();
             let normal_before = normal_before_sum.normalize();
             let normal_after = normal_after_sum.normalize();
-            let dot_product_normals = normal_before.dot(&normal_after);
-
+            
+            // --- 密度チェックロジック ---
             let point_current = nalgebra::Point2::new(scan[i].0, scan[i].1);
-            let point_before =
-                nalgebra::Point2::new(scan[i - neighborhood_size].0, scan[i - neighborhood_size].1);
-            let point_after =
-                nalgebra::Point2::new(scan[i + neighborhood_size].0, scan[i + neighborhood_size].1);
+            let point_prev = nalgebra::Point2::new(scan[i-1].0, scan[i-1].1);
+            let point_next = nalgebra::Point2::new(scan[i+1].0, scan[i+1].1);
+            let dist_to_prev = (point_current - point_prev).norm();
+            let dist_to_next = (point_current - point_next).norm();
 
-            let dist_before = (point_current - point_before).norm();
-            let dist_after = (point_current - point_after).norm();
-            
-            // --- Debug Prints ---
-            println!("[Debug] i: {}, dot_product: {:.3}, dist_before: {:.3}, dist_after: {:.3}", i, dot_product_normals, dist_before, dist_after);
+            // 密度を判断するための距離閾値 (要調整)
+            let max_local_distance_threshold = 1.1; // 隣接点との距離が10cm以下の場合のみを密と判断
 
-            corner_ness = 1.0 - dot_product_normals.abs();
-            
-            let min_dist_threshold = 0.5;
-            if dist_before < min_dist_threshold || dist_after < min_dist_threshold {
-                corner_ness = 0.0;
+            if dist_to_prev < max_local_distance_threshold && dist_to_next < max_local_distance_threshold {
+                // 点が密な場合のみ、コーナー検出ロジックを実行
+                let dot_product_normals = normal_before.dot(&normal_after);
+                corner_ness = 1.0 - dot_product_normals.abs();
+                println!("[C_Debug] corner_ness updated for index {}: {:.3}", i, corner_ness);
+
+            } else {
+                // 疎な領域では corner_ness は計算しない (0のまま)
+                // このデバッグ出力はログが多すぎる場合はコメントアウトする
+                // println!("[C_Debug] i: {} - Skipped due to sparse points. dist_prev: {:.3}, dist_next: {:.3}", i, dist_to_prev, dist_to_next);
             }
         }
         // --- ステップエッジ検出ロジック ---
@@ -102,25 +104,23 @@ pub fn compute_features(
             // 現在のLiDARスキャンが疎な場合にステップエッジとして検出されないよう、
             // 補間処理で使用されている max_dist_threshold を参考に閾値を設定
             // interpolate_lidar_scanのmax_dist_threshold: 2.0 (m)
-            let step_edge_distance_threshold = 1.0; // 例えば1.0メートル以上離れていたら
+            let step_edge_distance_threshold = 0.1; // 10cmに設定
 
             if distance_to_next > step_edge_distance_threshold {
                 // この点がステップエッジの「手前側」の端点である可能性を評価
                 let linearity_at_step_edge = calculate_one_sided_linearity(
-                    &scan_with_features, // scan_with_features を使用
+                    &scan_with_features,
                     i,
-                    neighborhood_size, // compute_features全体で使われているneighborhood_sizeを流用
+                    neighborhood_size,
                     true, // 手前側 (i-neighborhood_size から i まで) の点を評価
                 );
-                
+
                 // 直線性が高い場合に候補として記録
-                // この閾値はLiDARデータのノイズ特性や求めるコーナーのシャープさによって調整が必要
-                let linearity_threshold_for_corner = 0.8; // 例えば0.8以上なら直線的と判断
+                let linearity_threshold_for_corner = 0.8; // 0.8以上なら直線的と判断
 
                 if linearity_at_step_edge > linearity_threshold_for_corner {
+                    println!("[S_Debug] Step edge candidate found at index {}. Distance: {:.3}, Linearity: {:.3}", i, distance_to_next, linearity_at_step_edge);
                     step_edge_candidates.push((i, linearity_at_step_edge));
-                    // デバッグ用に println! を追加
-                    // println!("[Debug] Step edge corner candidate detected at index {}, linearity: {:.3}", i, linearity_at_step_edge);
                 }
             }
         }
@@ -137,8 +137,7 @@ pub fn compute_features(
         // そのまま高めのcorner_nessとして設定
         // ただし、既に高いcorner_nessが設定されている場合は、より高い方を採用する
         scan_with_features[idx].7 = scan_with_features[idx].7.max(linearity_val);
-        // デバッグ用に println! を追加
-        println!("[Debug] Updated corner_ness for step edge candidate at index {} to {:.3}", idx, scan_with_features[idx].7);
+        println!("[S_Debug] Updated corner_ness for step edge at index {}: {:.3}", idx, scan_with_features[idx].7);
     }
 
     // Temporary debug print
