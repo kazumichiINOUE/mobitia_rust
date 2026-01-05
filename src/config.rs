@@ -82,6 +82,7 @@ pub struct SlamConfig {
     pub position_score_weight: f64,
     pub feature_score_weight: f64,
     pub normal_alignment_score_weight: f64,
+    pub corner_score_weight: f64,
 
     // --- Pose Update Penalties ---
     pub translation_penalty_weight: f64,
@@ -161,6 +162,7 @@ impl Default for SlamConfig {
             position_score_weight: 0.1,
             feature_score_weight: 0.4,
             normal_alignment_score_weight: 0.5,
+            corner_score_weight: 0.3,
 
             // --- Pose Update Penalties ---
             translation_penalty_weight: 100.0,

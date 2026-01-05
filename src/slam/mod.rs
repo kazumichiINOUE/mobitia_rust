@@ -154,6 +154,13 @@ impl SlamManager {
             .map(|(p, _, _, _, _)| *p)
             .collect();
 
+        // --- 生のコーナー点群の作成 ---
+        let raw_corner_points: Vec<(Point2<f32>, f32)> = raw_scan_data
+            .iter()
+            .filter(|p| p.7 > 0.5) // corner_nessが0.5より大きい点をフィルタリング (閾値は要調整)
+            .map(|p| (Point2::new(p.0, p.1), p.7)) // (point, corner_ness)
+            .collect();
+
         if self.is_initial_scan {
             self.robot_pose = Isometry2::identity();
             self.is_initial_scan = false;
@@ -161,7 +168,7 @@ impl SlamManager {
             // マッチングには補間済みのスキャンデータを使用
             let (best_pose, _score) =
                 self.de_solver
-                    .optimize_de(&self.map_gmap, &matching_scan, self.robot_pose);
+                    .optimize_de(&self.map_gmap, &matching_scan, &raw_corner_points, self.robot_pose);
             self.robot_pose = best_pose;
         }
 
