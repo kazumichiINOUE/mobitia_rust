@@ -70,42 +70,6 @@ impl MapScreen {
             rect, // 実際の描画エリア
         );
 
-        // 軌跡の線と向き（三角形）を描画
-        if robot_trajectory.len() > 1 {
-            // 軌跡の線
-            let trajectory_line_points: Vec<egui::Pos2> = robot_trajectory
-                .iter()
-                .map(|(world_pos, _angle)| to_screen.transform_pos(*world_pos))
-                .collect();
-            let line_stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
-            painter.add(egui::Shape::line(trajectory_line_points, line_stroke));
-
-            // 向きを示す三角形
-            let triangle_color = egui::Color32::YELLOW;
-            for (i, (world_pos, angle)) in robot_trajectory.iter().enumerate() {
-                if i > 0 {
-                    // 始点を除くすべての点で描画
-                    let center_screen = to_screen.transform_pos(*world_pos);
-
-                    // 三角形の頂点を定義
-                    let triangle_size = 20.0; // 三角形の大きさ
-                    let p1 = center_screen + egui::vec2(angle.cos(), -angle.sin()) * triangle_size; // 先端
-                    let angle_left = *angle + (150.0f32).to_radians();
-                    let p2 = center_screen
-                        + egui::vec2(angle_left.cos(), -angle_left.sin()) * triangle_size * 0.7;
-                    let angle_right = *angle - (150.0f32).to_radians();
-                    let p3 = center_screen
-                        + egui::vec2(angle_right.cos(), -angle_right.sin()) * triangle_size * 0.7;
-
-                    painter.add(egui::Shape::convex_polygon(
-                        vec![p1, p2, p3],
-                        triangle_color,
-                        egui::Stroke::NONE,
-                    ));
-                }
-            }
-        }
-
         // Draw the map points
         for (point, probability) in current_map_points {
             // Right = +X, Up = +Y
@@ -130,9 +94,55 @@ impl MapScreen {
                 }
                 // Free space (P < 0.5) -> Dark gray
                 else {
-                    let gray_value = 35; // A constant, visible dark gray
+                    let gray_value = 50; // 明るくした灰色
                     let color = egui::Color32::from_gray(gray_value);
                     painter.circle_filled(screen_pos, 1.0, color);
+                }
+            }
+        }
+
+        // 軌跡の線と向き（三角形）を描画
+        if robot_trajectory.len() > 1 {
+            // 軌跡の線
+            let trajectory_line_points: Vec<egui::Pos2> = robot_trajectory
+                .iter()
+                .map(|(world_pos, _angle)| to_screen.transform_pos(*world_pos))
+                .collect();
+            let line_stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
+            painter.add(egui::Shape::line(trajectory_line_points, line_stroke));
+
+            // 各スキャン姿勢の中心位置を点で描画
+            for (world_pos, _angle) in robot_trajectory.iter() {
+                let screen_pos = to_screen.transform_pos(*world_pos);
+                if rect.contains(screen_pos) {
+                    painter.circle_filled(screen_pos, 2.0, egui::Color32::LIGHT_BLUE);
+                }
+            }
+
+            // 向きを示すくの字マーカー
+            let chevron_color = egui::Color32::from_rgb(200, 200, 100); // 彩度を落とした黄色
+            let chevron_stroke = egui::Stroke::new(1.0, chevron_color); // 細めの線
+            let chevron_size = 8.0; // 小さめのサイズ
+
+            for (i, (world_pos, angle)) in robot_trajectory.iter().enumerate() {
+                if i > 0 {
+                    let center_screen = to_screen.transform_pos(*world_pos);
+
+                    // くの字の頂点を定義
+                    // 先端
+                    let p1 = center_screen + egui::vec2(angle.cos(), -angle.sin()) * chevron_size;
+                    // 左後ろの点 (先端から約135度)
+                    let angle_left = *angle + (135.0f32).to_radians();
+                    let p2 = center_screen
+                        + egui::vec2(angle_left.cos(), -angle_left.sin()) * chevron_size * 0.7;
+                    // 右後ろの点 (先端から約-135度)
+                    let angle_right = *angle - (135.0f32).to_radians();
+                    let p3 = center_screen
+                        + egui::vec2(angle_right.cos(), -angle_right.sin()) * chevron_size * 0.7;
+
+                    // 2本の線分でくの字を描画
+                    painter.add(egui::Shape::line_segment([p2, p1], chevron_stroke));
+                    painter.add(egui::Shape::line_segment([p3, p1], chevron_stroke));
                 }
             }
         }
