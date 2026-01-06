@@ -930,32 +930,38 @@ impl eframe::App for MyApp {
                     self.current_submap_load_progress = None; // Stop processing on error
                 }
             }
-                } else if let Some(path_to_load) = self
-                    .submap_load_queue
-                    .as_mut()
-                    .and_then(|q| if q.is_empty() { None } else { Some(q.remove(0)) })
-                {
-                    let submap_path_str = path_to_load.to_string_lossy().into_owned();
-                    if let Err(e) = self.start_submap_loading_session(&submap_path_str) {
-                        self.command_history.push(ConsoleOutputEntry {
-                            text: format!(
-                                "ERROR starting to load submap '{}': {}",
-                                path_to_load.display(),
-                                e
-                            ),
-                            group_id: self.next_group_id,
-                        });
-                    }
-        
-                    if self.submap_load_queue.as_ref().map_or(false, |q| q.is_empty()) {
-                        self.command_history.push(ConsoleOutputEntry {
-                            text: "All submap loading sessions initiated.".to_string(),
-                            group_id: self.next_group_id,
-                        });
-                        self.submap_load_queue = None;
-                    }
-                    ctx.request_repaint();
-                }
+        } else if let Some(path_to_load) = self.submap_load_queue.as_mut().and_then(|q| {
+            if q.is_empty() {
+                None
+            } else {
+                Some(q.remove(0))
+            }
+        }) {
+            let submap_path_str = path_to_load.to_string_lossy().into_owned();
+            if let Err(e) = self.start_submap_loading_session(&submap_path_str) {
+                self.command_history.push(ConsoleOutputEntry {
+                    text: format!(
+                        "ERROR starting to load submap '{}': {}",
+                        path_to_load.display(),
+                        e
+                    ),
+                    group_id: self.next_group_id,
+                });
+            }
+
+            if self
+                .submap_load_queue
+                .as_ref()
+                .map_or(false, |q| q.is_empty())
+            {
+                self.command_history.push(ConsoleOutputEntry {
+                    text: "All submap loading sessions initiated.".to_string(),
+                    group_id: self.next_group_id,
+                });
+                self.submap_load_queue = None;
+            }
+            ctx.request_repaint();
+        }
 
         // --- データ更新 ---
         while let Ok(xppen_message) = self.xppen_message_receiver.try_recv() {

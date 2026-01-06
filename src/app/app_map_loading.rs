@@ -62,8 +62,7 @@ impl MyApp {
 
         let log_odds_occ =
             (self.config.slam.prob_occupied / (1.0 - self.config.slam.prob_occupied)).ln();
-        let log_odds_free =
-            (self.config.slam.prob_free / (1.0 - self.config.slam.prob_free)).ln();
+        let log_odds_free = (self.config.slam.prob_free / (1.0 - self.config.slam.prob_free)).ln();
 
         self.current_submap_load_progress = Some(SubmapLoadProgress {
             submap_id: submap_info.id,
