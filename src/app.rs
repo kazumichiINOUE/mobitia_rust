@@ -1807,6 +1807,9 @@ impl eframe::App for MyApp {
                 );
             }
             AppMode::Map => {
+                let map_loading_complete = self.current_submap_load_progress.is_none()
+                    && (self.submap_load_queue.is_none()
+                        || self.submap_load_queue.as_ref().unwrap().is_empty());
                 self.map_screen.draw(
                     ui,
                     &self.config,
@@ -1815,6 +1818,7 @@ impl eframe::App for MyApp {
                     &self.slam_map_bounding_box,
                     &self.robot_trajectory,
                     &self.current_map_points,
+                    map_loading_complete,
                 );
             }
             AppMode::Demo => {
