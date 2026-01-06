@@ -1,11 +1,9 @@
 use anyhow::Result;
-use bresenham::Bresenham;
 use chrono::Local;
 use clap::Parser;
 use eframe::egui;
 use egui::Vec2;
-use nalgebra::{Isometry2, Point2};
-use serde::{Deserialize, Serialize};
+use nalgebra::Isometry2;
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
@@ -13,21 +11,20 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Instant, SystemTime};
 
 use crate::camera::{start_camera_thread, CameraInfo, CameraMessage};
 use crate::cli::Cli;
-use crate::config::SlamConfig;
+use crate::config::Config;
 use crate::demo::DemoManager;
 pub use crate::demo::DemoMode;
 use crate::lidar::features::{compute_features, interpolate_lidar_scan};
 use crate::lidar::{load_lidar_configurations, start_lidar_thread, LidarInfo};
 use crate::osmo::{start_osmo_thread, OsmoInfo, OsmoMessage};
-use crate::slam::{
-    log_odds_to_probability, world_to_map_coords, CellData, OccupancyGrid, ScanData, SlamManager,
-    Submap,
-};
+use crate::slam::{OccupancyGrid, SlamManager, Submap};
 use crate::xppen::{start_xppen_thread, XppenMessage};
+
+mod app_map_loading;
 
 // Camera一台分の状態を保持する構造体
 #[derive(Clone)]
@@ -213,6 +210,8 @@ pub struct MyApp {
 
     /// `list-and-load`コマンドで読み込むサブマップのパスのキュー
     pub(crate) submap_load_queue: Option<Vec<PathBuf>>,
+    /// 現在読み込み中のサブマップの進捗
+    pub(crate) current_submap_load_progress: Option<app_map_loading::SubmapLoadProgress>,
     /// 最後にサブマップを読み込んだ時刻
     pub(crate) last_submap_load_time: Option<Instant>,
     /// 地図読み込みセッション中に使用される共有占有グリッド
@@ -422,7 +421,7 @@ impl MyApp {
 
                                     let slam_start_time = web_time::Instant::now();
                                     slam_manager.update(&raw_scan, &interpolated_scan, timestamp);
-                                    let slam_duration = slam_start_time.elapsed();
+                                    let _slam_duration = slam_start_time.elapsed();
                                     //println!("[SLAM Thread] Update took: {:?}", slam_duration);
 
                                     slam_result_sender
@@ -523,6 +522,7 @@ impl MyApp {
             slam_map_bounding_box: None,
 
             submap_load_queue: None,
+            current_submap_load_progress: None,
             last_submap_load_time: None,
             offline_map: None,
             suggestion_completion_requested: false,
@@ -635,139 +635,6 @@ impl MyApp {
                     .unwrap_or_default(),
             }
         });
-    }
-
-    pub fn load_single_submap(&mut self, ctx: &egui::Context, submap_path_str: &str) -> Result<()> {
-        let path = std::path::PathBuf::from(submap_path_str);
-        let info_path = path.join("info.yaml");
-        let scans_path = path.join("scans.json");
-
-        if !info_path.exists() || !scans_path.exists() {
-            return Err(anyhow::anyhow!(
-                "Submap info.yaml or scans.json not found in: {}",
-                path.display()
-            ));
-        }
-
-        // --- Get the shared grid ---
-        let grid = match &mut self.offline_map {
-            Some(g) => g,
-            None => {
-                return Err(anyhow::anyhow!(
-                    "Offline map grid was not initialized before loading submap."
-                ));
-            }
-        };
-
-        // --- Load metadata and scans ---
-        let info_file = fs::File::open(info_path)?;
-        let submap_info: Submap = serde_yaml::from_reader(info_file)?;
-        let submap_global_pose = Isometry2::new(
-            nalgebra::Vector2::new(submap_info.pose_x, submap_info.pose_y),
-            submap_info.pose_theta,
-        );
-
-        let scans_file = fs::File::open(scans_path)?;
-        let scans_data: Vec<ScanData> =
-            serde_json::from_reader(scans_file).expect("Failed to parse scans.json");
-
-        // --- Define probability constants ---
-        let log_odds_occ =
-            (self.config.slam.prob_occupied / (1.0 - self.config.slam.prob_occupied)).ln();
-        let log_odds_free = (self.config.slam.prob_free / (1.0 - self.config.slam.prob_free)).ln();
-
-        // --- Process each scan to update the shared occupancy grid ---
-        for scan_data in scans_data {
-            let scan_pose_relative = Isometry2::new(
-                nalgebra::Vector2::new(scan_data.relative_pose.x, scan_data.relative_pose.y),
-                scan_data.relative_pose.theta,
-            );
-            let scan_pose_world = submap_global_pose * scan_pose_relative;
-
-            self.robot_trajectory.push((
-                egui::pos2(scan_pose_world.translation.x, scan_pose_world.translation.y),
-                scan_pose_world.rotation.angle(),
-            ));
-
-            let robot_pos_map = world_to_map_coords(
-                scan_pose_world.translation.x,
-                scan_pose_world.translation.y,
-                &self.config.slam,
-            );
-
-            for scan_point in scan_data.scan_points {
-                let endpoint_local = Point2::new(scan_point.x, scan_point.y);
-                let endpoint_world = scan_pose_world * endpoint_local;
-                let endpoint_map =
-                    world_to_map_coords(endpoint_world.x, endpoint_world.y, &self.config.slam);
-
-                // Update free space
-                for (px, py) in Bresenham::new(robot_pos_map, endpoint_map) {
-                    if px < 0
-                        || (px as usize) >= grid.width
-                        || py < 0
-                        || (py as usize) >= grid.height
-                    {
-                        continue;
-                    }
-
-                    // Stop updating free space when we get close to the endpoint
-                    let manhattan_dist = (px - endpoint_map.0).abs() + (py - endpoint_map.1).abs();
-                    if manhattan_dist <= 1 {
-                        break;
-                    }
-
-                    let index = py as usize * grid.width + px as usize;
-                    grid.data[index].log_odds = (grid.data[index].log_odds + log_odds_free).clamp(
-                        self.config.slam.log_odds_clamp_min,
-                        self.config.slam.log_odds_clamp_max,
-                    );
-                }
-
-                // Update occupied space
-                if endpoint_map.0 >= 0
-                    && (endpoint_map.0 as usize) < grid.width
-                    && endpoint_map.1 >= 0
-                    && (endpoint_map.1 as usize) < grid.height
-                {
-                    let index = endpoint_map.1 as usize * grid.width + endpoint_map.0 as usize;
-                    grid.data[index].log_odds = (grid.data[index].log_odds + log_odds_occ).clamp(
-                        self.config.slam.log_odds_clamp_min,
-                        self.config.slam.log_odds_clamp_max,
-                    );
-                }
-            }
-            // Update the current robot pose to the last scan's pose in this submap
-            self.current_robot_pose = scan_pose_world;
-        }
-
-        // --- Convert the final grid to points for visualization ---
-        // We do this after each submap to show the progress
-        self.current_map_points.clear();
-        for y in 0..grid.height {
-            for x in 0..grid.width {
-                let index = y * grid.width + x;
-                let cell_log_odds = grid.data[index].log_odds;
-
-                if (cell_log_odds - 0.0).abs() > 1e-6 {
-                    let world_x = ((x as isize - (self.config.slam.map_width / 2) as isize) as f32)
-                        * self.config.slam.csize;
-                    let world_y = (-(y as isize - (self.config.slam.map_height / 2) as isize)
-                        as f32)
-                        * self.config.slam.csize;
-
-                    let probability = log_odds_to_probability(cell_log_odds);
-                    self.current_map_points
-                        .push((Point2::new(world_x, world_y), probability));
-                }
-            }
-        }
-
-        // --- Final UI updates ---
-        self.submaps.insert(submap_info.id, submap_info.clone());
-        ctx.request_repaint();
-
-        Ok(())
     }
 
     /// Updates the suggestion list based on the current input string.
@@ -1043,76 +910,52 @@ impl eframe::App for MyApp {
         }
 
         // --- サブマップの逐次読み込み処理 ---
-        let mut path_to_load: Option<PathBuf> = None; // ロードするパスを保持する変数
-
-        if let Some(queue) = &mut self.submap_load_queue {
-            let should_load = self.last_submap_load_time.map_or(true, |last_load| {
-                last_load.elapsed() >= Duration::from_millis(self.config.map.submap_load_delay_ms)
-            });
-
-            if should_load && !queue.is_empty() {
-                path_to_load = Some(queue.remove(0)); // パスを取り出して変数に格納
-                self.last_submap_load_time = Some(Instant::now());
-            }
-        }
-
-        if let Some(submap_path) = path_to_load {
-            let submap_path_str = submap_path.to_string_lossy().into_owned();
-
-            // どのくらい進んだかのメッセージはここで生成
-            /*
-            if let Some(queue) = &self.submap_load_queue {
-                let total_count = self.submaps.len() + queue.len() + 1;
-                let current_count = self.submaps.len() + 1;
-                let msg = format!(
-                    "Loading submap {}/{} from '{}'...",
-                    current_count,
-                    total_count,
-                    submap_path.display()
-                );
-                self.command_history.push(ConsoleOutputEntry {
-                    text: msg,
-                    group_id: self.next_group_id,
-                });
-            }
-            */
-
-            match self.load_single_submap(ctx, &submap_path_str) {
-                Ok(_) => {
-                    // バウンディングボックスを更新
-                    if !self.current_map_points.is_empty() {
-                        let egui_points: Vec<egui::Pos2> = self
-                            .current_map_points
-                            .iter()
-                            .map(|(p, _prob)| egui::pos2(p.x, p.y))
-                            .collect();
-                        self.slam_map_bounding_box = Some(egui::Rect::from_points(&egui_points));
-                    }
+        if self.current_submap_load_progress.is_some() {
+            match self.process_next_scan_in_submap(ctx) {
+                Ok(true) => {
+                    // A scan was processed, update the map points for drawing
+                    self.update_map_points_from_grid();
+                    self.update_slam_map_bounding_box();
+                    ctx.request_repaint();
+                }
+                Ok(false) => {
+                    // Finished processing a submap
+                    ctx.request_repaint();
                 }
                 Err(e) => {
-                    let error_msg = format!(
-                        "ERROR: Failed to load submap '{}': {}",
-                        submap_path.display(),
-                        e
-                    );
                     self.command_history.push(ConsoleOutputEntry {
-                        text: error_msg,
+                        text: format!("ERROR during submap processing: {}", e),
                         group_id: self.next_group_id,
                     });
+                    self.current_submap_load_progress = None; // Stop processing on error
                 }
             }
-
-            // キューが空になったかチェック
-            if let Some(queue) = &mut self.submap_load_queue {
-                if queue.is_empty() {
-                    self.submap_load_queue = None; // キューが空になったらNoneにする
-                    self.command_history.push(ConsoleOutputEntry {
-                        text: "All submap loading attempts completed.".to_string(),
-                        group_id: self.next_group_id,
-                    });
+                } else if let Some(path_to_load) = self
+                    .submap_load_queue
+                    .as_mut()
+                    .and_then(|q| if q.is_empty() { None } else { Some(q.remove(0)) })
+                {
+                    let submap_path_str = path_to_load.to_string_lossy().into_owned();
+                    if let Err(e) = self.start_submap_loading_session(&submap_path_str) {
+                        self.command_history.push(ConsoleOutputEntry {
+                            text: format!(
+                                "ERROR starting to load submap '{}': {}",
+                                path_to_load.display(),
+                                e
+                            ),
+                            group_id: self.next_group_id,
+                        });
+                    }
+        
+                    if self.submap_load_queue.as_ref().map_or(false, |q| q.is_empty()) {
+                        self.command_history.push(ConsoleOutputEntry {
+                            text: "All submap loading sessions initiated.".to_string(),
+                            group_id: self.next_group_id,
+                        });
+                        self.submap_load_queue = None;
+                    }
+                    ctx.request_repaint();
                 }
-            }
-        }
 
         // --- データ更新 ---
         while let Ok(xppen_message) = self.xppen_message_receiver.try_recv() {

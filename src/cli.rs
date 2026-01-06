@@ -655,23 +655,12 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
         },
         Commands::Map { command } => match command {
             MapCommands::Load { path } => {
-                /*
-                let msg = format!(
-                    "Queueing up individual submaps from '{}'...",
-                    path.display()
-                );
-                println!("{}", msg);
-                app.command_history.push(ConsoleOutputEntry {
-                    text: msg,
-                    group_id: current_group_id,
-                });
-                */
-
-                // ロード開始時にマップをクリア
+                // Reset states for a new map loading session
                 app.current_map_points.clear();
                 app.submaps.clear();
                 app.robot_trajectory.clear();
                 app.slam_map_bounding_box = None;
+                app.current_submap_load_progress = None; // Reset progress
                 app.offline_map = Some(OccupancyGrid::new(
                     app.config.slam.map_width,
                     app.config.slam.map_height,
@@ -683,7 +672,6 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                         "ERROR: Submaps directory not found at: {}",
                         submaps_base_path.display()
                     );
-                    //println!("{}", msg_error);
                     app.command_history.push(ConsoleOutputEntry {
                         text: msg_error,
                         group_id: current_group_id,
@@ -713,7 +701,6 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                             submaps_base_path.display(),
                             e
                         );
-                        //println!("{}", msg_error);
                         app.command_history.push(ConsoleOutputEntry {
                             text: msg_error,
                             group_id: current_group_id,
@@ -727,7 +714,6 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                         "No submaps found matching 'submap_NNN' in '{}'.",
                         submaps_base_path.display()
                     );
-                    //println!("{}", msg);
                     app.command_history.push(ConsoleOutputEntry {
                         text: msg,
                         group_id: current_group_id,
@@ -735,21 +721,10 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                     return;
                 }
 
-                found_submaps.sort(); // 名前順にソート (submap_000, submap_001, ...)
+                found_submaps.sort();
 
-                /*
-                let msg_found_count = format!("Found and queued {} submaps.", found_submaps.len());
-                println!("{}", msg_found_count);
-                app.command_history.push(ConsoleOutputEntry {
-                    text: msg_found_count,
-                    group_id: current_group_id,
-                });
-                */
-
-                // 実際のロード処理は update ループに任せる
                 app.submap_load_queue = Some(found_submaps);
-                app.last_submap_load_time = None; // タイマーをリセット
-                app.app_mode = AppMode::Map; // 先にMapモードに切り替え
+                app.app_mode = AppMode::Map;
             }
         },
         Commands::Fkeys => {
