@@ -19,9 +19,6 @@ pub struct SubmapLoadProgress {
 impl MyApp {
     /// Reads submap files and prepares a new session for scan-by-scan processing.
     pub fn start_submap_loading_session(&mut self, submap_path_str: &str) -> Result<()> {
-        let total_start = std::time::Instant::now();
-        println!("[PROFILING] Starting to load submap: {}", submap_path_str);
-
         let path = std::path::PathBuf::from(submap_path_str);
         let info_path = path.join("info.yaml");
         let scans_path = path.join("scans.json");
@@ -39,21 +36,11 @@ impl MyApp {
             ));
         }
 
-        let file_open_start = std::time::Instant::now();
         let info_file = fs::File::open(info_path)?;
-        let file_open_duration = file_open_start.elapsed();
-
-        let yaml_deser_start = std::time::Instant::now();
         let submap_info: Submap = serde_yaml::from_reader(info_file)?;
-        let yaml_deser_duration = yaml_deser_start.elapsed();
 
-        let json_read_start = std::time::Instant::now();
         let scans_file_content = fs::read_to_string(scans_path)?;
-        let json_read_duration = json_read_start.elapsed();
-
-        let json_deser_start = std::time::Instant::now();
         let scans_data: Vec<ScanData> = serde_json::from_str(&scans_file_content)?;
-        let json_deser_duration = json_deser_start.elapsed();
 
         let submap_global_pose = Isometry2::new(
             nalgebra::Vector2::new(submap_info.pose_x, submap_info.pose_y),
@@ -74,22 +61,6 @@ impl MyApp {
         });
 
         self.submaps.insert(submap_info.id, submap_info.clone());
-
-        let total_duration = total_start.elapsed();
-        println!(
-            "[PROFILING] Report for {}:\n\
-             - File open: {:?}\n\
-             - YAML deserialization: {:?}\n\
-             - JSON read to string: {:?}\n\
-             - JSON deserialization: {:?}\n\
-             - Total function time: {:?}",
-            submap_path_str,
-            file_open_duration,
-            yaml_deser_duration,
-            json_read_duration,
-            json_deser_duration,
-            total_duration
-        );
 
         Ok(())
     }
