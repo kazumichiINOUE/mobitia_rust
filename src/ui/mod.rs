@@ -1,5 +1,6 @@
 pub mod camera_screen;
 pub mod demo_screen;
+pub mod get_path_suggestions;
 pub mod lidar_analysis_screen;
 pub mod lidar_screen;
 pub mod map_screen;
