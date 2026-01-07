@@ -379,10 +379,13 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
         }
         Commands::Quit => {
             app.command_history.push(ConsoleOutputEntry {
-                text: "Exiting application...".to_string(),
+                text: "Shutting down...".to_string(),
                 group_id: current_group_id,
             });
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            app.is_shutting_down = true;
+            app.slam_command_sender
+                .send(crate::app::SlamThreadCommand::Shutdown)
+                .unwrap_or_default();
         }
         Commands::Clear => {
             app.command_history.clear();

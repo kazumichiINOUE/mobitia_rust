@@ -230,6 +230,10 @@ pub struct MyApp {
 
     pub(crate) config: crate::config::Config, // 追加
 
+    // --- Shutdown process ---
+    pub(crate) is_shutting_down: bool,
+    pub(crate) slam_thread_handle: Option<thread::JoinHandle<()>>,
+
     // --- UI Screen States ---
     pub(crate) lidar_screen: crate::ui::lidar_screen::LidarScreen,
     pub(crate) lidar_analysis_screen: crate::ui::lidar_analysis_screen::LidarAnalysisScreen,
@@ -371,7 +375,7 @@ impl MyApp {
         let slam_results_path =
             slam_results_base_path.join(format!("slam_result_{}", timestamp_str));
 
-        thread::spawn(move || {
+        let slam_thread_handle = Some(thread::spawn(move || {
             let mut slam_manager = SlamManager::new(
                 slam_results_path,
                 slam_config_for_thread.clone(), // Pass slam config
@@ -460,7 +464,7 @@ impl MyApp {
 
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }
-        });
+        }));
 
         let command_history = vec![
             ConsoleOutputEntry {
@@ -533,6 +537,10 @@ impl MyApp {
                 connection_status: "Disconnected".to_string(),
             },
             config,
+
+            // --- Shutdown process ---
+            is_shutting_down: false,
+            slam_thread_handle,
 
             // --- UI Screen States ---
             lidar_screen: crate::ui::lidar_screen::LidarScreen::new(),
@@ -898,6 +906,33 @@ impl eframe::App for MyApp {
 
     /// フレームごとに呼ばれ、UIを描画する
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // --- Shutdown sequence ---
+        if self.is_shutting_down {
+            println!("[MyApp::update] Shutdown in progress...");
+            if let Some(handle) = &self.slam_thread_handle {
+                println!("[MyApp::update] Checking if SLAM thread is finished...");
+                if handle.is_finished() {
+                    println!("[MyApp::update] SLAM thread is finished. Taking handle to join.");
+                    if let Some(handle) = self.slam_thread_handle.take() {
+                        println!("[MyApp::update] Joining SLAM thread...");
+                        handle.join().expect("Failed to join SLAM thread.");
+                        println!("[MyApp::update] SLAM thread joined successfully.");
+                    }
+                    println!("[MyApp::update] Sending command to close window.");
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                } else {
+                     println!("[MyApp::update] SLAM thread is still running.");
+                }
+            } else {
+                println!("[MyApp::update] No SLAM thread handle found. Closing window.");
+                // SLAM thread already joined, just close
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+             // Don't process anything else while shutting down, but request repaint to re-check
+            ctx.request_repaint();
+            return;
+        }
+
         // --- Trigger XPPen connection on first update ---
         if self.xppen.connection_status == "Disconnected".to_string() {
             if let Err(e) = self.xppen_trigger_sender.send(()) {
