@@ -26,18 +26,23 @@ impl MapScreen {
     ) {
         ui.heading("Map Mode");
         let (response, painter) = ui.allocate_painter(ui.available_size(), egui::Sense::hover());
+        // 割り当てられた描画領域全体
         let rect = response.rect;
         *lidar_draw_rect = Some(rect);
         painter.rect_filled(rect, 0.0, egui::Color32::from_rgb(20, 20, 20));
 
+        // マージンを設定し、地図の描画領域を縮小
+        const DRAWING_MARGIN: f32 = 40.0; // 上下左右に確保するマージン (ピクセル単位)
+        let inner_rect = rect.shrink(DRAWING_MARGIN); // マージン分縮小した描画領域
+
         // Draw robot pose
         let robot_pose = current_robot_pose;
-
         // 描画範囲を決定
         let map_view_rect = if let Some(bounds) = slam_map_bounding_box {
             // ロードした地図がある場合、そのバウンディングボックスを表示範囲とする
             let new_bounds = bounds.expand(bounds.width() * 0.1); // 先に少しマージンを追加
-            let screen_aspect = rect.width() / rect.height();
+
+            let screen_aspect = inner_rect.width() / inner_rect.height(); // inner_rect のアスペクト比を使う
             if !screen_aspect.is_nan() {
                 let bounds_aspect = new_bounds.width() / new_bounds.height();
                 let center = new_bounds.center();
@@ -62,12 +67,11 @@ impl MapScreen {
             )
         };
 
-        // Y軸を反転させるため、map_view_rectのYのmin/maxを入れ替える
-        let mut inverted_map_view_rect = map_view_rect;
-        inverted_map_view_rect.min.y = map_view_rect.max.y;
-        inverted_map_view_rect.max.y = map_view_rect.min.y;
-        let to_screen = egui::emath::RectTransform::from_to(inverted_map_view_rect, rect);
-
+                        // Y軸を反転させるため、map_view_rectのYのmin/maxを入れ替える
+                        let mut inverted_map_view_rect = map_view_rect;
+                        inverted_map_view_rect.min.y = map_view_rect.max.y;
+                        inverted_map_view_rect.max.y = map_view_rect.min.y;
+                        let to_screen = egui::emath::RectTransform::from_to(inverted_map_view_rect, inner_rect);
         // Draw the map points
         // 各セルの画面上でのサイズを固定値として定義 (以前の円の半径2.0に合わせる)
         const CELL_FIXED_SCREEN_SIZE: f32 = 2.0;
