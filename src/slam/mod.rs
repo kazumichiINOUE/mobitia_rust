@@ -6,8 +6,77 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
+use std::path::PathBuf;
+use std::sync::mpsc;
+use std::thread;
 
 use crate::config::{MapUpdateMethod, PointRepresentationMethod, SlamConfig};
+
+type SubmapSaveData = (PathBuf, Vec<ScanData>, Submap);
+
+// Manages a background thread for writing submaps to disk
+struct SubmapWriter {
+    sender: mpsc::Sender<SubmapSaveData>,
+    thread_handle: Option<thread::JoinHandle<()>>,
+}
+
+impl SubmapWriter {
+    fn new() -> Self {
+        let (sender, receiver) = mpsc::channel::<SubmapSaveData>();
+
+        let thread_handle = thread::spawn(move || {
+            for (submap_path, scans_data, submap_info) in receiver {
+                // This block runs in a separate thread.
+                if let Err(e) = fs::create_dir_all(&submap_path) {
+                    eprintln!("ERROR: Failed to create submap directory {:?}: {}", submap_path, e);
+                    continue;
+                }
+
+                // Save scans.json
+                let scans_file_path = submap_path.join(&submap_info.scans_file);
+                match fs::File::create(&scans_file_path) {
+                    Ok(scans_file) => {
+                        if let Err(e) = serde_json::to_writer_pretty(scans_file, &scans_data) {
+                            eprintln!("ERROR: Failed to write to {:?}: {}", scans_file_path, e);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("ERROR: Failed to create {:?}: {}", scans_file_path, e);
+                    }
+                }
+
+                // Save info.yaml
+                let info_file_path = submap_path.join(&submap_info.info_file);
+                match serde_yaml::to_string(&submap_info) {
+                    Ok(yaml_string) => {
+                        if let Err(e) = fs::write(&info_file_path, yaml_string) {
+                             eprintln!("ERROR: Failed to write to {:?}: {}", info_file_path, e);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("ERROR: Failed to serialize submap info to YAML: {}", e);
+                    }
+                }
+            }
+        });
+
+        Self {
+            sender,
+            thread_handle: Some(thread_handle),
+        }
+    }
+}
+
+impl Drop for SubmapWriter {
+    fn drop(&mut self) {
+        // By dropping the sender, the receiver in the writer thread will
+        // eventually stop blocking and the thread will terminate.
+        // We then wait for it to finish.
+        if let Some(handle) = self.thread_handle.take() {
+            handle.join().expect("Failed to join submap writer thread");
+        }
+    }
+}
 
 /// Represents a single cell in the occupancy grid.
 #[derive(Clone, Copy, Debug)]
@@ -117,6 +186,7 @@ pub struct SlamManager {
     current_submap_timestamps_buffer: Vec<u128>,
     submaps: HashMap<usize, Submap>,
     output_base_dir: std::path::PathBuf,
+    submap_writer: SubmapWriter,
 
     // キャッシュされた点群
     cached_map_points: Vec<(Point2<f32>, f64)>,
@@ -140,6 +210,7 @@ impl SlamManager {
             current_submap_timestamps_buffer: Vec::new(),
             submaps: HashMap::new(),
             output_base_dir,
+            submap_writer: SubmapWriter::new(),
             cached_map_points: Vec::new(),
             is_map_dirty: true,
             config,
@@ -458,20 +529,12 @@ impl SlamManager {
             });
         }
 
-        // --- Save files ---
+        // --- Prepare data for saving ---
         let submap_dir_name = format!("submap_{:03}", submap_id);
         let submap_path = self.output_base_dir.join("submaps").join(&submap_dir_name);
-        fs::create_dir_all(&submap_path).expect("Failed to create submap directory");
-
-        // Save scans.json
+        
         let scans_file_name = "scans.json";
-        let scans_file_path = submap_path.join(scans_file_name);
-        let scans_file = fs::File::create(&scans_file_path).expect("Failed to create scans.json");
-        serde_json::to_writer_pretty(scans_file, &scans_data).expect("Failed to write scans.json");
-
-        // Save info.yaml
         let info_file_name = "info.yaml";
-        let info_file_path = submap_path.join(info_file_name);
         let submap_creation_timestamp = self
             .current_submap_timestamps_buffer
             .last()
@@ -489,9 +552,10 @@ impl SlamManager {
             info_file: info_file_name.to_string(),
         };
 
-        let yaml_string =
-            serde_yaml::to_string(&submap_info).expect("Failed to serialize submap info to YAML");
-        fs::write(&info_file_path, yaml_string).expect("Failed to write info.yaml");
+        // --- Send data to writer thread ---
+        if let Err(e) = self.submap_writer.sender.send((submap_path, scans_data, submap_info.clone())) {
+            eprintln!("ERROR: Failed to send submap to writer thread: {}", e);
+        }
 
         // --- Clear buffers ---
         self.submaps.insert(submap_id, submap_info);
