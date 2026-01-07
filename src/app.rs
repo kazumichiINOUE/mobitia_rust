@@ -908,28 +908,20 @@ impl eframe::App for MyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // --- Shutdown sequence ---
         if self.is_shutting_down {
-            println!("[MyApp::update] Shutdown in progress...");
             if let Some(handle) = &self.slam_thread_handle {
-                println!("[MyApp::update] Checking if SLAM thread is finished...");
                 if handle.is_finished() {
-                    println!("[MyApp::update] SLAM thread is finished. Taking handle to join.");
                     if let Some(handle) = self.slam_thread_handle.take() {
-                        println!("[MyApp::update] Joining SLAM thread...");
-                        handle.join().expect("Failed to join SLAM thread.");
-                        println!("[MyApp::update] SLAM thread joined successfully.");
+                        let _ = handle.join();
                     }
-                    println!("[MyApp::update] Sending command to close window.");
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 } else {
-                     println!("[MyApp::update] SLAM thread is still running.");
+                    // SLAM thread is still running, repaint to re-check
                 }
             } else {
-                println!("[MyApp::update] No SLAM thread handle found. Closing window.");
-                // SLAM thread already joined, just close
+                // SLAM thread already joined or never existed, just close
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
-             // Don't process anything else while shutting down, but request repaint to re-check
-            ctx.request_repaint();
+            ctx.request_repaint(); // Request repaint to re-check the thread status
             return;
         }
 

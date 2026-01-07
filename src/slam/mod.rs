@@ -25,9 +25,7 @@ impl SubmapWriter {
         let (sender, receiver) = mpsc::channel::<SubmapSaveData>();
 
         let thread_handle = thread::spawn(move || {
-            println!("[SubmapWriter IO Thread] Thread started.");
             for (submap_path, scans_data, submap_info) in receiver {
-                println!("[SubmapWriter IO Thread] Received submap {} to save.", submap_info.id);
                 // This block runs in a separate thread.
                 if let Err(e) = fs::create_dir_all(&submap_path) {
                     eprintln!("ERROR: Failed to create submap directory {:?}: {}", submap_path, e);
@@ -59,9 +57,7 @@ impl SubmapWriter {
                         eprintln!("ERROR: Failed to serialize submap info to YAML: {}", e);
                     }
                 }
-                println!("[SubmapWriter IO Thread] Finished saving submap {}.", submap_info.id);
             }
-            println!("[SubmapWriter IO Thread] Channel closed, thread terminating.");
         });
 
         Self {
@@ -73,16 +69,13 @@ impl SubmapWriter {
 
 impl Drop for SubmapWriter {
     fn drop(&mut self) {
-        println!("[SubmapWriter] Dropping. Closing channel by dropping sender.");
         if let Some(sender) = self.sender.take() {
             // Drop the sender to close the channel.
             drop(sender);
         }
         
         if let Some(handle) = self.thread_handle.take() {
-            println!("[SubmapWriter] Waiting for IO thread to join...");
             handle.join().expect("Failed to join submap writer thread");
-            println!("[SubmapWriter] IO thread joined successfully.");
         }
     }
 }
@@ -583,13 +576,11 @@ impl SlamManager {
 
 impl Drop for SlamManager {
     fn drop(&mut self) {
-        println!("[SlamManager] Dropping. Saving final submap if any data exists.");
         if !self.current_submap_scan_buffer.is_empty() {
             self.generate_and_save_submap();
         }
         // The submap_writer field will be dropped automatically here,
         // which will wait for the I/O thread to finish.
-        println!("[SlamManager] Drop complete. Submap writer is finishing up.");
     }
 }
 
