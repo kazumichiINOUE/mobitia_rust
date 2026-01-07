@@ -155,13 +155,13 @@ impl MapScreen {
         ));
 
         let angle = robot_pose.rotation.angle();
-        painter.circle_filled(robot_pos_on_screen, 5.0, egui::Color32::RED);
+        painter.circle_filled(robot_pos_on_screen, 5.0, egui::Color32::GREEN);
         painter.line_segment(
             [
                 robot_pos_on_screen,
                 robot_pos_on_screen + egui::vec2(angle.cos(), -angle.sin()) * 20.0,
             ],
-            egui::Stroke::new(2.0, egui::Color32::RED),
+            egui::Stroke::new(2.0, egui::Color32::GREEN),
         );
 
         // --- 地図読み込み完了後にバウンディングボックスと寸法を描画 ---
