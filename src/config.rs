@@ -1,6 +1,22 @@
+use crate::app::LidarState;
+use eframe::egui::Vec2;
 use serde::{Deserialize, Serialize};
 
-// --- Map Update Method Selection (Moved from src/slam/mod.rs) ---
+// --- LiDAR Configuration (for config.toml) ---
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct LidarTomlConfig {
+    pub id: usize,
+    pub path: String,
+    pub baud_rate: u32,
+    pub origin_x: f32,
+    pub origin_y: f32,
+    pub rotation_deg: f32,
+    pub data_filter_angle_min_deg: f32,
+    pub data_filter_angle_max_deg: f32,
+    pub is_active_for_slam: bool,
+}
+
+// --- Map Update Method Selection ---
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum MapUpdateMethod {
     Binary,
@@ -14,7 +30,7 @@ impl Default for MapUpdateMethod {
     }
 }
 
-// --- Point Representation Method (Moved from src/slam/mod.rs) ---
+// --- Point Representation Method ---
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum PointRepresentationMethod {
     CellCenter,
@@ -27,19 +43,53 @@ impl Default for PointRepresentationMethod {
     }
 }
 
-// アプリケーション全体のコンフィグ
-#[derive(Serialize, Deserialize, Debug, Clone)]
+// --- Application-wide Configuration ---
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct Config {
     #[serde(default)]
     pub slam: SlamConfig,
     #[serde(default)]
     pub map: MapConfig,
-    // 将来の拡張用
     #[serde(default)]
     pub ui: UiConfig,
+    #[serde(default = "default_lidars")]
+    pub lidar: Vec<LidarTomlConfig>,
 }
 
-// UI関連のパラメータ
+impl Config {
+    /// Converts LiDAR configurations from TOML format to the application's LidarState.
+    pub fn get_lidar_states(&self) -> Vec<LidarState> {
+        let mut lidars: Vec<LidarState> = self
+            .lidar
+            .iter()
+            .map(|toml_config| LidarState {
+                id: toml_config.id,
+                path: toml_config.path.clone(),
+                baud_rate: toml_config.baud_rate,
+                points: Vec::new(),
+                connection_status: "Connecting...".to_string(),
+                status_messages: Vec::new(),
+                origin: Vec2::new(toml_config.origin_x, toml_config.origin_y),
+                rotation: toml_config.rotation_deg.to_radians(),
+                data_filter_angle_min: toml_config.data_filter_angle_min_deg,
+                data_filter_angle_max: toml_config.data_filter_angle_max_deg,
+                is_active_for_slam: toml_config.is_active_for_slam,
+            })
+            .collect();
+        
+        // Sort by ID to ensure a stable order
+        lidars.sort_by_key(|l| l.id);
+        lidars
+    }
+}
+
+fn default_lidars() -> Vec<LidarTomlConfig> {
+    // Returns an empty vector if [[lidar]] is not present in config.toml
+    Vec::new()
+}
+
+
+// --- UI-related Parameters ---
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct UiConfig {
     pub show_xppen_panel: bool,
@@ -47,13 +97,13 @@ pub struct UiConfig {
     pub show_osmo_panel: bool,
 }
 
-// map関連のパラメータ
+// --- Map-related Parameters ---
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct MapConfig {
     pub submap_load_delay_ms: u64,
 }
 
-// SLAM関連のパラメータ
+// --- SLAM-related Parameters ---
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SlamConfig {
     // --- Map Representation ---
@@ -103,18 +153,8 @@ pub struct SlamConfig {
     pub online_slam_view_size: f32,
 }
 
-// `Config` 全体のデフォルト値を定義
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            slam: SlamConfig::default(),
-            map: MapConfig::default(),
-            ui: UiConfig::default(),
-        }
-    }
-}
+// --- Default Implementations ---
 
-// `UiConfig` のデフォルト値を定義
 impl Default for UiConfig {
     fn default() -> Self {
         Self {
@@ -125,7 +165,6 @@ impl Default for UiConfig {
     }
 }
 
-// `MapConfig` のデフォルト値を定義
 impl Default for MapConfig {
     fn default() -> Self {
         Self {
@@ -134,7 +173,6 @@ impl Default for MapConfig {
     }
 }
 
-// `SlamConfig` のデフォルト値を定義
 impl Default for SlamConfig {
     fn default() -> Self {
         Self {

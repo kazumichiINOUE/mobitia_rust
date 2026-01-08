@@ -19,7 +19,7 @@ use crate::config::Config;
 use crate::demo::DemoManager;
 pub use crate::demo::DemoMode;
 use crate::lidar::features::{compute_features, interpolate_lidar_scan};
-use crate::lidar::{load_lidar_configurations, start_lidar_thread, LidarInfo};
+use crate::lidar::{start_lidar_thread, LidarInfo};
 use crate::osmo::{start_osmo_thread, OsmoInfo, OsmoMessage};
 use crate::slam::{OccupancyGrid, SlamManager, Submap};
 use crate::xppen::{start_xppen_thread, XppenMessage};
@@ -249,11 +249,7 @@ impl MyApp {
     /// Creates a new instance of the application.
     pub fn new(cc: &eframe::CreationContext, config: crate::config::Config) -> Self {
         // Lidar の初期設定を読み込む
-        let lidars = load_lidar_configurations(|id| {
-            cc.storage
-                .as_deref()
-                .and_then(|s| s.get_string(&format!("lidar_path_{}", id)))
-        });
+        let lidars = config.get_lidar_states();
 
         // pending_scansベクターをLidarの総数で初期化
         let pending_scans = vec![None; lidars.len()];
