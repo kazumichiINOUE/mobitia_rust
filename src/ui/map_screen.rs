@@ -67,11 +67,11 @@ impl MapScreen {
             )
         };
 
-                        // Y軸を反転させるため、map_view_rectのYのmin/maxを入れ替える
-                        let mut inverted_map_view_rect = map_view_rect;
-                        inverted_map_view_rect.min.y = map_view_rect.max.y;
-                        inverted_map_view_rect.max.y = map_view_rect.min.y;
-                        let to_screen = egui::emath::RectTransform::from_to(inverted_map_view_rect, inner_rect);
+        // Y軸を反転させるため、map_view_rectのYのmin/maxを入れ替える
+        let mut inverted_map_view_rect = map_view_rect;
+        inverted_map_view_rect.min.y = map_view_rect.max.y;
+        inverted_map_view_rect.max.y = map_view_rect.min.y;
+        let to_screen = egui::emath::RectTransform::from_to(inverted_map_view_rect, inner_rect);
         // Draw the map points
         // 各セルの画面上でのサイズを固定値として定義 (以前の円の半径2.0に合わせる)
         const CELL_FIXED_SCREEN_SIZE: f32 = 2.0;

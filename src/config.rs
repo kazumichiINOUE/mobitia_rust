@@ -76,7 +76,7 @@ impl Config {
                 is_active_for_slam: toml_config.is_active_for_slam,
             })
             .collect();
-        
+
         // Sort by ID to ensure a stable order
         lidars.sort_by_key(|l| l.id);
         lidars
@@ -87,7 +87,6 @@ fn default_lidars() -> Vec<LidarTomlConfig> {
     // Returns an empty vector if [[lidar]] is not present in config.toml
     Vec::new()
 }
-
 
 // --- UI-related Parameters ---
 #[derive(Serialize, Deserialize, Debug, Clone)]

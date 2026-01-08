@@ -28,7 +28,10 @@ impl SubmapWriter {
             for (submap_path, scans_data, submap_info) in receiver {
                 // This block runs in a separate thread.
                 if let Err(e) = fs::create_dir_all(&submap_path) {
-                    eprintln!("ERROR: Failed to create submap directory {:?}: {}", submap_path, e);
+                    eprintln!(
+                        "ERROR: Failed to create submap directory {:?}: {}",
+                        submap_path, e
+                    );
                     continue;
                 }
 
@@ -50,7 +53,7 @@ impl SubmapWriter {
                 match serde_yaml::to_string(&submap_info) {
                     Ok(yaml_string) => {
                         if let Err(e) = fs::write(&info_file_path, yaml_string) {
-                             eprintln!("ERROR: Failed to write to {:?}: {}", info_file_path, e);
+                            eprintln!("ERROR: Failed to write to {:?}: {}", info_file_path, e);
                         }
                     }
                     Err(e) => {
@@ -73,7 +76,7 @@ impl Drop for SubmapWriter {
             // Drop the sender to close the channel.
             drop(sender);
         }
-        
+
         if let Some(handle) = self.thread_handle.take() {
             handle.join().expect("Failed to join submap writer thread");
         }
@@ -534,7 +537,7 @@ impl SlamManager {
         // --- Prepare data for saving ---
         let submap_dir_name = format!("submap_{:03}", submap_id);
         let submap_path = self.output_base_dir.join("submaps").join(&submap_dir_name);
-        
+
         let scans_file_name = "scans.json";
         let info_file_name = "info.yaml";
         let submap_creation_timestamp = self
