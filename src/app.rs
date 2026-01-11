@@ -20,6 +20,7 @@ use crate::demo::DemoManager;
 pub use crate::demo::DemoMode;
 use crate::lidar::features::{compute_features, interpolate_lidar_scan};
 use crate::lidar::{start_lidar_thread, LidarInfo};
+use crate::motors::{start_modbus_motor_thread, MotorCommand, MotorMessage};
 use crate::osmo::{start_osmo_thread, OsmoInfo, OsmoMessage};
 use crate::slam::{OccupancyGrid, SlamManager, Submap};
 use crate::xppen::{start_xppen_thread, XppenMessage};
@@ -155,6 +156,7 @@ pub struct MyApp {
     pub(crate) lidar_message_receiver: mpsc::Receiver<LidarMessage>,
     pub(crate) camera_message_receiver: mpsc::Receiver<CameraMessage>,
     pub(crate) osmo_message_receiver: mpsc::Receiver<OsmoMessage>,
+    pub(crate) motor_message_receiver: mpsc::Receiver<MotorMessage>,
     pub(crate) xppen_message_receiver: mpsc::Receiver<XppenMessage>,
     pub(crate) xppen_status_receiver: mpsc::Receiver<String>,
     pub(crate) xppen_trigger_sender: mpsc::Sender<()>,
@@ -164,7 +166,6 @@ pub struct MyApp {
 
     // UI関連
     pub(crate) command_output_receiver: mpsc::Receiver<String>,
-
     pub(crate) command_output_sender: mpsc::Sender<String>,
 
     pub(crate) lidar_draw_rect: Option<egui::Rect>, // 描画エリアは共通
@@ -185,8 +186,10 @@ pub struct MyApp {
 
     // SLAMスレッドとの通信用チャネル
     pub(crate) slam_command_sender: mpsc::Sender<SlamThreadCommand>,
-
     pub(crate) slam_result_receiver: mpsc::Receiver<SlamThreadResult>,
+
+    // Motorスレッドとの通信用チャネル
+    pub(crate) motor_command_sender: mpsc::Sender<MotorCommand>,
 
     // SLAMが処理中かどうかを示す共有フラグ
     pub(crate) is_slam_processing: Arc<AtomicBool>,
@@ -267,8 +270,19 @@ impl MyApp {
         // XPPenステータス用のチャネルを作成
         let (xppen_status_sender, xppen_status_receiver) = mpsc::channel();
 
+        // モーター制御用のチャネルを作成
+        let (motor_command_sender, motor_command_receiver) = mpsc::channel();
+        let (motor_message_sender, motor_message_receiver) = mpsc::channel();
+
         // コンソールコマンド出力用のチャネルを作成
         let (command_output_sender, command_output_receiver) = mpsc::channel();
+
+        // モーター制御スレッドを起動
+        start_modbus_motor_thread(
+            config.motor.clone(),
+            motor_command_receiver,
+            motor_message_sender,
+        );
 
         // XPPenスレッドを起動
         start_xppen_thread(
@@ -493,6 +507,7 @@ impl MyApp {
             lidar_message_receiver,
             camera_message_receiver,
             osmo_message_receiver,
+            motor_message_receiver,
             xppen_message_receiver,
             xppen_status_receiver,
             xppen_trigger_sender,
@@ -509,6 +524,7 @@ impl MyApp {
             slam_mode: SlamMode::Manual,
             slam_command_sender,
             slam_result_receiver,
+            motor_command_sender,
             is_slam_processing: is_slam_processing.clone(),
             current_map_points: Vec::new(),
             current_robot_pose: nalgebra::Isometry2::identity(),
@@ -1311,6 +1327,18 @@ impl eframe::App for MyApp {
                             group_id: self.next_group_id,
                         });
                     }
+                }
+            }
+            ctx.request_repaint();
+        }
+
+        while let Ok(motor_message) = self.motor_message_receiver.try_recv() {
+            match motor_message {
+                MotorMessage::Status(text) => {
+                    self.command_history.push(ConsoleOutputEntry {
+                        text,
+                        group_id: self.next_group_id,
+                    });
                 }
             }
             ctx.request_repaint();

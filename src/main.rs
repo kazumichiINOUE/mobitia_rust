@@ -10,6 +10,7 @@ mod cli;
 mod config; // Add config module
 mod demo;
 mod lidar;
+mod motors;
 mod osmo;
 mod slam;
 mod ui;

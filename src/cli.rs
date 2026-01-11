@@ -78,6 +78,31 @@ pub enum Commands {
     /// Show function key assignments.
     #[command(alias = "fkey")]
     Fkeys,
+    /// Manage motor controls.
+    Motor {
+        #[command(subcommand)]
+        command: MotorCommands,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum MotorCommands {
+    /// Move the robot forward or backward for a duration.
+    Forward {
+        /// Linear velocity in m/s. Positive for forward, negative for backward.
+        velocity: f32,
+        /// Duration in milliseconds.
+        ms: u64,
+    },
+    /// Turn the robot left or right for a duration.
+    Turn {
+        /// Angular velocity in rad/s. Positive for left, negative for right.
+        omega: f32,
+        /// Duration in milliseconds.
+        ms: u64,
+    },
+    /// Stop the robot immediately.
+    Stop,
 }
 
 #[derive(Subcommand, Debug)]
@@ -751,5 +776,38 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                 });
             }
         }
+        Commands::Motor { command } => match command {
+            MotorCommands::Forward { velocity, ms } => {
+                app.command_history.push(ConsoleOutputEntry {
+                    text: format!("Executing: Move forward with velocity {} for {} ms", velocity, ms),
+                    group_id: current_group_id,
+                });
+                app.motor_command_sender
+                    .send(crate::motors::MotorCommand::SetVelocityTimed(
+                        velocity, 0.0, ms,
+                    ))
+                    .unwrap_or_default();
+            }
+            MotorCommands::Turn { omega, ms } => {
+                app.command_history.push(ConsoleOutputEntry {
+                    text: format!("Executing: Turn with omega {} for {} ms", omega, ms),
+                    group_id: current_group_id,
+                });
+                app.motor_command_sender
+                    .send(crate::motors::MotorCommand::SetVelocityTimed(
+                        0.0, omega, ms,
+                    ))
+                    .unwrap_or_default();
+            }
+            MotorCommands::Stop => {
+                app.command_history.push(ConsoleOutputEntry {
+                    text: "Executing: Stop".to_string(),
+                    group_id: current_group_id,
+                });
+                app.motor_command_sender
+                    .send(crate::motors::MotorCommand::Stop)
+                    .unwrap_or_default();
+            }
+        },
     }
 }
