@@ -1016,7 +1016,10 @@ impl eframe::App for MyApp {
         if !self.is_motor_initialized && self.motor_thread_active {
             if let Err(e) = self.motor_command_sender.send(MotorCommand::EnableIdShare) {
                 self.command_output_sender
-                    .send(format!("ERROR: Failed to send initial EnableIdShare command: {}", e))
+                    .send(format!(
+                        "ERROR: Failed to send initial EnableIdShare command: {}",
+                        e
+                    ))
                     .unwrap_or_default();
             }
             self.is_motor_initialized = true;
