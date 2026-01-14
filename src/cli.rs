@@ -87,22 +87,36 @@ pub enum Commands {
 
 #[derive(Subcommand, Debug)]
 pub enum MotorCommands {
-    /// Move the robot forward or backward for a duration.
-    Forward {
-        /// Linear velocity in m/s. Positive for forward, negative for backward.
+    /// Set velocity (m/s) and omega (rad/s).
+    Set {
+        /// Linear velocity in m/s.
+        #[arg(short, long)]
         velocity: f32,
-        /// Duration in milliseconds.
-        ms: u64,
+        /// Angular velocity in rad/s.
+        #[arg(short, long)]
+        omega: f32,
     },
-    /// Turn the robot left or right for a duration.
-    Turn {
-        /// Angular velocity in rad/s. Positive for left, negative for right.
+    /// Set velocity for a specific duration.
+    #[command(alias = "tm")]
+    SetTimed {
+        /// Linear velocity in m/s.
+        #[arg(short, long)]
+        velocity: f32,
+        /// Angular velocity in rad/s.
+        #[arg(short, long)]
         omega: f32,
         /// Duration in milliseconds.
+        #[arg(short, long)]
         ms: u64,
     },
     /// Stop the robot immediately.
     Stop,
+    /// Turn the motor servos on.
+    ServoOn,
+    /// Turn the motor servos off.
+    ServoOff,
+    /// Free the motor servos to allow manual movement.
+    ServoFree,
 }
 
 #[derive(Subcommand, Debug)]
@@ -777,25 +791,30 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
             }
         }
         Commands::Motor { command } => match command {
-            MotorCommands::Forward { velocity, ms } => {
+            MotorCommands::Set { velocity, omega } => {
                 app.command_history.push(ConsoleOutputEntry {
-                    text: format!("Executing: Move forward with velocity {} for {} ms", velocity, ms),
+                    text: format!("Executing: Set velocity={}, omega={}", velocity, omega),
                     group_id: current_group_id,
                 });
                 app.motor_command_sender
-                    .send(crate::motors::MotorCommand::SetVelocityTimed(
-                        velocity, 0.0, ms,
-                    ))
+                    .send(crate::motors::MotorCommand::SetVelocity(velocity, omega))
                     .unwrap_or_default();
             }
-            MotorCommands::Turn { omega, ms } => {
+            MotorCommands::SetTimed {
+                velocity,
+                omega,
+                ms,
+            } => {
                 app.command_history.push(ConsoleOutputEntry {
-                    text: format!("Executing: Turn with omega {} for {} ms", omega, ms),
+                    text: format!(
+                        "Executing: Set velocity={}, omega={} for {} ms",
+                        velocity, omega, ms
+                    ),
                     group_id: current_group_id,
                 });
                 app.motor_command_sender
                     .send(crate::motors::MotorCommand::SetVelocityTimed(
-                        0.0, omega, ms,
+                        velocity, omega, ms,
                     ))
                     .unwrap_or_default();
             }
@@ -806,6 +825,33 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                 });
                 app.motor_command_sender
                     .send(crate::motors::MotorCommand::Stop)
+                    .unwrap_or_default();
+            }
+            MotorCommands::ServoOn => {
+                app.command_history.push(ConsoleOutputEntry {
+                    text: "Executing: Servo On".to_string(),
+                    group_id: current_group_id,
+                });
+                app.motor_command_sender
+                    .send(crate::motors::MotorCommand::ServoOn)
+                    .unwrap_or_default();
+            }
+            MotorCommands::ServoOff => {
+                app.command_history.push(ConsoleOutputEntry {
+                    text: "Executing: Servo Off".to_string(),
+                    group_id: current_group_id,
+                });
+                app.motor_command_sender
+                    .send(crate::motors::MotorCommand::ServoOff)
+                    .unwrap_or_default();
+            }
+            MotorCommands::ServoFree => {
+                app.command_history.push(ConsoleOutputEntry {
+                    text: "Executing: Servo Free".to_string(),
+                    group_id: current_group_id,
+                });
+                app.motor_command_sender
+                    .send(crate::motors::MotorCommand::ServoFree)
                     .unwrap_or_default();
             }
         },

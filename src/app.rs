@@ -679,6 +679,7 @@ impl MyApp {
             "save",
             "map",
             "fkeys",
+            "motor",
         ];
 
         if input.is_empty() {
@@ -769,6 +770,44 @@ impl MyApp {
                         .filter(|opt| opt.starts_with(partial_subcommand))
                         .map(|s| s.to_string())
                         .collect();
+                }
+
+                ["motor", "set-timed", ..] | ["motor", "tm", ..] => {
+                    let mut suggestions = Vec::new();
+                    if !parts.contains(&"--velocity") {
+                        suggestions.push("--velocity ".to_string());
+                    }
+                    if !parts.contains(&"--omega") {
+                        suggestions.push("--omega ".to_string());
+                    }
+                    if !parts.contains(&"--ms") {
+                        suggestions.push("--ms ".to_string());
+                    }
+                    self.current_suggestions = suggestions;
+                }
+
+                ["motor", "set", ..] => {
+                    let mut suggestions = Vec::new();
+                    if !parts.contains(&"--velocity") {
+                        suggestions.push("--velocity ".to_string());
+                    }
+                    if !parts.contains(&"--omega") {
+                        suggestions.push("--omega ".to_string());
+                    }
+                    self.current_suggestions = suggestions;
+                }
+
+                ["motor", partial_subcommand] => {
+                    let options = vec!["set", "set-timed", "tm", "stop", "servo-on", "servo-off", "servo-free"];
+                    self.current_suggestions = options
+                        .into_iter()
+                        .filter(|opt| opt.starts_with(partial_subcommand))
+                        .map(|s| s.to_string())
+                        .collect();
+                }
+                ["motor"] if ends_with_space => {
+                    self.current_suggestions =
+                        vec!["set".to_string(), "set-timed".to_string(), "tm".to_string(), "stop".to_string(), "servo-on".to_string(), "servo-off".to_string(), "servo-free".to_string()];
                 }
 
                 ["map" | "m", "load"] if ends_with_space => {
@@ -1335,6 +1374,7 @@ impl eframe::App for MyApp {
         while let Ok(motor_message) = self.motor_message_receiver.try_recv() {
             match motor_message {
                 MotorMessage::Status(text) => {
+                    println!("[MotorMessage Received] {}", text); // デバッグ出力
                     self.command_history.push(ConsoleOutputEntry {
                         text,
                         group_id: self.next_group_id,
@@ -1883,6 +1923,54 @@ impl eframe::App for MyApp {
                 self.camera_screen.draw(ui, &self.cameras);
             }
         });
+
+        // --- Motor control via keyboard for testing ---
+        let input = ctx.input(|i| i.clone());
+        let mut v = 0.0;
+        let mut w = 0.0;
+        let mut velocity_changed = false;
+
+        if input.key_down(egui::Key::ArrowUp) {
+            v = 0.3; // m/s
+            velocity_changed = true;
+        }
+        if input.key_down(egui::Key::ArrowDown) {
+            v = -0.3; // m/s
+            velocity_changed = true;
+        }
+        if input.key_down(egui::Key::ArrowLeft) {
+            w = 0.5; // rad/s
+            velocity_changed = true;
+        }
+        if input.key_down(egui::Key::ArrowRight) {
+            w = -0.5; // rad/s
+            velocity_changed = true;
+        }
+
+        if velocity_changed {
+            self.motor_command_sender
+                .send(MotorCommand::SetVelocity(v, w))
+                .unwrap_or_else(|e| {
+                    self.command_output_sender
+                        .send(format!("ERROR: Failed to send motor command: {}", e))
+                        .unwrap_or_default();
+                });
+        } else {
+            // Check if any of the arrow keys were just released
+            if input.key_released(egui::Key::ArrowUp)
+                || input.key_released(egui::Key::ArrowDown)
+                || input.key_released(egui::Key::ArrowLeft)
+                || input.key_released(egui::Key::ArrowRight)
+            {
+                self.motor_command_sender
+                    .send(MotorCommand::Stop)
+                    .unwrap_or_else(|e| {
+                        self.command_output_sender
+                            .send(format!("ERROR: Failed to send motor command: {}", e))
+                            .unwrap_or_default();
+                    });
+            }
+        }
 
         ctx.request_repaint();
     }
