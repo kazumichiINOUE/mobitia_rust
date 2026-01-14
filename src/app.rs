@@ -802,7 +802,17 @@ impl MyApp {
                 }
 
                 ["motor", partial_subcommand] => {
-                    let options = vec!["set", "set-timed", "tm", "stop", "enable-id-share", "eidshare", "servo-on", "servo-off", "servo-free"];
+                    let options = vec![
+                        "set",
+                        "set-timed",
+                        "tm",
+                        "stop",
+                        "enable-id-share",
+                        "eidshare",
+                        "servo-on",
+                        "servo-off",
+                        "servo-free",
+                    ];
                     self.current_suggestions = options
                         .into_iter()
                         .filter(|opt| opt.starts_with(partial_subcommand))
@@ -810,8 +820,17 @@ impl MyApp {
                         .collect();
                 }
                 ["motor"] if ends_with_space => {
-                    self.current_suggestions =
-                        vec!["set".to_string(), "set-timed".to_string(), "tm".to_string(), "stop".to_string(), "enable-id-share".to_string(), "eidshare".to_string(), "servo-on".to_string(), "servo-off".to_string(), "servo-free".to_string()];
+                    self.current_suggestions = vec![
+                        "set".to_string(),
+                        "set-timed".to_string(),
+                        "tm".to_string(),
+                        "stop".to_string(),
+                        "enable-id-share".to_string(),
+                        "eidshare".to_string(),
+                        "servo-on".to_string(),
+                        "servo-off".to_string(),
+                        "servo-free".to_string(),
+                    ];
                 }
 
                 ["map" | "m", "load"] if ends_with_space => {
@@ -1930,7 +1949,8 @@ impl eframe::App for MyApp {
 
         // --- Motor control via keyboard for testing ---
         // コンソールにフォーカスがない場合にのみ、矢印キーによるモーター制御を有効にする
-        if !ctx.wants_keyboard_input() && self.motor_thread_active { // Add check for motor_thread_active
+        if !ctx.wants_keyboard_input() && self.motor_thread_active {
+            // Add check for motor_thread_active
             let input = ctx.input(|i| i.clone());
             let mut v = 0.0;
             let mut w = 0.0;

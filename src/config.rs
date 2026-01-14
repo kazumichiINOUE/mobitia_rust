@@ -154,7 +154,7 @@ impl Config {
                 is_active_for_slam: toml_config.is_active_for_slam,
             })
             .collect();
-        
+
         lidars.sort_by_key(|l| l.id);
         lidars
     }

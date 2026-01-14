@@ -817,7 +817,10 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                         text: format!("Executing: Set velocity={}, omega={}", velocity, omega),
                         group_id: current_group_id,
                     });
-                    send_motor_cmd(app, crate::motors::MotorCommand::SetVelocity(velocity, omega));
+                    send_motor_cmd(
+                        app,
+                        crate::motors::MotorCommand::SetVelocity(velocity, omega),
+                    );
                 }
                 MotorCommands::SetTimed {
                     velocity,
@@ -872,6 +875,6 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                     send_motor_cmd(app, crate::motors::MotorCommand::ServoFree);
                 }
             }
-        },
+        }
     }
 }
