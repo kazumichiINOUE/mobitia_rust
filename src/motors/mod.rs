@@ -87,7 +87,7 @@ fn send_command(port: &mut Box<dyn SerialPort>, command_with_crc_space: &mut [u8
         .map(|b| format!("{:02X}", b))
         .collect::<Vec<String>>()
         .join(" ");
-    println!("[Motor Thread] Sending command: {}", sending_hex_string);
+    //println!("[Motor Thread] Sending command: {}", sending_hex_string);
     if let Err(e) = port.write_all(command_with_crc_space) {
         Err(format!("Failed to write to port: {}", e))
     } else {
@@ -102,7 +102,7 @@ fn send_command(port: &mut Box<dyn SerialPort>, command_with_crc_space: &mut [u8
                     .map(|b| format!("{:02X}", b)) // 'h'を削除
                     .collect::<Vec<String>>()
                     .join(" ");
-                println!("[Motor Thread] Received response: {}", hex_string);
+                //println!("[Motor Thread] Received response: {}", hex_string);
             }
             Err(e) => {
                 // タイムアウトは警告としてログ出力し、エラーとはしない
