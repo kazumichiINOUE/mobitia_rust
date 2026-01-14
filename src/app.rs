@@ -1925,50 +1925,53 @@ impl eframe::App for MyApp {
         });
 
         // --- Motor control via keyboard for testing ---
-        let input = ctx.input(|i| i.clone());
-        let mut v = 0.0;
-        let mut w = 0.0;
-        let mut velocity_changed = false;
+        // コンソールにフォーカスがない場合にのみ、矢印キーによるモーター制御を有効にする
+        if !ctx.wants_keyboard_input() {
+            let input = ctx.input(|i| i.clone());
+            let mut v = 0.0;
+            let mut w = 0.0;
+            let mut velocity_changed = false;
 
-        if input.key_down(egui::Key::ArrowUp) {
-            v = 0.3; // m/s
-            velocity_changed = true;
-        }
-        if input.key_down(egui::Key::ArrowDown) {
-            v = -0.3; // m/s
-            velocity_changed = true;
-        }
-        if input.key_down(egui::Key::ArrowLeft) {
-            w = 0.5; // rad/s
-            velocity_changed = true;
-        }
-        if input.key_down(egui::Key::ArrowRight) {
-            w = -0.5; // rad/s
-            velocity_changed = true;
-        }
+            if input.key_down(egui::Key::ArrowUp) {
+                v = 0.3; // m/s
+                velocity_changed = true;
+            }
+            if input.key_down(egui::Key::ArrowDown) {
+                v = -0.3; // m/s
+                velocity_changed = true;
+            }
+            if input.key_down(egui::Key::ArrowLeft) {
+                w = 0.5; // rad/s
+                velocity_changed = true;
+            }
+            if input.key_down(egui::Key::ArrowRight) {
+                w = -0.5; // rad/s
+                velocity_changed = true;
+            }
 
-        if velocity_changed {
-            self.motor_command_sender
-                .send(MotorCommand::SetVelocity(v, w))
-                .unwrap_or_else(|e| {
-                    self.command_output_sender
-                        .send(format!("ERROR: Failed to send motor command: {}", e))
-                        .unwrap_or_default();
-                });
-        } else {
-            // Check if any of the arrow keys were just released
-            if input.key_released(egui::Key::ArrowUp)
-                || input.key_released(egui::Key::ArrowDown)
-                || input.key_released(egui::Key::ArrowLeft)
-                || input.key_released(egui::Key::ArrowRight)
-            {
+            if velocity_changed {
                 self.motor_command_sender
-                    .send(MotorCommand::Stop)
+                    .send(MotorCommand::SetVelocity(v, w))
                     .unwrap_or_else(|e| {
                         self.command_output_sender
                             .send(format!("ERROR: Failed to send motor command: {}", e))
                             .unwrap_or_default();
                     });
+            } else {
+                // Check if any of the arrow keys were just released
+                if input.key_released(egui::Key::ArrowUp)
+                    || input.key_released(egui::Key::ArrowDown)
+                    || input.key_released(egui::Key::ArrowLeft)
+                    || input.key_released(egui::Key::ArrowRight)
+                {
+                    self.motor_command_sender
+                        .send(MotorCommand::Stop)
+                        .unwrap_or_else(|e| {
+                            self.command_output_sender
+                                .send(format!("ERROR: Failed to send motor command: {}", e))
+                                .unwrap_or_default();
+                        });
+                }
             }
         }
 
