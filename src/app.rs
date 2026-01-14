@@ -119,11 +119,13 @@ pub enum SlamThreadCommand {
         raw_scan: Vec<(f32, f32, f32, f32, f32, f32, f32, f32)>,
         interpolated_scan: Vec<(f32, f32, f32, f32, f32, f32, f32, f32)>,
         timestamp: u128,
+        odom_guess: Option<(f32, f32, f32)>,
     }, // LiDARからの新しいスキャンデータ
     ProcessSingleScan {
         raw_scan: Vec<(f32, f32, f32, f32, f32, f32, f32, f32)>,
         interpolated_scan: Vec<(f32, f32, f32, f32, f32, f32, f32, f32)>,
         timestamp: u128,
+        odom_guess: Option<(f32, f32, f32)>,
     }, // 単一スキャン処理要求
     Shutdown,
 }
@@ -238,6 +240,8 @@ pub struct MyApp {
     pub(crate) motor_thread_active: bool,
     // モーターオドメトリによる姿勢
     pub(crate) motor_odometry: (f32, f32, f32),
+    // 前回のSLAM更新時のオドメトリ
+    pub(crate) last_slam_odom: (f32, f32, f32),
     // 初期化コマンドが送信されたかどうか
     pub(crate) is_initial_command_sent: bool,
 
@@ -434,6 +438,7 @@ impl MyApp {
                             raw_scan,
                             interpolated_scan,
                             timestamp,
+                            odom_guess,
                         } => {
                             if current_slam_mode == SlamMode::Continuous {
                                 let now = web_time::Instant::now();
@@ -443,7 +448,7 @@ impl MyApp {
                                     is_slam_processing_for_thread.store(true, Ordering::SeqCst);
 
                                     let slam_start_time = web_time::Instant::now();
-                                    slam_manager.update(&raw_scan, &interpolated_scan, timestamp);
+                                    slam_manager.update(&raw_scan, &interpolated_scan, timestamp, odom_guess);
                                     let _slam_duration = slam_start_time.elapsed();
                                     //println!("[SLAM Thread] Update took: {:?}", slam_duration);
 
@@ -463,10 +468,11 @@ impl MyApp {
                             raw_scan,
                             interpolated_scan,
                             timestamp,
+                            odom_guess,
                         } => {
                             is_slam_processing_for_thread.store(true, Ordering::SeqCst);
 
-                            slam_manager.update(&raw_scan, &interpolated_scan, timestamp);
+                            slam_manager.update(&raw_scan, &interpolated_scan, timestamp, odom_guess);
 
                             slam_result_sender
                                 .send(SlamThreadResult {
@@ -573,6 +579,7 @@ impl MyApp {
             camera_screen: crate::ui::camera_screen::CameraScreen::new(),
             motor_thread_active: true, // Initialize to true
             motor_odometry: (0.0, 0.0, 0.0),
+            last_slam_odom: (0.0, 0.0, 0.0),
             is_initial_command_sent: false,
         }
     }
@@ -1228,6 +1235,30 @@ impl eframe::App for MyApp {
                                 f32,
                             )> = Vec::new();
 
+                            // Calculate odometry guess for SLAM
+                            let odom_guess = if self.config.slam.use_odometry_as_initial_guess {
+                                let (curr_odom_x, curr_odom_y, curr_odom_angle) = self.motor_odometry;
+                                let (last_slam_odom_x, last_slam_odom_y, last_slam_odom_angle) = self.last_slam_odom;
+
+                                // ロボットのローカル座標系での移動量を計算
+                                let delta_x_global = curr_odom_x - last_slam_odom_x;
+                                let delta_y_global = curr_odom_y - last_slam_odom_y;
+                                let delta_angle = curr_odom_angle - last_slam_odom_angle;
+
+                                // グローバル座標の差分を前回のSLAM姿勢（last_slam_odom_angle）でローカル座標に回転
+                                let cos_angle = last_slam_odom_angle.cos();
+                                let sin_angle = last_slam_odom_angle.sin();
+                                let odom_dx = delta_x_global * cos_angle + delta_y_global * sin_angle;
+                                let odom_dy = -delta_x_global * sin_angle + delta_y_global * cos_angle;
+
+                                self.last_slam_odom = self.motor_odometry; // Update last SLAM odometry
+
+                                Some((odom_dx, odom_dy, delta_angle))
+                            } else {
+                                self.last_slam_odom = self.motor_odometry; // Still update, even if not used
+                                None
+                            };
+
                             // SLAMが有効な各Lidarのスキャンをロボット座標系に変換して結合
                             for lidar_state in active_lidars {
                                 if let Some(Some(points)) = self.pending_scans.get(lidar_state.id) {
@@ -1295,6 +1326,7 @@ impl eframe::App for MyApp {
                                             raw_scan: raw_combined_scan,                   // raw_scanを送信
                                             interpolated_scan: interpolated_combined_scan, // 補間済みscanを送信
                                             timestamp: current_timestamp,
+                                            odom_guess,
                                         })
                                         .unwrap_or_default();
                                 } else if self.single_scan_requested_by_ui {
@@ -1303,6 +1335,7 @@ impl eframe::App for MyApp {
                                             raw_scan: raw_combined_scan,                   // raw_scanを送信
                                             interpolated_scan: interpolated_combined_scan, // 補間済みscanを送信
                                             timestamp: current_timestamp,
+                                            odom_guess,
                                         })
                                         .unwrap_or_default();
                                     self.single_scan_requested_by_ui = false; // フラグをリセット

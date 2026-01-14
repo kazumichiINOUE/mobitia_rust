@@ -230,6 +230,7 @@ impl SlamManager {
         raw_scan_data: &[(f32, f32, f32, f32, f32, f32, f32, f32)],
         interpolated_scan_data: &[(f32, f32, f32, f32, f32, f32, f32, f32)],
         timestamp: u128,
+        odom_guess: Option<(f32, f32, f32)>,
     ) {
         // --- Map Decay ---
         if self.config.map_update_method == MapUpdateMethod::Probabilistic
@@ -278,6 +279,7 @@ impl SlamManager {
                 &matching_scan,
                 &raw_corner_points,
                 self.robot_pose,
+                odom_guess,
             );
             self.robot_pose = best_pose;
         }

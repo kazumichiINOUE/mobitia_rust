@@ -219,6 +219,7 @@ impl DifferentialEvolutionSolver {
         points: &[(Point2<f32>, f32, f32, f32)], // (point, edge_ness, nx, ny)
         raw_corner_points: &[(Point2<f32>, f32)], // (point, corner_ness)
         initial_pose: Isometry2<f32>,
+        odom_guess: Option<(f32, f32, f32)>,
     ) -> (Isometry2<f32>, f64) {
         // DE Parameters (from config)
         let wxy = self.config.wxy;
@@ -234,11 +235,18 @@ impl DifferentialEvolutionSolver {
         let initial_y = initial_pose.translation.y;
         let initial_a = initial_pose.rotation.angle();
 
+        // Adjust initial search center based on odometry guess
+        let (center_x, center_y, center_a) = if let Some((dx, dy, dtheta)) = odom_guess {
+            (initial_x + dx, initial_y + dy, initial_a + dtheta)
+        } else {
+            (initial_x, initial_y, initial_a)
+        };
+
         let mut population: Vec<Vector3<f32>> = Vec::with_capacity(population_size);
         for _ in 0..population_size {
-            let x = rng.gen_range(-wxy..=wxy) + initial_x;
-            let y = rng.gen_range(-wxy..=wxy) + initial_y;
-            let a = rng.gen_range(-wa..=wa) + initial_a;
+            let x = rng.gen_range(-wxy..=wxy) + center_x;
+            let y = rng.gen_range(-wxy..=wxy) + center_y;
+            let a = rng.gen_range(-wa..=wa) + center_a;
             population.push(Vector3::new(x, y, a));
         }
 

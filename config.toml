@@ -99,6 +99,8 @@ f_de = 0.1
 
 # Crossover rate for Differential Evolution.
 cr = 0.6
+# If true, use odometry difference as an initial guess for Differential Evolution in SLAM.
+use_odometry_as_initial_guess = true
 
 # --- Submap Generation ---
 # Number of laser scans to be collected before generating a new submap.
@@ -117,18 +119,18 @@ submap_load_delay_ms = 500
 
 [[lidar]]
 id = 0 # 進行方向右手のlidar
-path = "/dev/cu.usbmodem11201"
+path = "/dev/cu.usbmodem14301"
 baud_rate = 115200
 origin_x = 0.0
 origin_y = -0.26
-rotation_deg = -90.0
+rotation_deg = -93.0
 data_filter_angle_min_deg = -90.0
 data_filter_angle_max_deg = 135.0
 is_active_for_slam = true
 
 [[lidar]]
 id = 1 # 進行方向左手のlidar
-path = "/dev/cu.usbmodem11301"
+path = "/dev/cu.usbmodem14401"
 baud_rate = 115200
 origin_x = 0.0
 origin_y = 0.26
