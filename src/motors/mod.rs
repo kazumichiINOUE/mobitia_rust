@@ -113,7 +113,11 @@ const QUERY_WRITE_R: [u8; 33] = [
     0x00, 0x00, 0x2F, 0x00, 0x00, 0x00, 0x30, 0x00, 0x00, 0x00, 0x31, 0x00, 0x00, 0x00, 0x33, 0x00,
     0x00,
 ];
-const QUERY_WRITE_L: [u8; 33] = [ 0x02, 0x10, 0x09, 0xA8, 0x00, 0x0C, 0x18, 0x00, 0x00, 0x00, 0x2D, 0x00, 0x00, 0x00, 0x2E, 0x00, 0x00, 0x00, 0x2F, 0x00, 0x00, 0x00, 0x30, 0x00, 0x00, 0x00, 0x31, 0x00, 0x00, 0x00, 0x33, 0x00, 0x00, ];
+const QUERY_WRITE_L: [u8; 33] = [
+    0x02, 0x10, 0x09, 0xA8, 0x00, 0x0C, 0x18, 0x00, 0x00, 0x00, 0x2D, 0x00, 0x00, 0x00, 0x2E, 0x00,
+    0x00, 0x00, 0x2F, 0x00, 0x00, 0x00, 0x30, 0x00, 0x00, 0x00, 0x31, 0x00, 0x00, 0x00, 0x33, 0x00,
+    0x00,
+];
 const QUERY_NET_ID_READ: [u8; 8] = [0x0F, 0x03, 0x00, 0x00, 0x00, 0x1A, 0x00, 0x00];
 
 fn circular_diff32(curr: i32, prev: i32) -> i32 {
@@ -261,11 +265,10 @@ pub fn start_modbus_motor_thread(
                 let mut w = 0.0;
 
                 // Helper for simple commands expecting an 8-byte response
-                let handle_simple_command = |port: &mut Box<dyn SerialPort>,
-                                             cmd_bytes: &[u8]|
-                 -> Result<(), String> {
-                    send_and_read(port, &mut cmd_bytes.to_vec(), 8).map(|_| ())
-                };
+                let handle_simple_command =
+                    |port: &mut Box<dyn SerialPort>, cmd_bytes: &[u8]| -> Result<(), String> {
+                        send_and_read(port, &mut cmd_bytes.to_vec(), 8).map(|_| ())
+                    };
 
                 match command {
                     MotorCommand::SetVelocity(vel, ang_w) => {
@@ -295,9 +298,7 @@ pub fn start_modbus_motor_thread(
                             &QUERY_WRITE_L,
                         ];
                         for cmd in init_commands.iter() {
-                            if let Err(msg) =
-                                send_and_read(&mut port, &mut cmd.to_vec(), 8)
-                            {
+                            if let Err(msg) = send_and_read(&mut port, &mut cmd.to_vec(), 8) {
                                 let err_msg = format!("Error on init command: {}", msg);
                                 eprintln!("[Motor Thread] {}", err_msg);
                                 message_sender
@@ -355,8 +356,9 @@ pub fn start_modbus_motor_thread(
                             Ok(buf) => {
                                 // --- Parse Full Motor State ---
                                 let get_i32 = |b: &[u8]| i32::from_be_bytes(b.try_into().unwrap());
-                                let get_f32 =
-                                    |b: &[u8]| (i32::from_be_bytes(b.try_into().unwrap()) as f32) * 0.1;
+                                let get_f32 = |b: &[u8]| {
+                                    (i32::from_be_bytes(b.try_into().unwrap()) as f32) * 0.1
+                                };
 
                                 const OFFSET: usize = 26;
                                 let current_pos_r = get_i32(&buf[15..19]);
@@ -394,16 +396,22 @@ pub fn start_modbus_motor_thread(
                                         })
                                         .unwrap_or_default();
                                 } else {
-                                    let delta_pos_r = circular_diff32(current_pos_r, odo_state.last_pos_r);
-                                    let delta_pos_l = circular_diff32(current_pos_l, odo_state.last_pos_l);
+                                    let delta_pos_r =
+                                        circular_diff32(current_pos_r, odo_state.last_pos_r);
+                                    let delta_pos_l =
+                                        circular_diff32(current_pos_l, odo_state.last_pos_l);
 
                                     let step_res_rad = config.step_resolution_deg.to_radians();
                                     let wheel_d = config.wheel_diameter;
                                     let gear_ratio = config.gear_ratio;
                                     let wheel_t = config.tread_width;
 
-                                    let dist_l = (delta_pos_l as f32) * step_res_rad * 0.5 * wheel_d / gear_ratio;
-                                    let dist_r = -(delta_pos_r as f32) * step_res_rad * 0.5 * wheel_d / gear_ratio;
+                                    let dist_l =
+                                        (delta_pos_l as f32) * step_res_rad * 0.5 * wheel_d
+                                            / gear_ratio;
+                                    let dist_r =
+                                        -(delta_pos_r as f32) * step_res_rad * 0.5 * wheel_d
+                                            / gear_ratio;
 
                                     let dl = (dist_l + dist_r) / 2.0;
                                     let dth = (dist_r - dist_l) / wheel_t;
@@ -413,9 +421,12 @@ pub fn start_modbus_motor_thread(
                                     odo_state.angle += dth;
 
                                     // Normalize angle to [-PI, PI]
-                                    if odo_state.angle > PI { odo_state.angle -= 2.0 * PI; }
-                                    else if odo_state.angle < -PI { odo_state.angle += 2.0 * PI; }
-                                    
+                                    if odo_state.angle > PI {
+                                        odo_state.angle -= 2.0 * PI;
+                                    } else if odo_state.angle < -PI {
+                                        odo_state.angle += 2.0 * PI;
+                                    }
+
                                     odo_state.last_pos_r = current_pos_r;
                                     odo_state.last_pos_l = current_pos_l;
 

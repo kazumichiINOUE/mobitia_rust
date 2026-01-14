@@ -238,6 +238,8 @@ pub struct MyApp {
     pub(crate) motor_thread_active: bool,
     // モーターオドメトリによる姿勢
     pub(crate) motor_odometry: (f32, f32, f32),
+    // 初期化コマンドが送信されたかどうか
+    pub(crate) is_initial_command_sent: bool,
 
     // --- Shutdown process ---
     pub(crate) is_shutting_down: bool,
@@ -283,6 +285,7 @@ impl MyApp {
         let (command_output_sender, command_output_receiver) = mpsc::channel();
 
         // モーター制御スレッドを起動
+
         start_modbus_motor_thread(
             config.motor.clone(),
             motor_command_receiver,
@@ -570,6 +573,7 @@ impl MyApp {
             camera_screen: crate::ui::camera_screen::CameraScreen::new(),
             motor_thread_active: true, // Initialize to true
             motor_odometry: (0.0, 0.0, 0.0),
+            is_initial_command_sent: false,
         }
     }
 
@@ -986,6 +990,22 @@ impl eframe::App for MyApp {
 
     /// フレームごとに呼ばれ、UIを描画する
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // --- Send initial commands on the first update frame ---
+        if !self.is_initial_command_sent {
+            if self.motor_thread_active {
+                if let Err(e) = self.motor_command_sender.send(MotorCommand::EnableIdShare) {
+                    let error_msg =
+                        format!("ERROR: Failed to send initial EnableIdShare command: {}", e);
+                    self.command_output_sender
+                        .send(error_msg)
+                        .unwrap_or_default();
+                    self.motor_thread_active = false;
+                }
+            }
+            self.is_initial_command_sent = true;
+            ctx.request_repaint(); // Repaint to show the results of the initial commands
+        }
+
         // --- Shutdown sequence ---
         if self.is_shutting_down {
             if let Some(handle) = &self.slam_thread_handle {
@@ -1402,7 +1422,22 @@ impl eframe::App for MyApp {
         while let Ok(motor_message) = self.motor_message_receiver.try_recv() {
             match motor_message {
                 MotorMessage::Status(text) => {
-                    println!("[MotorMessage Received] {}", text); // デバッグ出力
+                    // Check for the specific confirmation to trigger the next command in the sequence.
+                    if text == "Motor ID Share Enabled." {
+                        if self.motor_thread_active {
+                            if let Err(e) = self.motor_command_sender.send(MotorCommand::ReadState)
+                            {
+                                let error_msg = format!(
+                                    "ERROR: Failed to send follow-up ReadState command: {}",
+                                    e
+                                );
+                                self.command_output_sender
+                                    .send(error_msg)
+                                    .unwrap_or_default();
+                                self.motor_thread_active = false;
+                            }
+                        }
+                    }
                     self.command_history.push(ConsoleOutputEntry {
                         text,
                         group_id: self.next_group_id,
@@ -1410,26 +1445,67 @@ impl eframe::App for MyApp {
                 }
                 MotorMessage::StateUpdate(state) => {
                     let mut output_lines = Vec::new();
-                    output_lines.push("--- Motor State -----------------------------------".to_string());
-                    output_lines.push(format!("{:<15} {:<15} {:<15}", "Parameter", "Left Motor", "Right Motor"));
-                    output_lines.push("---------------------------------------------------".to_string());
+                    output_lines
+                        .push("--- Motor State -----------------------------------".to_string());
+                    output_lines.push(format!(
+                        "{:<15} {:<15} {:<15}",
+                        "Parameter", "Left Motor", "Right Motor"
+                    ));
+                    output_lines
+                        .push("---------------------------------------------------".to_string());
 
-                    output_lines.push(format!("{:<15} {:<15} {:<15}", "Alarm", state.alarm_code_l, state.alarm_code_r));
-                    output_lines.push(format!("{:<15} {:<15} {:<15}", "Driver Temp", format!("{:.1}°C", state.temp_driver_l), format!("{:.1}°C", state.temp_driver_r)));
-                    output_lines.push(format!("{:<15} {:<15} {:<15}", "Motor Temp", format!("{:.1}°C", state.temp_motor_l), format!("{:.1}°C", state.temp_motor_r)));
-                    output_lines.push(format!("{:<15} {:<15} {:<15}", "Position", state.position_l, state.position_r));
-                    output_lines.push(format!("{:<15} {:<15} {:<15}", "Power", state.power_l, state.power_r));
-                    output_lines.push(format!("{:<15} {:<15} {:<15}", "Voltage", format!("{:.1}V", state.voltage_l), format!("{:.1}V", state.voltage_r)));
-                    output_lines.push("---------------------------------------------------".to_string());
+                    output_lines.push(format!(
+                        "{:<15} {:<15} {:<15}",
+                        "Alarm", state.alarm_code_l, state.alarm_code_r
+                    ));
+                    output_lines.push(format!(
+                        "{:<15} {:<15} {:<15}",
+                        "Driver Temp",
+                        format!("{:.1}°C", state.temp_driver_l),
+                        format!("{:.1}°C", state.temp_driver_r)
+                    ));
+                    output_lines.push(format!(
+                        "{:<15} {:<15} {:<15}",
+                        "Motor Temp",
+                        format!("{:.1}°C", state.temp_motor_l),
+                        format!("{:.1}°C", state.temp_motor_r)
+                    ));
+                    output_lines.push(format!(
+                        "{:<15} {:<15} {:<15}",
+                        "Position", state.position_l, state.position_r
+                    ));
+                    output_lines.push(format!(
+                        "{:<15} {:<15} {:<15}",
+                        "Power", state.power_l, state.power_r
+                    ));
+                    output_lines.push(format!(
+                        "{:<15} {:<15} {:<15}",
+                        "Voltage",
+                        format!("{:.1}V", state.voltage_l),
+                        format!("{:.1}V", state.voltage_r)
+                    ));
+                    output_lines
+                        .push("---------------------------------------------------".to_string());
 
                     for line in output_lines {
-                        self.command_history.push(ConsoleOutputEntry { text: line, group_id: self.next_group_id });
+                        self.command_history.push(ConsoleOutputEntry {
+                            text: line,
+                            group_id: self.next_group_id,
+                        });
                     }
                 }
                 MotorMessage::OdometryUpdate { x, y, angle } => {
                     self.motor_odometry = (x, y, angle);
-                    let odo_text = format!("Odometry: x={:.2}, y={:.2}, angle={:.1}°", x, y, angle.to_degrees());
-                    self.command_history.push(ConsoleOutputEntry { text: odo_text, group_id: self.next_group_id });
+                    let odo_text = format!(
+                        "Odometry: x={:.2}, y={:.2}, angle={:.1}°",
+                        x,
+                        y,
+                        angle.to_degrees()
+                    );
+                    self.command_history.push(ConsoleOutputEntry {
+                        text: odo_text,
+                        group_id: self.next_group_id,
+                    });
                 }
             }
             ctx.request_repaint();
