@@ -30,7 +30,7 @@ impl SlamScreen {
             .fixed_pos(ui.min_rect().min) // Anchor to top-left
             .show(ui.ctx(), |ui| {
                 let background_color = egui::Color32::from_rgba_unmultiplied(0, 0, 0, 128);
-                
+
                 // SLAM Pose
                 let slam_x = current_robot_pose.translation.x;
                 let slam_y = current_robot_pose.translation.y;
@@ -39,7 +39,11 @@ impl SlamScreen {
                     "SLAM Pose: x: {:>8.3}, y: {:>8.3}, a: {:>6.1}°",
                     slam_x, slam_y, slam_angle_deg
                 );
-                ui.label(egui::RichText::new(slam_text).monospace().background_color(background_color));
+                ui.label(
+                    egui::RichText::new(slam_text)
+                        .monospace()
+                        .background_color(background_color),
+                );
 
                 // Motor Odometry
                 let (odom_x, odom_y, odom_angle) = motor_odometry;
@@ -48,7 +52,11 @@ impl SlamScreen {
                     "Motor Odom: x: {:>8.3}, y: {:>8.3}, a: {:>6.1}°",
                     odom_x, odom_y, odom_angle_deg
                 );
-                ui.label(egui::RichText::new(odom_text).monospace().background_color(background_color));
+                ui.label(
+                    egui::RichText::new(odom_text)
+                        .monospace()
+                        .background_color(background_color),
+                );
             });
 
         let (response, painter) = ui.allocate_painter(ui.available_size(), egui::Sense::hover());

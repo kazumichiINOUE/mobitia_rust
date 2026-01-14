@@ -246,8 +246,10 @@ pub fn start_modbus_motor_thread(
                             let gear_ratio = odom_config.gear_ratio;
                             let wheel_t = odom_config.tread_width;
 
-                            let dist_l = (delta_pos_l as f32) * step_res_rad * 0.5 * wheel_d / gear_ratio;
-                            let dist_r = -(delta_pos_r as f32) * step_res_rad * 0.5 * wheel_d / gear_ratio;
+                            let dist_l =
+                                (delta_pos_l as f32) * step_res_rad * 0.5 * wheel_d / gear_ratio;
+                            let dist_r =
+                                -(delta_pos_r as f32) * step_res_rad * 0.5 * wheel_d / gear_ratio;
 
                             let dl = (dist_l + dist_r) / 2.0;
                             let dth = (dist_r - dist_l) / wheel_t;
@@ -270,14 +272,13 @@ pub fn start_modbus_motor_thread(
                         }
                     }
                     Err(e) => {
-                         if e != "Timed out" {
-                             eprintln!("[Odom Thread] Failed to read motor state: {}", e);
+                        if e != "Timed out" {
+                            eprintln!("[Odom Thread] Failed to read motor state: {}", e);
                         }
                     }
                 }
             }
         });
-
 
         // --- Command Processing Loop ---
         let mut timer_end: Option<Instant> = None;
@@ -309,10 +310,11 @@ pub fn start_modbus_motor_thread(
                 let mut v = 0.0;
                 let mut w = 0.0;
 
-                let handle_simple_command =
-                    |port: &Arc<Mutex<Box<dyn SerialPort>>>, cmd_bytes: &[u8]| -> Result<(), String> {
-                        send_and_read(port, &mut cmd_bytes.to_vec(), 8).map(|_| ())
-                    };
+                let handle_simple_command = |port: &Arc<Mutex<Box<dyn SerialPort>>>,
+                                             cmd_bytes: &[u8]|
+                 -> Result<(), String> {
+                    send_and_read(port, &mut cmd_bytes.to_vec(), 8).map(|_| ())
+                };
 
                 match command {
                     MotorCommand::SetVelocity(vel, ang_w) => {
@@ -333,41 +335,57 @@ pub fn start_modbus_motor_thread(
                     MotorCommand::EnableIdShare => {
                         should_send_velocity = false;
                         let init_commands: [&'static [u8]; 6] = [
-                            &QUERY_IDSHARE_R, &QUERY_IDSHARE_L, &QUERY_READ_R,
-                            &QUERY_READ_L, &QUERY_WRITE_R, &QUERY_WRITE_L,
+                            &QUERY_IDSHARE_R,
+                            &QUERY_IDSHARE_L,
+                            &QUERY_READ_R,
+                            &QUERY_READ_L,
+                            &QUERY_WRITE_R,
+                            &QUERY_WRITE_L,
                         ];
                         for cmd in init_commands.iter() {
                             if let Err(msg) = send_and_read(&port, &mut cmd.to_vec(), 8) {
                                 let err_msg = format!("Error on init command: {}", msg);
-                                message_sender.send(MotorMessage::Status(err_msg)).unwrap_or_default();
+                                message_sender
+                                    .send(MotorMessage::Status(err_msg))
+                                    .unwrap_or_default();
                             }
                         }
-                        message_sender.send(MotorMessage::Status("Motor ID Share Enabled.".to_string())).unwrap_or_default();
+                        message_sender
+                            .send(MotorMessage::Status("Motor ID Share Enabled.".to_string()))
+                            .unwrap_or_default();
                     }
                     MotorCommand::ServoOn => {
                         should_send_velocity = false;
                         if let Err(_) = handle_simple_command(&port, &QUERY_WRITE_SON_R) {}
                         if let Err(_) = handle_simple_command(&port, &QUERY_WRITE_SON_L) {}
-                        message_sender.send(MotorMessage::Status("Motor Servo ON.".to_string())).unwrap_or_default();
+                        message_sender
+                            .send(MotorMessage::Status("Motor Servo ON.".to_string()))
+                            .unwrap_or_default();
                     }
                     MotorCommand::ServoOff => {
                         should_send_velocity = false;
                         if let Err(_) = handle_simple_command(&port, &QUERY_WRITE_SOFF_R) {}
                         if let Err(_) = handle_simple_command(&port, &QUERY_WRITE_SOFF_L) {}
-                        message_sender.send(MotorMessage::Status("Motor Servo OFF.".to_string())).unwrap_or_default();
+                        message_sender
+                            .send(MotorMessage::Status("Motor Servo OFF.".to_string()))
+                            .unwrap_or_default();
                     }
                     MotorCommand::ServoFree => {
                         should_send_velocity = false;
                         if let Err(_) = handle_simple_command(&port, &QUERY_WRITE_FREE_R) {}
                         if let Err(_) = handle_simple_command(&port, &QUERY_WRITE_FREE_L) {}
-                        message_sender.send(MotorMessage::Status("Motor Servo FREE.".to_string())).unwrap_or_default();
+                        message_sender
+                            .send(MotorMessage::Status("Motor Servo FREE.".to_string()))
+                            .unwrap_or_default();
                     }
                     MotorCommand::ReadState => {
                         should_send_velocity = false;
                         match send_and_read(&port, &mut QUERY_NET_ID_READ.to_vec(), 57) {
                             Ok(buf) => {
                                 let get_i32 = |b: &[u8]| i32::from_be_bytes(b.try_into().unwrap());
-                                let get_f32 = |b: &[u8]| (i32::from_be_bytes(b.try_into().unwrap()) as f32) * 0.1;
+                                let get_f32 = |b: &[u8]| {
+                                    (i32::from_be_bytes(b.try_into().unwrap()) as f32) * 0.1
+                                };
                                 const OFFSET: usize = 26;
                                 let motor_state = MotorState {
                                     alarm_code_r: get_i32(&buf[3..7]),
@@ -383,11 +401,15 @@ pub fn start_modbus_motor_thread(
                                     power_l: get_i32(&buf[19 + OFFSET..23 + OFFSET]),
                                     voltage_l: get_f32(&buf[23 + OFFSET..27 + OFFSET]),
                                 };
-                                message_sender.send(MotorMessage::StateUpdate(motor_state)).unwrap_or_default();
+                                message_sender
+                                    .send(MotorMessage::StateUpdate(motor_state))
+                                    .unwrap_or_default();
                             }
                             Err(e) => {
                                 let err_msg = format!("Failed to read motor state: {}", e);
-                                message_sender.send(MotorMessage::Status(err_msg)).unwrap_or_default();
+                                message_sender
+                                    .send(MotorMessage::Status(err_msg))
+                                    .unwrap_or_default();
                             }
                         }
                     }
@@ -399,7 +421,9 @@ pub fn start_modbus_motor_thread(
                     vel_command[15..19].copy_from_slice(&motor_wr_rpm.to_be_bytes());
                     vel_command[39..43].copy_from_slice(&motor_wl_rpm.to_be_bytes());
                     if let Err(msg) = send_and_read(&port, &mut vel_command, 8) {
-                        message_sender.send(MotorMessage::Status(format!("Error: {}", msg))).unwrap_or_default();
+                        message_sender
+                            .send(MotorMessage::Status(format!("Error: {}", msg)))
+                            .unwrap_or_default();
                     }
                 }
             }

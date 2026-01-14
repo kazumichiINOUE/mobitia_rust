@@ -291,8 +291,11 @@ impl MyApp {
         let (command_output_sender, command_output_receiver) = mpsc::channel();
 
         // モーター制御スレッドを起動
-        let (motor_thread_handle, shared_odometry) =
-            start_modbus_motor_thread(config.motor.clone(), motor_command_receiver, motor_message_sender);
+        let (motor_thread_handle, shared_odometry) = start_modbus_motor_thread(
+            config.motor.clone(),
+            motor_command_receiver,
+            motor_message_sender,
+        );
 
         // XPPenスレッドを起動
         start_xppen_thread(
@@ -300,7 +303,6 @@ impl MyApp {
             xppen_status_sender.clone(),
             xppen_trigger_receiver,
         );
-
 
         // 各Lidarに対してスレッドを起動
         for lidar_state in &lidars {
@@ -447,7 +449,12 @@ impl MyApp {
                                     is_slam_processing_for_thread.store(true, Ordering::SeqCst);
 
                                     let slam_start_time = web_time::Instant::now();
-                                    slam_manager.update(&raw_scan, &interpolated_scan, timestamp, odom_guess);
+                                    slam_manager.update(
+                                        &raw_scan,
+                                        &interpolated_scan,
+                                        timestamp,
+                                        odom_guess,
+                                    );
                                     let _slam_duration = slam_start_time.elapsed();
                                     //println!("[SLAM Thread] Update took: {:?}", slam_duration);
 
@@ -471,7 +478,12 @@ impl MyApp {
                         } => {
                             is_slam_processing_for_thread.store(true, Ordering::SeqCst);
 
-                            slam_manager.update(&raw_scan, &interpolated_scan, timestamp, odom_guess);
+                            slam_manager.update(
+                                &raw_scan,
+                                &interpolated_scan,
+                                timestamp,
+                                odom_guess,
+                            );
 
                             slam_result_sender
                                 .send(SlamThreadResult {
@@ -1226,8 +1238,10 @@ impl eframe::App for MyApp {
 
                             // Calculate odometry guess for SLAM
                             let odom_guess = if self.config.slam.use_odometry_as_initial_guess {
-                                let (curr_odom_x, curr_odom_y, curr_odom_angle) = self.motor_odometry;
-                                let (last_slam_odom_x, last_slam_odom_y, last_slam_odom_angle) = self.last_slam_odom;
+                                let (curr_odom_x, curr_odom_y, curr_odom_angle) =
+                                    self.motor_odometry;
+                                let (last_slam_odom_x, last_slam_odom_y, last_slam_odom_angle) =
+                                    self.last_slam_odom;
 
                                 // ロボットのローカル座標系での移動量を計算
                                 let delta_x_global = curr_odom_x - last_slam_odom_x;
@@ -1237,8 +1251,10 @@ impl eframe::App for MyApp {
                                 // グローバル座標の差分を前回のSLAM姿勢（last_slam_odom_angle）でローカル座標に回転
                                 let cos_angle = last_slam_odom_angle.cos();
                                 let sin_angle = last_slam_odom_angle.sin();
-                                let odom_dx = delta_x_global * cos_angle + delta_y_global * sin_angle;
-                                let odom_dy = -delta_x_global * sin_angle + delta_y_global * cos_angle;
+                                let odom_dx =
+                                    delta_x_global * cos_angle + delta_y_global * sin_angle;
+                                let odom_dy =
+                                    -delta_x_global * sin_angle + delta_y_global * cos_angle;
 
                                 self.last_slam_odom = self.motor_odometry; // Update last SLAM odometry
 
@@ -2024,16 +2040,17 @@ impl eframe::App for MyApp {
                 );
             }
             AppMode::Slam => {
-                                    self.slam_screen.draw(
-                                        ui,
-                                        &self.config,
-                                        &mut self.lidar_draw_rect,
-                                        &self.current_robot_pose,
-                                        &self.robot_trajectory,
-                                        &self.current_map_points,
-                                        &self.latest_scan_for_draw,
-                                        &self.motor_odometry,
-                                    );            }
+                self.slam_screen.draw(
+                    ui,
+                    &self.config,
+                    &mut self.lidar_draw_rect,
+                    &self.current_robot_pose,
+                    &self.robot_trajectory,
+                    &self.current_map_points,
+                    &self.latest_scan_for_draw,
+                    &self.motor_odometry,
+                );
+            }
             AppMode::Map => {
                 let map_loading_complete = self.current_submap_load_progress.is_none()
                     && (self.submap_load_queue.is_none()
