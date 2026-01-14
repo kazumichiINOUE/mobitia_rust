@@ -1958,20 +1958,15 @@ impl eframe::App for MyApp {
                             .unwrap_or_default();
                     });
             } else {
-                // Check if any of the arrow keys were just released
-                if input.key_released(egui::Key::ArrowUp)
-                    || input.key_released(egui::Key::ArrowDown)
-                    || input.key_released(egui::Key::ArrowLeft)
-                    || input.key_released(egui::Key::ArrowRight)
-                {
-                    self.motor_command_sender
-                        .send(MotorCommand::Stop)
-                        .unwrap_or_else(|e| {
-                            self.command_output_sender
-                                .send(format!("ERROR: Failed to send motor command: {}", e))
-                                .unwrap_or_default();
-                        });
-                }
+                // キーが何も押されていない場合は、常にStopコマンドを送信する。
+                // これにより、モーターコントローラに明示的に停止を指示し続ける。
+                self.motor_command_sender
+                    .send(MotorCommand::Stop)
+                    .unwrap_or_else(|e| {
+                        self.command_output_sender
+                            .send(format!("ERROR: Failed to send motor command: {}", e))
+                            .unwrap_or_default();
+                    });
             }
         }
 
