@@ -242,6 +242,8 @@ pub struct MyApp {
     pub(crate) motor_odometry: (f32, f32, f32),
     // 前回のSLAM更新時のオドメトリ
     pub(crate) last_slam_odom: (f32, f32, f32),
+    // モーターが初期化されたかどうか
+    pub(crate) is_motor_initialized: bool,
     // モータースレッドのハンドル
     pub(crate) motor_thread_handle: Option<thread::JoinHandle<()>>,
     // 共有オドメトリデータ
@@ -593,6 +595,7 @@ impl MyApp {
             motor_thread_active: true, // Initialize to true
             motor_odometry: (0.0, 0.0, 0.0),
             last_slam_odom: (0.0, 0.0, 0.0),
+            is_motor_initialized: false,
         }
     }
 
@@ -1009,6 +1012,16 @@ impl eframe::App for MyApp {
 
     /// フレームごとに呼ばれ、UIを描画する
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // --- One-time motor initialization ---
+        if !self.is_motor_initialized && self.motor_thread_active {
+            if let Err(e) = self.motor_command_sender.send(MotorCommand::EnableIdShare) {
+                self.command_output_sender
+                    .send(format!("ERROR: Failed to send initial EnableIdShare command: {}", e))
+                    .unwrap_or_default();
+            }
+            self.is_motor_initialized = true;
+        }
+
         // --- Update motor odometry from shared data ---
         if let Ok(odometry) = self.shared_odometry.lock() {
             self.motor_odometry = *odometry;
@@ -1460,22 +1473,6 @@ impl eframe::App for MyApp {
         while let Ok(motor_message) = self.motor_message_receiver.try_recv() {
             match motor_message {
                 MotorMessage::Status(text) => {
-                    // Check for the specific confirmation to trigger the next command in the sequence.
-                    if text == "Motor ID Share Enabled." {
-                        if self.motor_thread_active {
-                            if let Err(e) = self.motor_command_sender.send(MotorCommand::ReadState)
-                            {
-                                let error_msg = format!(
-                                    "ERROR: Failed to send follow-up ReadState command: {}",
-                                    e
-                                );
-                                self.command_output_sender
-                                    .send(error_msg)
-                                    .unwrap_or_default();
-                                self.motor_thread_active = false;
-                            }
-                        }
-                    }
                     self.command_history.push(ConsoleOutputEntry {
                         text,
                         group_id: self.next_group_id,
