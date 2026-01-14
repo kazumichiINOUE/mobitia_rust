@@ -793,78 +793,84 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                 });
             }
         }
-        Commands::Motor { command } => match command {
-            MotorCommands::Set { velocity, omega } => {
-                app.command_history.push(ConsoleOutputEntry {
-                    text: format!("Executing: Set velocity={}, omega={}", velocity, omega),
-                    group_id: current_group_id,
-                });
-                app.motor_command_sender
-                    .send(crate::motors::MotorCommand::SetVelocity(velocity, omega))
-                    .unwrap_or_default();
-            }
-            MotorCommands::SetTimed {
-                velocity,
-                omega,
-                ms,
-            } => {
-                app.command_history.push(ConsoleOutputEntry {
-                    text: format!(
-                        "Executing: Set velocity={}, omega={} for {} ms",
-                        velocity, omega, ms
-                    ),
-                    group_id: current_group_id,
-                });
-                app.motor_command_sender
-                    .send(crate::motors::MotorCommand::SetVelocityTimed(
-                        velocity, omega, ms,
-                    ))
-                    .unwrap_or_default();
-            }
-            MotorCommands::Stop => {
-                app.command_history.push(ConsoleOutputEntry {
-                    text: "Executing: Stop".to_string(),
-                    group_id: current_group_id,
-                });
-                app.motor_command_sender
-                    .send(crate::motors::MotorCommand::Stop)
-                    .unwrap_or_default();
-            }
-            MotorCommands::EnableIdShare => {
-                app.command_history.push(ConsoleOutputEntry {
-                    text: "Executing: Enable ID Share".to_string(),
-                    group_id: current_group_id,
-                });
-                app.motor_command_sender
-                    .send(crate::motors::MotorCommand::EnableIdShare)
-                    .unwrap_or_default();
-            }
-            MotorCommands::ServoOn => {
-                app.command_history.push(ConsoleOutputEntry {
-                    text: "Executing: Servo On".to_string(),
-                    group_id: current_group_id,
-                });
-                app.motor_command_sender
-                    .send(crate::motors::MotorCommand::ServoOn)
-                    .unwrap_or_default();
-            }
-            MotorCommands::ServoOff => {
-                app.command_history.push(ConsoleOutputEntry {
-                    text: "Executing: Servo Off".to_string(),
-                    group_id: current_group_id,
-                });
-                app.motor_command_sender
-                    .send(crate::motors::MotorCommand::ServoOff)
-                    .unwrap_or_default();
-            }
-            MotorCommands::ServoFree => {
-                app.command_history.push(ConsoleOutputEntry {
-                    text: "Executing: Servo Free".to_string(),
-                    group_id: current_group_id,
-                });
-                app.motor_command_sender
-                    .send(crate::motors::MotorCommand::ServoFree)
-                    .unwrap_or_default();
+        Commands::Motor { command } => {
+            // Helper closure to send motor commands safely
+            let send_motor_cmd = |app: &mut MyApp, cmd: crate::motors::MotorCommand| {
+                if app.motor_thread_active {
+                    if let Err(e) = app.motor_command_sender.send(cmd) {
+                        let error_msg = format!("ERROR: Failed to send motor command: {}", e);
+                        app.command_output_sender
+                            .send(error_msg)
+                            .unwrap_or_default();
+                        app.motor_thread_active = false; // The receiver is gone.
+                    }
+                } else {
+                    app.command_output_sender
+                        .send("ERROR: Motor thread is not active. Cannot send command.".to_string())
+                        .unwrap_or_default();
+                }
+            };
+
+            match command {
+                MotorCommands::Set { velocity, omega } => {
+                    app.command_history.push(ConsoleOutputEntry {
+                        text: format!("Executing: Set velocity={}, omega={}", velocity, omega),
+                        group_id: current_group_id,
+                    });
+                    send_motor_cmd(app, crate::motors::MotorCommand::SetVelocity(velocity, omega));
+                }
+                MotorCommands::SetTimed {
+                    velocity,
+                    omega,
+                    ms,
+                } => {
+                    app.command_history.push(ConsoleOutputEntry {
+                        text: format!(
+                            "Executing: Set velocity={}, omega={} for {} ms",
+                            velocity, omega, ms
+                        ),
+                        group_id: current_group_id,
+                    });
+                    send_motor_cmd(
+                        app,
+                        crate::motors::MotorCommand::SetVelocityTimed(velocity, omega, ms),
+                    );
+                }
+                MotorCommands::Stop => {
+                    app.command_history.push(ConsoleOutputEntry {
+                        text: "Executing: Stop".to_string(),
+                        group_id: current_group_id,
+                    });
+                    send_motor_cmd(app, crate::motors::MotorCommand::Stop);
+                }
+                MotorCommands::EnableIdShare => {
+                    app.command_history.push(ConsoleOutputEntry {
+                        text: "Executing: Enable ID Share".to_string(),
+                        group_id: current_group_id,
+                    });
+                    send_motor_cmd(app, crate::motors::MotorCommand::EnableIdShare);
+                }
+                MotorCommands::ServoOn => {
+                    app.command_history.push(ConsoleOutputEntry {
+                        text: "Executing: Servo On".to_string(),
+                        group_id: current_group_id,
+                    });
+                    send_motor_cmd(app, crate::motors::MotorCommand::ServoOn);
+                }
+                MotorCommands::ServoOff => {
+                    app.command_history.push(ConsoleOutputEntry {
+                        text: "Executing: Servo Off".to_string(),
+                        group_id: current_group_id,
+                    });
+                    send_motor_cmd(app, crate::motors::MotorCommand::ServoOff);
+                }
+                MotorCommands::ServoFree => {
+                    app.command_history.push(ConsoleOutputEntry {
+                        text: "Executing: Servo Free".to_string(),
+                        group_id: current_group_id,
+                    });
+                    send_motor_cmd(app, crate::motors::MotorCommand::ServoFree);
+                }
             }
         },
     }

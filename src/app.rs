@@ -234,6 +234,9 @@ pub struct MyApp {
 
     pub(crate) config: crate::config::Config, // 追加
 
+    // モーター制御スレッドがアクティブかどうか
+    pub(crate) motor_thread_active: bool,
+
     // --- Shutdown process ---
     pub(crate) is_shutting_down: bool,
     pub(crate) slam_thread_handle: Option<thread::JoinHandle<()>>,
@@ -563,6 +566,7 @@ impl MyApp {
             demo_screen: crate::ui::demo_screen::DemoScreen::new(),
             osmo_screen: crate::ui::osmo_screen::OsmoScreen::new(),
             camera_screen: crate::ui::camera_screen::CameraScreen::new(),
+            motor_thread_active: true, // Initialize to true
         }
     }
 
@@ -1926,47 +1930,44 @@ impl eframe::App for MyApp {
 
         // --- Motor control via keyboard for testing ---
         // コンソールにフォーカスがない場合にのみ、矢印キーによるモーター制御を有効にする
-        if !ctx.wants_keyboard_input() {
+        if !ctx.wants_keyboard_input() && self.motor_thread_active { // Add check for motor_thread_active
             let input = ctx.input(|i| i.clone());
             let mut v = 0.0;
             let mut w = 0.0;
-            let mut velocity_changed = false;
+            // No need for velocity_changed, just determine the command
+            let mut command_to_send = MotorCommand::Stop;
+
+            let mut is_moving_key_down = false;
 
             if input.key_down(egui::Key::ArrowUp) {
                 v = 0.3; // m/s
-                velocity_changed = true;
+                is_moving_key_down = true;
             }
             if input.key_down(egui::Key::ArrowDown) {
                 v = -0.3; // m/s
-                velocity_changed = true;
+                is_moving_key_down = true;
             }
             if input.key_down(egui::Key::ArrowLeft) {
                 w = 0.5; // rad/s
-                velocity_changed = true;
+                is_moving_key_down = true;
             }
             if input.key_down(egui::Key::ArrowRight) {
                 w = -0.5; // rad/s
-                velocity_changed = true;
+                is_moving_key_down = true;
             }
 
-            if velocity_changed {
-                self.motor_command_sender
-                    .send(MotorCommand::SetVelocity(v, w))
-                    .unwrap_or_else(|e| {
-                        self.command_output_sender
-                            .send(format!("ERROR: Failed to send motor command: {}", e))
-                            .unwrap_or_default();
-                    });
-            } else {
-                // キーが何も押されていない場合は、常にStopコマンドを送信する。
-                // これにより、モーターコントローラに明示的に停止を指示し続ける。
-                self.motor_command_sender
-                    .send(MotorCommand::Stop)
-                    .unwrap_or_else(|e| {
-                        self.command_output_sender
-                            .send(format!("ERROR: Failed to send motor command: {}", e))
-                            .unwrap_or_default();
-                    });
+            if is_moving_key_down {
+                command_to_send = MotorCommand::SetVelocity(v, w);
+            }
+
+            if let Err(e) = self.motor_command_sender.send(command_to_send) {
+                let error_msg = format!("ERROR: Failed to send motor command: {}", e);
+                // mpsc::SendErrorが発生した場合、レシーバがドロップされたことを意味するため、
+                // これ以上コマンドを送信しようとしない。
+                self.command_output_sender
+                    .send(error_msg)
+                    .unwrap_or_default();
+                self.motor_thread_active = false; // 以降のコマンド送信を停止
             }
         }
 
