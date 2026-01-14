@@ -798,7 +798,7 @@ impl MyApp {
                 }
 
                 ["motor", partial_subcommand] => {
-                    let options = vec!["set", "set-timed", "tm", "stop", "servo-on", "servo-off", "servo-free"];
+                    let options = vec!["set", "set-timed", "tm", "stop", "enable-id-share", "eidshare", "servo-on", "servo-off", "servo-free"];
                     self.current_suggestions = options
                         .into_iter()
                         .filter(|opt| opt.starts_with(partial_subcommand))
@@ -807,7 +807,7 @@ impl MyApp {
                 }
                 ["motor"] if ends_with_space => {
                     self.current_suggestions =
-                        vec!["set".to_string(), "set-timed".to_string(), "tm".to_string(), "stop".to_string(), "servo-on".to_string(), "servo-off".to_string(), "servo-free".to_string()];
+                        vec!["set".to_string(), "set-timed".to_string(), "tm".to_string(), "stop".to_string(), "enable-id-share".to_string(), "eidshare".to_string(), "servo-on".to_string(), "servo-off".to_string(), "servo-free".to_string()];
                 }
 
                 ["map" | "m", "load"] if ends_with_space => {

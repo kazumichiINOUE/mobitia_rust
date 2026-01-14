@@ -111,6 +111,9 @@ pub enum MotorCommands {
     },
     /// Stop the robot immediately.
     Stop,
+    /// Enable ID sharing mode for synchronized motor control.
+    #[command(alias = "eidshare")]
+    EnableIdShare,
     /// Turn the motor servos on.
     ServoOn,
     /// Turn the motor servos off.
@@ -825,6 +828,15 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                 });
                 app.motor_command_sender
                     .send(crate::motors::MotorCommand::Stop)
+                    .unwrap_or_default();
+            }
+            MotorCommands::EnableIdShare => {
+                app.command_history.push(ConsoleOutputEntry {
+                    text: "Executing: Enable ID Share".to_string(),
+                    group_id: current_group_id,
+                });
+                app.motor_command_sender
+                    .send(crate::motors::MotorCommand::EnableIdShare)
                     .unwrap_or_default();
             }
             MotorCommands::ServoOn => {

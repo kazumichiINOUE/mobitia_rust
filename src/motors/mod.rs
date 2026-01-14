@@ -12,6 +12,7 @@ pub enum MotorCommand {
     SetVelocity(f32, f32),
     SetVelocityTimed(f32, f32, u64),
     Stop,
+    EnableIdShare,
     ServoOn,
     ServoOff,
     ServoFree,
@@ -173,7 +174,7 @@ pub fn start_modbus_motor_thread(
                             timer_end = None;
                             (0.0, 0.0)
                         }
-                        MotorCommand::ServoOn => {
+                        MotorCommand::EnableIdShare => {
                             // --- Initialization Sequence ---
                             println!("[Motor Thread] Sending initialization commands...");
                             let init_commands: [&'static [u8]; 6] = [
@@ -194,7 +195,12 @@ pub fn start_modbus_motor_thread(
                                         .unwrap_or_default();
                                 }
                             }
-
+                            message_sender
+                                .send(MotorMessage::Status("Motor ID Share Enabled.".to_string()))
+                                .unwrap_or_default();
+                            continue;
+                        }
+                        MotorCommand::ServoOn => {
                             // --- Servo ON ---
                             println!("[Motor Thread] Sending Servo ON commands.");
                             let mut son_r = QUERY_WRITE_SON_R.to_vec();
