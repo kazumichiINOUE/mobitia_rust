@@ -16,11 +16,29 @@ pub enum MotorCommand {
     ServoOn,
     ServoOff,
     ServoFree,
+    ReadState,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct MotorState {
+    pub alarm_code_r: i32,
+    pub temp_driver_r: f32,
+    pub temp_motor_r: f32,
+    pub position_r: i32,
+    pub power_r: i32,
+    pub voltage_r: f32,
+    pub alarm_code_l: i32,
+    pub temp_driver_l: f32,
+    pub temp_motor_l: f32,
+    pub position_l: i32,
+    pub power_l: i32,
+    pub voltage_l: f32,
 }
 
 #[derive(Debug)]
 pub enum MotorMessage {
     Status(String),
+    StateUpdate(MotorState),
 }
 
 const QUERY_NET_ID_WRITE_TEMPLATE: [u8; 57] = [
@@ -84,11 +102,8 @@ const QUERY_WRITE_R: [u8; 33] = [
     0x00, 0x00, 0x2F, 0x00, 0x00, 0x00, 0x30, 0x00, 0x00, 0x00, 0x31, 0x00, 0x00, 0x00, 0x33, 0x00,
     0x00,
 ];
-const QUERY_WRITE_L: [u8; 33] = [
-    0x02, 0x10, 0x09, 0xA8, 0x00, 0x0C, 0x18, 0x00, 0x00, 0x00, 0x2D, 0x00, 0x00, 0x00, 0x2E, 0x00,
-    0x00, 0x00, 0x2F, 0x00, 0x00, 0x00, 0x30, 0x00, 0x00, 0x00, 0x31, 0x00, 0x00, 0x00, 0x33, 0x00,
-    0x00,
-];
+const QUERY_WRITE_L: [u8; 33] = [ 0x02, 0x10, 0x09, 0xA8, 0x00, 0x0C, 0x18, 0x00, 0x00, 0x00, 0x2D, 0x00, 0x00, 0x00, 0x2E, 0x00, 0x00, 0x00, 0x2F, 0x00, 0x00, 0x00, 0x30, 0x00, 0x00, 0x00, 0x31, 0x00, 0x00, 0x00, 0x33, 0x00, 0x00, ];
+const QUERY_NET_ID_READ: [u8; 8] = [0x0F, 0x03, 0x00, 0x00, 0x00, 0x1A, 0x00, 0x00];
 
 fn calculate_crc16_modbus(data: &[u8]) -> [u8; 2] {
     let crc_driver = Crc::<u16>::new(&CRC_16_MODBUS);
@@ -105,10 +120,11 @@ fn calc_vw_to_motor_rpms(v: f32, w: f32, config: &MotorConfig) -> (i32, i32) {
     (motor_wr_rpm, motor_wl_rpm)
 }
 
-fn send_command(
+fn send_and_read(
     port: &mut Box<dyn SerialPort>,
     command_with_crc_space: &mut [u8],
-) -> Result<(), String> {
+    expected_len: usize,
+) -> Result<Vec<u8>, String> {
     // CRC計算対象は、コマンドの長さ-2バイト
     let data_to_crc = &command_with_crc_space[..(command_with_crc_space.len() - 2)];
     let crc = calculate_crc16_modbus(data_to_crc);
@@ -124,33 +140,30 @@ fn send_command(
         .collect::<Vec<String>>()
         .join(" ");
     //println!("[Motor Thread] Sending command: {}", sending_hex_string);
-    if let Err(e) = port.write_all(command_with_crc_space) {
-        Err(format!("Failed to write to port: {}", e))
-    } else {
-        // レスポンスを待つために少し待機
-        thread::sleep(Duration::from_millis(15));
 
-        let mut response_buf = [0; 8];
+    if let Err(e) = port.write_all(command_with_crc_space) {
+        return Err(format!("Failed to write to port: {}", e));
+    }
+
+    // レスポンスを待つために少し待機
+    thread::sleep(Duration::from_millis(15));
+
+    if expected_len > 0 {
+        let mut response_buf = vec![0; expected_len];
         match port.read_exact(&mut response_buf) {
-            Ok(_) => {
-                let hex_string: String = response_buf
-                    .iter()
-                    .map(|b| format!("{:02X}", b)) // 'h'を削除
-                    .collect::<Vec<String>>()
-                    .join(" ");
-                //println!("[Motor Thread] Received response: {}", hex_string);
-            }
+            Ok(_) => Ok(response_buf),
             Err(e) => {
-                // タイムアウトは警告としてログ出力し、エラーとはしない
                 if e.kind() == std::io::ErrorKind::TimedOut {
                     println!("[Motor Thread] Warning: Timed out waiting for response.");
+                    Err("Timed out".to_string())
                 } else {
-                    // その他の読み取りエラー
                     eprintln!("[Motor Thread] Error reading response: {}", e);
+                    Err(format!("Read error: {}", e))
                 }
             }
         }
-        Ok(())
+    } else {
+        Ok(Vec::new())
     }
 }
 
@@ -210,7 +223,7 @@ pub fn start_modbus_motor_thread(
                     stop_command[15..19].copy_from_slice(&motor_wr_rpm.to_be_bytes());
                     stop_command[39..43].copy_from_slice(&motor_wl_rpm.to_be_bytes());
 
-                    if let Err(msg) = send_command(&mut port, &mut stop_command) {
+                    if let Err(msg) = send_and_read(&mut port, &mut stop_command, 8) {
                         eprintln!("[Motor Thread] Error sending timed stop command: {}", msg);
                     }
                     message_sender
@@ -227,23 +240,35 @@ pub fn start_modbus_motor_thread(
             }
 
             if let Some(command) = latest_command {
-                // The main command processing logic is now inside this block
-                println!("[Motor Thread] Processing command: {:?}", command);
-                let (v, w) = match command {
-                    MotorCommand::SetVelocity(v, w) => {
+                let mut should_send_velocity = true;
+                let mut v = 0.0;
+                let mut w = 0.0;
+
+                // Helper for simple commands expecting an 8-byte response
+                let handle_simple_command = |port: &mut Box<dyn SerialPort>,
+                                             cmd_bytes: &[u8]|
+                 -> Result<(), String> {
+                    send_and_read(port, &mut cmd_bytes.to_vec(), 8).map(|_| ())
+                };
+
+                match command {
+                    MotorCommand::SetVelocity(vel, ang_w) => {
+                        v = vel;
+                        w = ang_w;
                         timer_end = None;
-                        (v, w)
                     }
-                    MotorCommand::SetVelocityTimed(v, w, ms) => {
+                    MotorCommand::SetVelocityTimed(vel, ang_w, ms) => {
+                        v = vel;
+                        w = ang_w;
                         timer_end = Some(Instant::now() + Duration::from_millis(ms));
-                        (v, w)
                     }
                     MotorCommand::Stop => {
+                        v = 0.0;
+                        w = 0.0;
                         timer_end = None;
-                        (0.0, 0.0)
                     }
                     MotorCommand::EnableIdShare => {
-                        // --- Initialization Sequence ---
+                        should_send_velocity = false;
                         println!("[Motor Thread] Sending initialization commands...");
                         let init_commands: [&'static [u8]; 6] = [
                             &QUERY_IDSHARE_R,
@@ -253,91 +278,117 @@ pub fn start_modbus_motor_thread(
                             &QUERY_WRITE_R,
                             &QUERY_WRITE_L,
                         ];
-
                         for cmd in init_commands.iter() {
-                            let mut cmd_mut = cmd.to_vec();
-                            if let Err(msg) = send_command(&mut port, &mut cmd_mut) {
-                                eprintln!("[Motor Thread] Error sending init command: {}", msg);
+                            if let Err(msg) =
+                                send_and_read(&mut port, &mut cmd.to_vec(), 8)
+                            {
+                                let err_msg = format!("Error on init command: {}", msg);
+                                eprintln!("[Motor Thread] {}", err_msg);
                                 message_sender
-                                    .send(MotorMessage::Status(format!("Error on init: {}", msg)))
+                                    .send(MotorMessage::Status(err_msg))
                                     .unwrap_or_default();
                             }
                         }
                         message_sender
                             .send(MotorMessage::Status("Motor ID Share Enabled.".to_string()))
                             .unwrap_or_default();
-                        continue;
                     }
                     MotorCommand::ServoOn => {
-                        // --- Servo ON ---
+                        should_send_velocity = false;
                         println!("[Motor Thread] Sending Servo ON commands.");
-                        let mut son_r = QUERY_WRITE_SON_R.to_vec();
-                        if let Err(msg) = send_command(&mut port, &mut son_r) {
-                            eprintln!("[Motor Thread] Error sending servo ON (R): {}", msg);
+                        if let Err(e) = handle_simple_command(&mut port, &QUERY_WRITE_SON_R) {
+                            eprintln!("[Motor Thread] Error sending servo ON (R): {}", e);
                         }
-                        let mut son_l = QUERY_WRITE_SON_L.to_vec();
-                        if let Err(msg) = send_command(&mut port, &mut son_l) {
-                            eprintln!("[Motor Thread] Error sending servo ON (L): {}", msg);
+                        if let Err(e) = handle_simple_command(&mut port, &QUERY_WRITE_SON_L) {
+                            eprintln!("[Motor Thread] Error sending servo ON (L): {}", e);
                         }
                         message_sender
                             .send(MotorMessage::Status("Motor Servo ON.".to_string()))
                             .unwrap_or_default();
-                        continue; // No velocity command to send
                     }
                     MotorCommand::ServoOff => {
+                        should_send_velocity = false;
                         println!("[Motor Thread] Sending Servo OFF commands.");
-                        let mut soff_r = QUERY_WRITE_SOFF_R.to_vec();
-                        if let Err(msg) = send_command(&mut port, &mut soff_r) {
-                            eprintln!("[Motor Thread] Error sending servo OFF (R): {}", msg);
+                        if let Err(e) = handle_simple_command(&mut port, &QUERY_WRITE_SOFF_R) {
+                            eprintln!("[Motor Thread] Error sending servo OFF (R): {}", e);
                         }
-                        let mut soff_l = QUERY_WRITE_SOFF_L.to_vec();
-                        if let Err(msg) = send_command(&mut port, &mut soff_l) {
-                            eprintln!("[Motor Thread] Error sending servo OFF (L): {}", msg);
+                        if let Err(e) = handle_simple_command(&mut port, &QUERY_WRITE_SOFF_L) {
+                            eprintln!("[Motor Thread] Error sending servo OFF (L): {}", e);
                         }
                         message_sender
                             .send(MotorMessage::Status("Motor Servo OFF.".to_string()))
                             .unwrap_or_default();
-                        continue; // No velocity command to send
                     }
                     MotorCommand::ServoFree => {
+                        should_send_velocity = false;
                         println!("[Motor Thread] Sending Servo FREE commands.");
-                        let mut sfree_r = QUERY_WRITE_FREE_R.to_vec();
-                        if let Err(msg) = send_command(&mut port, &mut sfree_r) {
-                            eprintln!("[Motor Thread] Error sending servo FREE (R): {}", msg);
+                        if let Err(e) = handle_simple_command(&mut port, &QUERY_WRITE_FREE_R) {
+                            eprintln!("[Motor Thread] Error sending servo FREE (R): {}", e);
                         }
-                        let mut sfree_l = QUERY_WRITE_FREE_L.to_vec();
-                        if let Err(msg) = send_command(&mut port, &mut sfree_l) {
-                            eprintln!("[Motor Thread] Error sending servo FREE (L): {}", msg);
+                        if let Err(e) = handle_simple_command(&mut port, &QUERY_WRITE_FREE_L) {
+                            eprintln!("[Motor Thread] Error sending servo FREE (L): {}", e);
                         }
                         message_sender
                             .send(MotorMessage::Status("Motor Servo FREE.".to_string()))
                             .unwrap_or_default();
-                        continue; // No velocity command to send
+                    }
+                    MotorCommand::ReadState => {
+                        should_send_velocity = false;
+                        println!("[Motor Thread] Reading motor state...");
+                        match send_and_read(&mut port, &mut QUERY_NET_ID_READ.to_vec(), 57) {
+                            Ok(buf) => {
+                                // Based on coyomi2/src/OrientalMotorInterface.h `read_state`
+                                let get_i32 = |b: &[u8]| i32::from_be_bytes(b.try_into().unwrap());
+                                let get_f32 =
+                                    |b: &[u8]| (i32::from_be_bytes(b.try_into().unwrap()) as f32) * 0.1;
+
+                                const OFFSET: usize = 26;
+                                let motor_state = MotorState {
+                                    alarm_code_r: get_i32(&buf[3..7]),
+                                    temp_driver_r: get_f32(&buf[7..11]),
+                                    temp_motor_r: get_f32(&buf[11..15]),
+                                    position_r: get_i32(&buf[15..19]),
+                                    power_r: get_i32(&buf[19..23]),
+                                    voltage_r: get_f32(&buf[23..27]),
+                                    alarm_code_l: get_i32(&buf[3 + OFFSET..7 + OFFSET]),
+                                    temp_driver_l: get_f32(&buf[7 + OFFSET..11 + OFFSET]),
+                                    temp_motor_l: get_f32(&buf[11 + OFFSET..15 + OFFSET]),
+                                    position_l: get_i32(&buf[15 + OFFSET..19 + OFFSET]),
+                                    power_l: get_i32(&buf[19 + OFFSET..23 + OFFSET]),
+                                    voltage_l: get_f32(&buf[23 + OFFSET..27 + OFFSET]),
+                                };
+                                message_sender
+                                    .send(MotorMessage::StateUpdate(motor_state))
+                                    .unwrap_or_default();
+                            }
+                            Err(e) => {
+                                let err_msg = format!("Failed to read motor state: {}", e);
+                                eprintln!("[Motor Thread] {}", err_msg);
+                                message_sender
+                                    .send(MotorMessage::Status(err_msg))
+                                    .unwrap_or_default();
+                            }
+                        }
                     }
                 };
 
-                let (motor_wr_rpm, motor_wl_rpm) = calc_vw_to_motor_rpms(v, w, &config);
-                println!(
-                    "[Motor Thread] Calculated RPMs: R={}, L={}",
-                    motor_wr_rpm, motor_wl_rpm
-                );
+                if should_send_velocity {
+                    let (motor_wr_rpm, motor_wl_rpm) = calc_vw_to_motor_rpms(v, w, &config);
+                    // println!(
+                    //     "[Motor Thread] Calculated RPMs: R={}, L={}",
+                    //     motor_wr_rpm, motor_wl_rpm
+                    // );
 
-                let mut vel_command = QUERY_NET_ID_WRITE_TEMPLATE.to_vec();
-                vel_command[15..19].copy_from_slice(&motor_wr_rpm.to_be_bytes());
-                vel_command[39..43].copy_from_slice(&motor_wl_rpm.to_be_bytes());
+                    let mut vel_command = QUERY_NET_ID_WRITE_TEMPLATE.to_vec();
+                    vel_command[15..19].copy_from_slice(&motor_wr_rpm.to_be_bytes());
+                    vel_command[39..43].copy_from_slice(&motor_wl_rpm.to_be_bytes());
 
-                if let Err(msg) = send_command(&mut port, &mut vel_command) {
-                    eprintln!("[Motor Thread] Error sending command: {}", msg);
-                    message_sender
-                        .send(MotorMessage::Status(format!("Error: {}", msg)))
-                        .unwrap_or_default();
-                } else {
-                    // message_sender
-                    //     .send(MotorMessage::Status(format!(
-                    //         "Command Executed: {:?}",
-                    //         command
-                    //     )))
-                    //     .unwrap_or_default();
+                    if let Err(msg) = send_and_read(&mut port, &mut vel_command, 8) {
+                        eprintln!("[Motor Thread] Error sending velocity command: {}", msg);
+                        message_sender
+                            .send(MotorMessage::Status(format!("Error: {}", msg)))
+                            .unwrap_or_default();
+                    }
                 }
             }
 

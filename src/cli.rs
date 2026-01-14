@@ -120,6 +120,8 @@ pub enum MotorCommands {
     ServoOff,
     /// Free the motor servos to allow manual movement.
     ServoFree,
+    /// Read detailed state from the motors.
+    ReadState,
 }
 
 #[derive(Subcommand, Debug)]
@@ -873,6 +875,13 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                         group_id: current_group_id,
                     });
                     send_motor_cmd(app, crate::motors::MotorCommand::ServoFree);
+                }
+                MotorCommands::ReadState => {
+                    app.command_history.push(ConsoleOutputEntry {
+                        text: "Executing: Read State".to_string(),
+                        group_id: current_group_id,
+                    });
+                    send_motor_cmd(app, crate::motors::MotorCommand::ReadState);
                 }
             }
         }

@@ -812,6 +812,7 @@ impl MyApp {
                         "servo-on",
                         "servo-off",
                         "servo-free",
+                        "read-state",
                     ];
                     self.current_suggestions = options
                         .into_iter()
@@ -830,6 +831,7 @@ impl MyApp {
                         "servo-on".to_string(),
                         "servo-off".to_string(),
                         "servo-free".to_string(),
+                        "read-state".to_string(),
                     ];
                 }
 
@@ -1402,6 +1404,24 @@ impl eframe::App for MyApp {
                         text,
                         group_id: self.next_group_id,
                     });
+                }
+                MotorMessage::StateUpdate(state) => {
+                    let mut output_lines = Vec::new();
+                    output_lines.push("--- Motor State -----------------------------------".to_string());
+                    output_lines.push(format!("{:<15} {:<15} {:<15}", "Parameter", "Left Motor", "Right Motor"));
+                    output_lines.push("---------------------------------------------------".to_string());
+
+                    output_lines.push(format!("{:<15} {:<15} {:<15}", "Alarm", state.alarm_code_l, state.alarm_code_r));
+                    output_lines.push(format!("{:<15} {:<15} {:<15}", "Driver Temp", format!("{:.1}°C", state.temp_driver_l), format!("{:.1}°C", state.temp_driver_r)));
+                    output_lines.push(format!("{:<15} {:<15} {:<15}", "Motor Temp", format!("{:.1}°C", state.temp_motor_l), format!("{:.1}°C", state.temp_motor_r)));
+                    output_lines.push(format!("{:<15} {:<15} {:<15}", "Position", state.position_l, state.position_r));
+                    output_lines.push(format!("{:<15} {:<15} {:<15}", "Power", state.power_l, state.power_r));
+                    output_lines.push(format!("{:<15} {:<15} {:<15}", "Voltage", format!("{:.1}V", state.voltage_l), format!("{:.1}V", state.voltage_r)));
+                    output_lines.push("---------------------------------------------------".to_string());
+
+                    for line in output_lines {
+                        self.command_history.push(ConsoleOutputEntry { text: line, group_id: self.next_group_id });
+                    }
                 }
             }
             ctx.request_repaint();
