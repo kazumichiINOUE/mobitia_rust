@@ -236,6 +236,8 @@ pub struct MyApp {
 
     // モーター制御スレッドがアクティブかどうか
     pub(crate) motor_thread_active: bool,
+    // モーターオドメトリによる姿勢
+    pub(crate) motor_odometry: (f32, f32, f32),
 
     // --- Shutdown process ---
     pub(crate) is_shutting_down: bool,
@@ -567,6 +569,7 @@ impl MyApp {
             osmo_screen: crate::ui::osmo_screen::OsmoScreen::new(),
             camera_screen: crate::ui::camera_screen::CameraScreen::new(),
             motor_thread_active: true, // Initialize to true
+            motor_odometry: (0.0, 0.0, 0.0),
         }
     }
 
@@ -1422,6 +1425,11 @@ impl eframe::App for MyApp {
                     for line in output_lines {
                         self.command_history.push(ConsoleOutputEntry { text: line, group_id: self.next_group_id });
                     }
+                }
+                MotorMessage::OdometryUpdate { x, y, angle } => {
+                    self.motor_odometry = (x, y, angle);
+                    let odo_text = format!("Odometry: x={:.2}, y={:.2}, angle={:.1}°", x, y, angle.to_degrees());
+                    self.command_history.push(ConsoleOutputEntry { text: odo_text, group_id: self.next_group_id });
                 }
             }
             ctx.request_repaint();

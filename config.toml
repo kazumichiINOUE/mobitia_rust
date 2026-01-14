@@ -154,6 +154,8 @@ is_active_for_slam = false
 port = "/dev/cu.usbserial-AQ034S3S"
 baud_rate = 230400
 # Physical robot parameters
+# Motor shaft rotation per step, in degrees.
+step_resolution_deg = 0.01
 wheel_diameter = 0.311 # meters
 tread_width = 0.461    # meters
 gear_ratio = 50.0

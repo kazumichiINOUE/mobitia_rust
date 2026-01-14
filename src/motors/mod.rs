@@ -39,6 +39,17 @@ pub struct MotorState {
 pub enum MotorMessage {
     Status(String),
     StateUpdate(MotorState),
+    OdometryUpdate { x: f32, y: f32, angle: f32 },
+}
+
+#[derive(Debug, Default)]
+struct OdoState {
+    initialized: bool,
+    last_pos_r: i32,
+    last_pos_l: i32,
+    x: f32,
+    y: f32,
+    angle: f32, // radians
 }
 
 const QUERY_NET_ID_WRITE_TEMPLATE: [u8; 57] = [
@@ -104,6 +115,10 @@ const QUERY_WRITE_R: [u8; 33] = [
 ];
 const QUERY_WRITE_L: [u8; 33] = [ 0x02, 0x10, 0x09, 0xA8, 0x00, 0x0C, 0x18, 0x00, 0x00, 0x00, 0x2D, 0x00, 0x00, 0x00, 0x2E, 0x00, 0x00, 0x00, 0x2F, 0x00, 0x00, 0x00, 0x30, 0x00, 0x00, 0x00, 0x31, 0x00, 0x00, 0x00, 0x33, 0x00, 0x00, ];
 const QUERY_NET_ID_READ: [u8; 8] = [0x0F, 0x03, 0x00, 0x00, 0x00, 0x1A, 0x00, 0x00];
+
+fn circular_diff32(curr: i32, prev: i32) -> i32 {
+    (curr as u32).wrapping_sub(prev as u32) as i32
+}
 
 fn calculate_crc16_modbus(data: &[u8]) -> [u8; 2] {
     let crc_driver = Crc::<u16>::new(&CRC_16_MODBUS);
@@ -212,6 +227,7 @@ pub fn start_modbus_motor_thread(
         };
 
         let mut timer_end: Option<Instant> = None;
+        let mut odo_state = OdoState::default();
 
         loop {
             // Check for a timed command expiration
@@ -337,29 +353,80 @@ pub fn start_modbus_motor_thread(
                         println!("[Motor Thread] Reading motor state...");
                         match send_and_read(&mut port, &mut QUERY_NET_ID_READ.to_vec(), 57) {
                             Ok(buf) => {
-                                // Based on coyomi2/src/OrientalMotorInterface.h `read_state`
+                                // --- Parse Full Motor State ---
                                 let get_i32 = |b: &[u8]| i32::from_be_bytes(b.try_into().unwrap());
                                 let get_f32 =
                                     |b: &[u8]| (i32::from_be_bytes(b.try_into().unwrap()) as f32) * 0.1;
 
                                 const OFFSET: usize = 26;
+                                let current_pos_r = get_i32(&buf[15..19]);
+                                let current_pos_l = get_i32(&buf[15 + OFFSET..19 + OFFSET]);
+
                                 let motor_state = MotorState {
                                     alarm_code_r: get_i32(&buf[3..7]),
                                     temp_driver_r: get_f32(&buf[7..11]),
                                     temp_motor_r: get_f32(&buf[11..15]),
-                                    position_r: get_i32(&buf[15..19]),
+                                    position_r: current_pos_r,
                                     power_r: get_i32(&buf[19..23]),
                                     voltage_r: get_f32(&buf[23..27]),
                                     alarm_code_l: get_i32(&buf[3 + OFFSET..7 + OFFSET]),
                                     temp_driver_l: get_f32(&buf[7 + OFFSET..11 + OFFSET]),
                                     temp_motor_l: get_f32(&buf[11 + OFFSET..15 + OFFSET]),
-                                    position_l: get_i32(&buf[15 + OFFSET..19 + OFFSET]),
+                                    position_l: current_pos_l,
                                     power_l: get_i32(&buf[19 + OFFSET..23 + OFFSET]),
                                     voltage_l: get_f32(&buf[23 + OFFSET..27 + OFFSET]),
                                 };
                                 message_sender
                                     .send(MotorMessage::StateUpdate(motor_state))
                                     .unwrap_or_default();
+
+                                // --- Odometry Calculation ---
+                                if !odo_state.initialized {
+                                    odo_state.last_pos_r = current_pos_r;
+                                    odo_state.last_pos_l = current_pos_l;
+                                    odo_state.initialized = true;
+                                    println!("[Motor Thread] Odometry initialized.");
+                                    message_sender
+                                        .send(MotorMessage::OdometryUpdate {
+                                            x: odo_state.x,
+                                            y: odo_state.y,
+                                            angle: odo_state.angle,
+                                        })
+                                        .unwrap_or_default();
+                                } else {
+                                    let delta_pos_r = circular_diff32(current_pos_r, odo_state.last_pos_r);
+                                    let delta_pos_l = circular_diff32(current_pos_l, odo_state.last_pos_l);
+
+                                    let step_res_rad = config.step_resolution_deg.to_radians();
+                                    let wheel_d = config.wheel_diameter;
+                                    let gear_ratio = config.gear_ratio;
+                                    let wheel_t = config.tread_width;
+
+                                    let dist_l = (delta_pos_l as f32) * step_res_rad * 0.5 * wheel_d / gear_ratio;
+                                    let dist_r = -(delta_pos_r as f32) * step_res_rad * 0.5 * wheel_d / gear_ratio;
+
+                                    let dl = (dist_l + dist_r) / 2.0;
+                                    let dth = (dist_r - dist_l) / wheel_t;
+
+                                    odo_state.x += dl * odo_state.angle.cos();
+                                    odo_state.y += dl * odo_state.angle.sin();
+                                    odo_state.angle += dth;
+
+                                    // Normalize angle to [-PI, PI]
+                                    if odo_state.angle > PI { odo_state.angle -= 2.0 * PI; }
+                                    else if odo_state.angle < -PI { odo_state.angle += 2.0 * PI; }
+                                    
+                                    odo_state.last_pos_r = current_pos_r;
+                                    odo_state.last_pos_l = current_pos_l;
+
+                                    message_sender
+                                        .send(MotorMessage::OdometryUpdate {
+                                            x: odo_state.x,
+                                            y: odo_state.y,
+                                            angle: odo_state.angle,
+                                        })
+                                        .unwrap_or_default();
+                                }
                             }
                             Err(e) => {
                                 let err_msg = format!("Failed to read motor state: {}", e);

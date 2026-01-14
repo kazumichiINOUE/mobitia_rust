@@ -99,6 +99,7 @@ pub struct UiConfig {
 pub struct MotorConfig {
     pub port: String,
     pub baud_rate: u32,
+    pub step_resolution_deg: f32,
     pub wheel_diameter: f32,
     pub tread_width: f32,
     pub gear_ratio: f32,
@@ -111,6 +112,7 @@ impl Default for MotorConfig {
         Self {
             port: "/dev/tty.usbserial-default".to_string(),
             baud_rate: 230400,
+            step_resolution_deg: 0.01,
             wheel_diameter: 0.311,
             tread_width: 0.461,
             gear_ratio: 50.0,
