@@ -9,7 +9,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{Instant, SystemTime};
 
@@ -242,8 +242,10 @@ pub struct MyApp {
     pub(crate) motor_odometry: (f32, f32, f32),
     // 前回のSLAM更新時のオドメトリ
     pub(crate) last_slam_odom: (f32, f32, f32),
-    // 初期化コマンドが送信されたかどうか
-    pub(crate) is_initial_command_sent: bool,
+    // モータースレッドのハンドル
+    pub(crate) motor_thread_handle: Option<thread::JoinHandle<()>>,
+    // 共有オドメトリデータ
+    pub(crate) shared_odometry: Arc<Mutex<(f32, f32, f32)>>,
 
     // --- Shutdown process ---
     pub(crate) is_shutting_down: bool,
@@ -289,12 +291,8 @@ impl MyApp {
         let (command_output_sender, command_output_receiver) = mpsc::channel();
 
         // モーター制御スレッドを起動
-
-        start_modbus_motor_thread(
-            config.motor.clone(),
-            motor_command_receiver,
-            motor_message_sender,
-        );
+        let (motor_thread_handle, shared_odometry) =
+            start_modbus_motor_thread(config.motor.clone(), motor_command_receiver, motor_message_sender);
 
         // XPPenスレッドを起動
         start_xppen_thread(
@@ -302,6 +300,7 @@ impl MyApp {
             xppen_status_sender.clone(),
             xppen_trigger_receiver,
         );
+
 
         // 各Lidarに対してスレッドを起動
         for lidar_state in &lidars {
@@ -564,6 +563,8 @@ impl MyApp {
                 connection_status: "Disconnected".to_string(),
             },
             config,
+            motor_thread_handle: Some(motor_thread_handle),
+            shared_odometry,
 
             // --- Shutdown process ---
             is_shutting_down: false,
@@ -580,7 +581,6 @@ impl MyApp {
             motor_thread_active: true, // Initialize to true
             motor_odometry: (0.0, 0.0, 0.0),
             last_slam_odom: (0.0, 0.0, 0.0),
-            is_initial_command_sent: false,
         }
     }
 
@@ -997,20 +997,9 @@ impl eframe::App for MyApp {
 
     /// フレームごとに呼ばれ、UIを描画する
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // --- Send initial commands on the first update frame ---
-        if !self.is_initial_command_sent {
-            if self.motor_thread_active {
-                if let Err(e) = self.motor_command_sender.send(MotorCommand::EnableIdShare) {
-                    let error_msg =
-                        format!("ERROR: Failed to send initial EnableIdShare command: {}", e);
-                    self.command_output_sender
-                        .send(error_msg)
-                        .unwrap_or_default();
-                    self.motor_thread_active = false;
-                }
-            }
-            self.is_initial_command_sent = true;
-            ctx.request_repaint(); // Repaint to show the results of the initial commands
+        // --- Update motor odometry from shared data ---
+        if let Ok(odometry) = self.shared_odometry.lock() {
+            self.motor_odometry = *odometry;
         }
 
         // --- Shutdown sequence ---
@@ -1527,19 +1516,6 @@ impl eframe::App for MyApp {
                         });
                     }
                 }
-                MotorMessage::OdometryUpdate { x, y, angle } => {
-                    self.motor_odometry = (x, y, angle);
-                    let odo_text = format!(
-                        "Odometry: x={:.2}, y={:.2}, angle={:.1}°",
-                        x,
-                        y,
-                        angle.to_degrees()
-                    );
-                    self.command_history.push(ConsoleOutputEntry {
-                        text: odo_text,
-                        group_id: self.next_group_id,
-                    });
-                }
             }
             ctx.request_repaint();
         }
@@ -2048,16 +2024,16 @@ impl eframe::App for MyApp {
                 );
             }
             AppMode::Slam => {
-                self.slam_screen.draw(
-                    ui,
-                    &self.config,
-                    &mut self.lidar_draw_rect,
-                    &self.current_robot_pose,
-                    &self.robot_trajectory,
-                    &self.current_map_points,
-                    &self.latest_scan_for_draw,
-                );
-            }
+                                    self.slam_screen.draw(
+                                        ui,
+                                        &self.config,
+                                        &mut self.lidar_draw_rect,
+                                        &self.current_robot_pose,
+                                        &self.robot_trajectory,
+                                        &self.current_map_points,
+                                        &self.latest_scan_for_draw,
+                                        &self.motor_odometry,
+                                    );            }
             AppMode::Map => {
                 let map_loading_complete = self.current_submap_load_progress.is_none()
                     && (self.submap_load_queue.is_none()

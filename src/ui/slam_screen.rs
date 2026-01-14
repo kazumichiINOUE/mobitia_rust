@@ -21,8 +21,35 @@ impl SlamScreen {
         robot_trajectory: &[(egui::Pos2, f32)],
         current_map_points: &[(Point2<f32>, f64)],
         latest_scan_for_draw: &[(f32, f32, f32, f32, f32, f32, f32, f32)],
+        motor_odometry: &(f32, f32, f32),
     ) {
         ui.heading("SLAM Mode");
+
+        // --- Pose Info Display ---
+        egui::Area::new("slam_info_overlay")
+            .fixed_pos(ui.min_rect().min) // Anchor to top-left
+            .show(ui.ctx(), |ui| {
+                let background_color = egui::Color32::from_rgba_unmultiplied(0, 0, 0, 128);
+                
+                // SLAM Pose
+                let slam_x = current_robot_pose.translation.x;
+                let slam_y = current_robot_pose.translation.y;
+                let slam_angle_deg = current_robot_pose.rotation.angle().to_degrees();
+                let slam_text = format!(
+                    "SLAM Pose: x: {:>8.3}, y: {:>8.3}, a: {:>6.1}°",
+                    slam_x, slam_y, slam_angle_deg
+                );
+                ui.label(egui::RichText::new(slam_text).monospace().background_color(background_color));
+
+                // Motor Odometry
+                let (odom_x, odom_y, odom_angle) = motor_odometry;
+                let odom_angle_deg = odom_angle.to_degrees();
+                let odom_text = format!(
+                    "Motor Odom: x: {:>8.3}, y: {:>8.3}, a: {:>6.1}°",
+                    odom_x, odom_y, odom_angle_deg
+                );
+                ui.label(egui::RichText::new(odom_text).monospace().background_color(background_color));
+            });
 
         let (response, painter) = ui.allocate_painter(ui.available_size(), egui::Sense::hover());
         let rect = response.rect;
