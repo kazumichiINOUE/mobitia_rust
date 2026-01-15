@@ -152,6 +152,7 @@ pub struct ScanData {
     pub timestamp: u128,
     pub relative_pose: Pose,
     pub scan_points: Vec<ScanPoint>,
+    pub valid_point_count: usize,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -189,6 +190,7 @@ pub struct SlamManager {
     current_submap_scan_buffer: Vec<Vec<(f32, f32, f32, f32, f32, f32, f32, f32)>>,
     current_submap_robot_poses: Vec<Isometry2<f32>>,
     current_submap_timestamps_buffer: Vec<u128>,
+    current_submap_valid_point_counts: Vec<usize>, // 追加
     submaps: HashMap<usize, Submap>,
     output_base_dir: std::path::PathBuf,
     submap_writer: SubmapWriter,
@@ -196,6 +198,9 @@ pub struct SlamManager {
     // キャッシュされた点群
     cached_map_points: Vec<(Point2<f32>, f64)>,
     is_map_dirty: bool, // 地図が更新されたかを示すフラグ
+
+    // UI表示用のフィールド
+    pub last_valid_point_count: usize, // 追加
 }
 
 impl SlamManager {
@@ -213,6 +218,7 @@ impl SlamManager {
             current_submap_scan_buffer: Vec::new(),
             current_submap_robot_poses: Vec::new(),
             current_submap_timestamps_buffer: Vec::new(),
+            current_submap_valid_point_counts: Vec::new(), // 追加
             submaps: HashMap::new(),
             output_base_dir,
             submap_writer: SubmapWriter::new(),
@@ -221,6 +227,7 @@ impl SlamManager {
             config,
             log_odds_occ,
             log_odds_free,
+            last_valid_point_count: 0, // 追加
         }
     }
 
@@ -300,9 +307,12 @@ impl SlamManager {
         // --- Submap generation logic (unchanged for now) ---
         // TODO: This part might need refactoring as it relies on storing scans,
         // which is not ideal for long-term probabilistic mapping.
+        let valid_point_count = raw_scan_data.len();
+        self.last_valid_point_count = valid_point_count; // for UI
         self.current_submap_scan_buffer.push(raw_scan_data.to_vec());
         self.current_submap_robot_poses.push(self.robot_pose);
         self.current_submap_timestamps_buffer.push(timestamp);
+        self.current_submap_valid_point_counts.push(valid_point_count); // for submap saving
 
         if self.current_submap_scan_buffer.len() >= self.config.num_scans_per_submap {
             self.generate_and_save_submap();
@@ -502,11 +512,12 @@ impl SlamManager {
 
         let mut scans_data: Vec<ScanData> = Vec::new();
 
-        for ((scan, pose), timestamp) in self
+        for (((scan, pose), timestamp), valid_count) in self
             .current_submap_scan_buffer
             .iter()
             .zip(self.current_submap_robot_poses.iter())
             .zip(self.current_submap_timestamps_buffer.iter())
+            .zip(self.current_submap_valid_point_counts.iter())
         {
             let relative_pose_isometry = submap_global_pose.inverse() * pose;
             let relative_pose = Pose {
@@ -533,6 +544,7 @@ impl SlamManager {
                 timestamp: *timestamp,
                 relative_pose,
                 scan_points,
+                valid_point_count: *valid_count,
             });
         }
 
@@ -571,11 +583,16 @@ impl SlamManager {
         self.current_submap_scan_buffer.clear();
         self.current_submap_robot_poses.clear();
         self.current_submap_timestamps_buffer.clear();
+        self.current_submap_valid_point_counts.clear();
         self.submap_counter += 1;
     }
 
     pub fn get_robot_pose(&self) -> &Isometry2<f32> {
         &self.robot_pose
+    }
+
+    pub fn get_last_valid_point_count(&self) -> usize {
+        self.last_valid_point_count
     }
 }
 

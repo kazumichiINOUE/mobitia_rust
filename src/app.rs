@@ -134,6 +134,7 @@ pub struct SlamThreadResult {
     pub map_points: Vec<(nalgebra::Point2<f32>, f64)>,
     pub robot_pose: nalgebra::Isometry2<f32>,
     pub scan_used: Vec<(f32, f32, f32, f32, f32, f32, f32, f32)>,
+    pub valid_point_count: usize,
 }
 
 // アプリケーション全体の状態を管理する構造体
@@ -422,6 +423,7 @@ impl MyApp {
                                     map_points: slam_manager.get_map_points().clone(),
                                     robot_pose: *slam_manager.get_robot_pose(),
                                     scan_used: Vec::new(),
+                                    valid_point_count: 0,
                                 })
                                 .unwrap_or_default();
                         }
@@ -434,6 +436,7 @@ impl MyApp {
                                     map_points: slam_manager.get_map_points().clone(),
                                     robot_pose: *slam_manager.get_robot_pose(),
                                     scan_used: Vec::new(),
+                                    valid_point_count: 0,
                                 })
                                 .unwrap_or_default();
                         }
@@ -465,6 +468,7 @@ impl MyApp {
                                             map_points: slam_manager.get_map_points().clone(),
                                             robot_pose: *slam_manager.get_robot_pose(),
                                             scan_used: raw_scan.clone(),
+                                            valid_point_count: slam_manager.last_valid_point_count,
                                         })
                                         .unwrap_or_default();
                                     last_slam_update_time = now;
@@ -492,6 +496,7 @@ impl MyApp {
                                     map_points: slam_manager.get_map_points().clone(),
                                     robot_pose: *slam_manager.get_robot_pose(),
                                     scan_used: raw_scan.clone(),
+                                    valid_point_count: slam_manager.last_valid_point_count,
                                 })
                                 .unwrap_or_default();
                             is_slam_processing_for_thread.store(false, Ordering::SeqCst);
@@ -1541,6 +1546,7 @@ impl eframe::App for MyApp {
             self.current_map_points = slam_result.map_points;
             self.current_robot_pose = slam_result.robot_pose;
             self.latest_scan_for_draw = slam_result.scan_used;
+            self.slam_screen.valid_point_count = slam_result.valid_point_count;
 
             // 軌跡に新しい位置と向きを追加
             let new_pos = egui::pos2(

@@ -3,12 +3,15 @@ use nalgebra::{Isometry2, Point2};
 
 use crate::config::Config;
 
-#[derive(Default)]
-pub struct SlamScreen {}
+pub struct SlamScreen {
+    pub valid_point_count: usize,
+}
 
 impl SlamScreen {
     pub fn new() -> Self {
-        Self {}
+        Self {
+            valid_point_count: 0,
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -54,6 +57,14 @@ impl SlamScreen {
                 );
                 ui.label(
                     egui::RichText::new(odom_text)
+                        .monospace()
+                        .background_color(background_color),
+                );
+
+                // Valid Lidar Points
+                let points_text = format!("Lidar Points: {}", self.valid_point_count);
+                ui.label(
+                    egui::RichText::new(points_text)
                         .monospace()
                         .background_color(background_color),
                 );

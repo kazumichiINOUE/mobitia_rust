@@ -15,10 +15,12 @@ show_osmo_panel = false
 csize = 0.025
 
 # The width of the occupancy grid in cells.
-map_width = 3200
+map_width = 12000
+#map_width = 3200
 
 # The height of the occupancy grid in cells.
-map_height = 3200
+map_height = 12000
+#map_height = 3200
 
 # The method used to update the occupancy grid.
 # Possible values are: "Binary", "Probabilistic", "Hybrid"
@@ -107,7 +109,7 @@ use_odometry_as_initial_guess = true
 num_scans_per_submap = 20
 
 # The size of the viewing area (in meters) when running online SLAM.
-online_slam_view_size = 20.0
+online_slam_view_size = 50.0
 
 [map]
 # Delay in milliseconds between loading each submap for 'list-and-load'.
