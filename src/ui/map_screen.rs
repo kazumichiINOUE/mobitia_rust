@@ -21,7 +21,7 @@ impl MapScreen {
         current_robot_pose: &Isometry2<f32>,
         slam_map_bounding_box: &Option<egui::Rect>,
         robot_trajectory: &[(egui::Pos2, f32)],
-        current_map_points: &[(Point2<f32>, f64)],
+        map_texture: &Option<egui::TextureHandle>,
         map_loading_complete: bool,
     ) {
         ui.heading("Map Mode");
@@ -72,40 +72,18 @@ impl MapScreen {
         inverted_map_view_rect.min.y = map_view_rect.max.y;
         inverted_map_view_rect.max.y = map_view_rect.min.y;
         let to_screen = egui::emath::RectTransform::from_to(inverted_map_view_rect, inner_rect);
-        // Draw the map points
-        // 各セルの画面上でのサイズを固定値として定義 (以前の円の半径2.0に合わせる)
-        const CELL_FIXED_SCREEN_SIZE: f32 = 2.0;
-        let cell_fixed_size_vec = egui::vec2(CELL_FIXED_SCREEN_SIZE, CELL_FIXED_SCREEN_SIZE);
-        for (point, probability) in current_map_points {
-            // Right = +X, Up = +Y
-            let screen_pos = to_screen.transform_pos(egui::pos2(point.x, point.y));
-            if rect.contains(screen_pos) {
-                let prob_f32 = *probability as f32;
-                // Probability == 0.5 is the initial state (unknown), so we don't draw it.
-                if (prob_f32 - 0.5).abs() < 1e-6 {
-                    continue;
-                }
-
-                // 各セルの画面上での矩形を計算
-                let cell_rect = egui::Rect::from_center_size(screen_pos, cell_fixed_size_vec);
-                if prob_f32 > 0.5 {
-                    let intensity = (prob_f32 - 0.5) / 0.5; // Normalize 0.5-1.0 to 0-1
-                    let color = egui::Color32::from_rgb(
-                        (intensity * 100.0) as u8,
-                        (intensity * 100.0) as u8,
-                        (intensity * 255.0) as u8,
-                    );
-                    painter.rect_filled(cell_rect, 0.0, color);
-                } else {
-                    let intensity = prob_f32 / 0.5;
-                    const MAX_FREE_GRAY: u8 = 150;
-                    const MIN_FREE_GRAY: u8 = 25;
-                    let gray_value = MIN_FREE_GRAY
-                        + ((MAX_FREE_GRAY - MIN_FREE_GRAY) as f32 * (1.0 - intensity)) as u8;
-                    let color = egui::Color32::from_gray(gray_value);
-                    painter.rect_filled(cell_rect, 0.0, color);
-                }
-            }
+        // Draw the map texture if it exists
+        if let Some(texture) = map_texture {
+            if let Some(map_bounds) = slam_map_bounding_box {
+                let screen_rect = to_screen.transform_rect(*map_bounds);
+                                                painter.image(
+                                                    texture.id(),
+                                                    screen_rect,
+                                                    // The texture is already generated with the correct orientation (Y-up),
+                                                    // so we use the default UV coordinates from (0,0) top-left to (1,1) bottom-right.
+                                                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                                                    egui::Color32::WHITE,
+                                                );            }
         }
 
         // 軌跡の線と向き（三角形）を描画

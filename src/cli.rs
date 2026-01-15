@@ -706,6 +706,8 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                 app.current_map_points.clear();
                 app.submaps.clear();
                 app.robot_trajectory.clear();
+                app.map_texture = None;
+                app.grid_world_bounds = None;
                 app.slam_map_bounding_box = None;
                 app.current_submap_load_progress = None; // Reset progress
                 app.offline_map = Some(OccupancyGrid::new(

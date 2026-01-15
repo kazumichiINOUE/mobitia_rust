@@ -222,6 +222,8 @@ pub struct MyApp {
     pub(crate) last_submap_load_time: Option<Instant>,
     /// 地図読み込みセッション中に使用される共有占有グリッド
     pub(crate) offline_map: Option<OccupancyGrid>,
+    pub(crate) map_texture: Option<egui::TextureHandle>,
+    pub(crate) grid_world_bounds: Option<egui::Rect>,
 
     /// F6キーによるサジェスト補完が要求されたか
     pub(crate) suggestion_completion_requested: bool,
@@ -569,6 +571,8 @@ impl MyApp {
             current_submap_load_progress: None,
             last_submap_load_time: None,
             offline_map: None,
+            map_texture: None,
+            grid_world_bounds: None,
             suggestion_completion_requested: false,
             command_submission_requested: false,
             clear_command_requested: false,
@@ -1064,13 +1068,42 @@ impl eframe::App for MyApp {
         if self.current_submap_load_progress.is_some() {
             match self.process_next_scan_in_submap(ctx) {
                 Ok(true) => {
-                    // A scan was processed, update the map points for drawing
-                    self.update_map_points_from_grid();
-                    self.update_slam_map_bounding_box();
+                    // A scan was processed. Update the texture periodically.
+                    if let Some(progress) = &self.current_submap_load_progress {
+                        if progress.next_scan_index % 10 == 0 {
+                            self.generate_map_texture(ctx);
+                            // Calculate and set the grid's world bounds
+                            if let Some(grid) = &self.offline_map {
+                                let half_width =
+                                    grid.width as f32 * self.config.slam.csize / 2.0;
+                                let half_height =
+                                    grid.height as f32 * self.config.slam.csize / 2.0;
+                                let grid_rect = egui::Rect::from_min_max(
+                                    egui::pos2(-half_width, -half_height),
+                                    egui::pos2(half_width, half_height),
+                                );
+                                self.grid_world_bounds = Some(grid_rect);
+                                // Also update the main bounding box for view scaling
+                                self.slam_map_bounding_box = Some(grid_rect);
+                            }
+                        }
+                    }
                     ctx.request_repaint();
                 }
                 Ok(false) => {
-                    // Finished processing a submap
+                    // Finished processing one submap. Generate the final texture and bounding box.
+                    self.generate_map_texture(ctx);
+                    if let Some(grid) = &self.offline_map {
+                        let half_width = grid.width as f32 * self.config.slam.csize / 2.0;
+                        let half_height = grid.height as f32 * self.config.slam.csize / 2.0;
+                        let grid_rect = egui::Rect::from_min_max(
+                            egui::pos2(-half_width, -half_height),
+                            egui::pos2(half_width, half_height),
+                        );
+                        self.grid_world_bounds = Some(grid_rect);
+                        // Also update the main bounding box for view scaling
+                        self.slam_map_bounding_box = Some(grid_rect);
+                    }
                     ctx.request_repaint();
                 }
                 Err(e) => {
@@ -2073,7 +2106,7 @@ impl eframe::App for MyApp {
                     &self.current_robot_pose,
                     &self.slam_map_bounding_box,
                     &self.robot_trajectory,
-                    &self.current_map_points,
+                    &self.map_texture,
                     map_loading_complete,
                 );
             }
@@ -2133,6 +2166,53 @@ impl eframe::App for MyApp {
         }
 
         ctx.request_repaint();
+    }
+}
+
+impl MyApp {
+    /// Converts the current offline grid to a texture for visualization.
+    pub fn generate_map_texture(&mut self, ctx: &egui::Context) {
+        if let Some(grid) = &self.offline_map {
+            let mut image = egui::ColorImage::new(
+                [grid.width, grid.height],
+                egui::Color32::from_rgb(20, 20, 20), // Background color
+            );
+
+            for y in 0..grid.height {
+                for x in 0..grid.width {
+                    let index = y * grid.width + x;
+                    let cell_log_odds = grid.data[index].log_odds;
+
+                    // Only draw non-unknown cells
+                    if (cell_log_odds - 0.0).abs() > 1e-6 {
+                        let probability = crate::slam::log_odds_to_probability(cell_log_odds);
+                        let color = if probability > 0.5 {
+                            let intensity = (probability - 0.5) / 0.5; // Normalize 0.5-1.0 to 0-1
+                            egui::Color32::from_rgb(
+                                (intensity * 100.0) as u8,
+                                (intensity * 100.0) as u8,
+                                (intensity * 255.0) as u8,
+                            )
+                        } else {
+                            let intensity = probability / 0.5;
+                            const MAX_FREE_GRAY: u8 = 150;
+                            const MIN_FREE_GRAY: u8 = 25;
+                            let gray_value = MIN_FREE_GRAY
+                                + (((MAX_FREE_GRAY - MIN_FREE_GRAY) as f32) * (1.0f32 - intensity as f32)) as u8;
+                            egui::Color32::from_gray(gray_value)
+                        };
+                        // Y軸を反転させて、テクスチャの座標系とワールド座標系を合わせる
+                        image[(x, grid.height - 1 - y)] = color;
+                    }
+                }
+            }
+
+            self.map_texture = Some(ctx.load_texture(
+                "map-texture",
+                image,
+                egui::TextureOptions::NEAREST,
+            ));
+        }
     }
 }
 
