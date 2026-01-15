@@ -412,7 +412,7 @@ impl MyApp {
             let slam_update_interval_duration =
                 web_time::Duration::from_millis(slam_config_for_thread.update_interval_ms);
             let mut current_slam_mode = SlamMode::Manual;
-            let mut last_slam_update_time = web_time::Instant::now(); 
+            let mut last_slam_update_time = web_time::Instant::now();
 
             loop {
                 // UIスレッドからのコマンドを処理
@@ -1078,7 +1078,8 @@ impl eframe::App for MyApp {
 
                     if let Some(last_pose) = self.last_map_update_pose {
                         // ロボットの移動距離を計算
-                        let translation_vector = current_pose.translation.vector - last_pose.translation.vector;
+                        let translation_vector =
+                            current_pose.translation.vector - last_pose.translation.vector;
                         let translation = translation_vector.norm();
                         if translation >= update_distance_threshold {
                             should_update = true;
@@ -2194,7 +2195,9 @@ impl MyApp {
                             const MAX_FREE_GRAY: u8 = 150;
                             const MIN_FREE_GRAY: u8 = 25;
                             let gray_value = MIN_FREE_GRAY
-                                + (((MAX_FREE_GRAY - MIN_FREE_GRAY) as f32) * (1.0f32 - intensity as f32)) as u8;
+                                + (((MAX_FREE_GRAY - MIN_FREE_GRAY) as f32)
+                                    * (1.0f32 - intensity as f32))
+                                    as u8;
                             egui::Color32::from_gray(gray_value)
                         };
                         // Y軸を反転させて、テクスチャの座標系とワールド座標系を合わせる
@@ -2203,11 +2206,8 @@ impl MyApp {
                 }
             }
 
-            self.map_texture = Some(ctx.load_texture(
-                "map-texture",
-                image,
-                egui::TextureOptions::NEAREST,
-            ));
+            self.map_texture =
+                Some(ctx.load_texture("map-texture", image, egui::TextureOptions::NEAREST));
         }
     }
 }

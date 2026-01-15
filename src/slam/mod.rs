@@ -324,8 +324,7 @@ impl SlamManager {
         self.is_map_dirty = true;
 
         // --- Submap generation logic ---
-        self.current_submap_scan_buffer
-            .push(raw_scan_data.to_vec());
+        self.current_submap_scan_buffer.push(raw_scan_data.to_vec());
         self.current_submap_robot_poses.push(self.robot_pose);
         self.current_submap_timestamps_buffer.push(timestamp);
         self.current_submap_valid_point_counts

@@ -73,20 +73,20 @@ impl MapScreen {
         inverted_map_view_rect.min.y = map_view_rect.max.y;
         inverted_map_view_rect.max.y = map_view_rect.min.y;
         let to_screen = egui::emath::RectTransform::from_to(inverted_map_view_rect, inner_rect);
-                // Draw the map texture if it exists
-                if let Some(texture) = map_texture {
-                    if let Some(grid_bounds) = grid_world_bounds {
-                        let screen_rect = to_screen.transform_rect(*grid_bounds);
-                        painter.image(
-                            texture.id(),
-                            screen_rect,
-                            // The texture is already generated with the correct orientation (Y-up),
-                            // so we use the default UV coordinates from (0,0) top-left to (1,1) bottom-right.
-                            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                            egui::Color32::WHITE,
-                        );
-                    }
-                }
+        // Draw the map texture if it exists
+        if let Some(texture) = map_texture {
+            if let Some(grid_bounds) = grid_world_bounds {
+                let screen_rect = to_screen.transform_rect(*grid_bounds);
+                painter.image(
+                    texture.id(),
+                    screen_rect,
+                    // The texture is already generated with the correct orientation (Y-up),
+                    // so we use the default UV coordinates from (0,0) top-left to (1,1) bottom-right.
+                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                    egui::Color32::WHITE,
+                );
+            }
+        }
 
         // 軌跡の線と向き（三角形）を描画
         if robot_trajectory.len() > 1 {
