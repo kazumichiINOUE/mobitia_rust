@@ -116,6 +116,7 @@ update_interval_ms = 1000
 [map]
 # Delay in milliseconds between loading each submap for 'list-and-load'.
 submap_load_delay_ms = 500
+map_load_update_distance = 1.0
 
 # --- LiDAR Configurations ---
 # Each table in this array represents one LiDAR sensor.

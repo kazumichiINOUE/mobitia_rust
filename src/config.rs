@@ -90,6 +90,7 @@ pub struct SlamConfig {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct MapConfig {
     pub submap_load_delay_ms: u64,
+    pub map_load_update_distance: f32,
 }
 
 // --- UI-related Parameters ---
@@ -168,6 +169,10 @@ impl Config {
     }
 }
 
+fn default_map_load_update_distance() -> f32 {
+    0.1 // 10cm
+}
+
 fn default_lidars() -> Vec<LidarTomlConfig> {
     Vec::new()
 }
@@ -188,6 +193,7 @@ impl Default for MapConfig {
     fn default() -> Self {
         Self {
             submap_load_delay_ms: 500,
+            map_load_update_distance: default_map_load_update_distance(),
         }
     }
 }

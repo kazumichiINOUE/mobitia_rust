@@ -706,6 +706,7 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                 app.current_map_points.clear();
                 app.submaps.clear();
                 app.robot_trajectory.clear();
+                app.last_map_update_pose = None;
                 app.map_texture = None;
                 app.grid_world_bounds = None;
                 app.slam_map_bounding_box = None;

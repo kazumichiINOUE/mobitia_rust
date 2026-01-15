@@ -206,6 +206,7 @@ pub struct MyApp {
     pub(crate) latest_scan_for_draw: Vec<(f32, f32, f32, f32, f32, f32, f32, f32)>,
 
     pub(crate) robot_trajectory: Vec<(egui::Pos2, f32)>,
+    pub(crate) last_map_update_pose: Option<nalgebra::Isometry2<f32>>,
 
     // --- サブマップ関連のフィールド (MyAppに移行) ---
     pub(crate) submap_counter: usize,
@@ -560,6 +561,7 @@ impl MyApp {
             single_scan_requested_by_ui: false,
             latest_scan_for_draw: Vec::new(),
             robot_trajectory: Vec::new(),
+            last_map_update_pose: None,
 
             submap_counter: 0,
             current_submap_scan_buffer: Vec::new(),
@@ -1068,12 +1070,28 @@ impl eframe::App for MyApp {
         if self.current_submap_load_progress.is_some() {
             match self.process_next_scan_in_submap(ctx) {
                 Ok(true) => {
-                    // A scan was processed. Update the texture periodically.
-                    if let Some(progress) = &self.current_submap_load_progress {
-                        if progress.next_scan_index % 10 == 0 {
-                            self.generate_map_texture(ctx);
-                            self.update_bounds();
+                    // A scan was processed.
+                    // Update if enough distance has been covered or if it's the very first pose.
+                    let current_pose = self.current_robot_pose; // current_robot_pose は process_next_scan_in_submap で更新される
+                    let update_distance_threshold = self.config.map.map_load_update_distance;
+                    let mut should_update = false;
+
+                    if let Some(last_pose) = self.last_map_update_pose {
+                        // ロボットの移動距離を計算
+                        let translation_vector = current_pose.translation.vector - last_pose.translation.vector;
+                        let translation = translation_vector.norm();
+                        if translation >= update_distance_threshold {
+                            should_update = true;
                         }
+                    } else {
+                        // 最初の姿勢なので必ず更新
+                        should_update = true;
+                    }
+
+                    if should_update {
+                        self.generate_map_texture(ctx);
+                        self.update_bounds();
+                        self.last_map_update_pose = Some(current_pose); // 更新した姿勢を記録
                     }
                     ctx.request_repaint();
                 }
