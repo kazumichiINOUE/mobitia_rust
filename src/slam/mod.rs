@@ -153,6 +153,7 @@ pub struct ScanData {
     pub relative_pose: Pose,
     pub scan_points: Vec<ScanPoint>,
     pub valid_point_count: usize,
+    pub estimation_method: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -190,7 +191,8 @@ pub struct SlamManager {
     current_submap_scan_buffer: Vec<Vec<(f32, f32, f32, f32, f32, f32, f32, f32)>>,
     current_submap_robot_poses: Vec<Isometry2<f32>>,
     current_submap_timestamps_buffer: Vec<u128>,
-    current_submap_valid_point_counts: Vec<usize>, // 追加
+    current_submap_valid_point_counts: Vec<usize>,
+    current_submap_estimation_methods: Vec<String>,
     submaps: HashMap<usize, Submap>,
     output_base_dir: std::path::PathBuf,
     submap_writer: SubmapWriter,
@@ -200,7 +202,7 @@ pub struct SlamManager {
     is_map_dirty: bool, // 地図が更新されたかを示すフラグ
 
     // UI表示用のフィールド
-    pub last_valid_point_count: usize, // 追加
+    pub last_valid_point_count: usize,
 }
 
 impl SlamManager {
@@ -218,7 +220,8 @@ impl SlamManager {
             current_submap_scan_buffer: Vec::new(),
             current_submap_robot_poses: Vec::new(),
             current_submap_timestamps_buffer: Vec::new(),
-            current_submap_valid_point_counts: Vec::new(), // 追加
+            current_submap_valid_point_counts: Vec::new(),
+            current_submap_estimation_methods: Vec::new(),
             submaps: HashMap::new(),
             output_base_dir,
             submap_writer: SubmapWriter::new(),
@@ -227,7 +230,7 @@ impl SlamManager {
             config,
             log_odds_occ,
             log_odds_free,
-            last_valid_point_count: 0, // 追加
+            last_valid_point_count: 0,
         }
     }
 
@@ -269,18 +272,33 @@ impl SlamManager {
             .map(|(p, _, _, _, _)| *p)
             .collect();
 
-        // --- 生のコーナー点群の作成 ---
-        let raw_corner_points: Vec<(Point2<f32>, f32)> = raw_scan_data
-            .iter()
-            .filter(|p| p.7 > 0.5) // corner_nessが0.5より大きい点をフィルタリング (閾値は要調整)
-            .map(|p| (Point2::new(p.0, p.1), p.7)) // (point, corner_ness)
-            .collect();
+        let valid_point_count = raw_scan_data.len();
+        self.last_valid_point_count = valid_point_count;
+
+        let estimation_method: String;
 
         if self.is_initial_scan {
             self.robot_pose = Isometry2::identity();
             self.is_initial_scan = false;
+            estimation_method = "Initial".to_string();
+        } else if valid_point_count < self.config.min_valid_points_for_de {
+            // Point count is too low, update pose with odometry guess
+            if let Some((odom_dx, odom_dy, odom_dtheta)) = odom_guess {
+                let odom_update =
+                    Isometry2::new(nalgebra::Vector2::new(odom_dx, odom_dy), odom_dtheta);
+                self.robot_pose = self.robot_pose * odom_update;
+            }
+            // If odom_guess is None, pose is not updated.
+            estimation_method = "Odometry".to_string();
         } else {
-            // マッチングには補間済みのスキャンデータを使用
+            // Sufficient points, perform DE optimization
+            // --- 生のコーナー点群の作成 ---
+            let raw_corner_points: Vec<(Point2<f32>, f32)> = raw_scan_data
+                .iter()
+                .filter(|p| p.7 > 0.5) // corner_nessが0.5より大きい点をフィルタリング (閾値は要調整)
+                .map(|p| (Point2::new(p.0, p.1), p.7)) // (point, corner_ness)
+                .collect();
+
             let (best_pose, _score) = self.de_solver.optimize_de(
                 &self.map_gmap,
                 &matching_scan,
@@ -289,6 +307,7 @@ impl SlamManager {
                 odom_guess,
             );
             self.robot_pose = best_pose;
+            estimation_method = "DifferentialEvolution".to_string();
         }
 
         let pose = self.robot_pose; // Copy pose to avoid borrow checker issues
@@ -304,15 +323,15 @@ impl SlamManager {
         }
         self.is_map_dirty = true;
 
-        // --- Submap generation logic (unchanged for now) ---
-        // TODO: This part might need refactoring as it relies on storing scans,
-        // which is not ideal for long-term probabilistic mapping.
-        let valid_point_count = raw_scan_data.len();
-        self.last_valid_point_count = valid_point_count; // for UI
-        self.current_submap_scan_buffer.push(raw_scan_data.to_vec());
+        // --- Submap generation logic ---
+        self.current_submap_scan_buffer
+            .push(raw_scan_data.to_vec());
         self.current_submap_robot_poses.push(self.robot_pose);
         self.current_submap_timestamps_buffer.push(timestamp);
-        self.current_submap_valid_point_counts.push(valid_point_count); // for submap saving
+        self.current_submap_valid_point_counts
+            .push(valid_point_count);
+        self.current_submap_estimation_methods
+            .push(estimation_method);
 
         if self.current_submap_scan_buffer.len() >= self.config.num_scans_per_submap {
             self.generate_and_save_submap();
@@ -512,12 +531,13 @@ impl SlamManager {
 
         let mut scans_data: Vec<ScanData> = Vec::new();
 
-        for (((scan, pose), timestamp), valid_count) in self
+        for ((((scan, pose), timestamp), valid_count), estimation_method) in self
             .current_submap_scan_buffer
             .iter()
             .zip(self.current_submap_robot_poses.iter())
             .zip(self.current_submap_timestamps_buffer.iter())
             .zip(self.current_submap_valid_point_counts.iter())
+            .zip(self.current_submap_estimation_methods.iter())
         {
             let relative_pose_isometry = submap_global_pose.inverse() * pose;
             let relative_pose = Pose {
@@ -545,6 +565,7 @@ impl SlamManager {
                 relative_pose,
                 scan_points,
                 valid_point_count: *valid_count,
+                estimation_method: estimation_method.clone(),
             });
         }
 
@@ -584,6 +605,7 @@ impl SlamManager {
         self.current_submap_robot_poses.clear();
         self.current_submap_timestamps_buffer.clear();
         self.current_submap_valid_point_counts.clear();
+        self.current_submap_estimation_methods.clear();
         self.submap_counter += 1;
     }
 

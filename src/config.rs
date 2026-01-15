@@ -80,6 +80,10 @@ pub struct SlamConfig {
     pub use_odometry_as_initial_guess: bool,
     pub num_scans_per_submap: usize,
     pub online_slam_view_size: f32,
+    #[serde(default)]
+    pub min_valid_points_for_de: usize,
+    #[serde(default)]
+    pub update_interval_ms: u64,
 }
 
 // --- Map-related Parameters ---
@@ -222,6 +226,8 @@ impl Default for SlamConfig {
             use_odometry_as_initial_guess: false,
             num_scans_per_submap: 20,
             online_slam_view_size: 30.0,
+            min_valid_points_for_de: 0,
+            update_interval_ms: 1000,
         }
     }
 }

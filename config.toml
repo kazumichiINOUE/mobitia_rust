@@ -110,6 +110,8 @@ num_scans_per_submap = 20
 
 # The size of the viewing area (in meters) when running online SLAM.
 online_slam_view_size = 50.0
+min_valid_points_for_de = 0
+update_interval_ms = 1000
 
 [map]
 # Delay in milliseconds between loading each submap for 'list-and-load'.

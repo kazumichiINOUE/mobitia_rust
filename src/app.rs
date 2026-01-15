@@ -134,7 +134,6 @@ pub struct SlamThreadResult {
     pub map_points: Vec<(nalgebra::Point2<f32>, f64)>,
     pub robot_pose: nalgebra::Isometry2<f32>,
     pub scan_used: Vec<(f32, f32, f32, f32, f32, f32, f32, f32)>,
-    pub valid_point_count: usize,
 }
 
 // アプリケーション全体の状態を管理する構造体
@@ -407,10 +406,10 @@ impl MyApp {
                 slam_results_path,
                 slam_config_for_thread.clone(), // Pass slam config
             );
+            let slam_update_interval_duration =
+                web_time::Duration::from_millis(slam_config_for_thread.update_interval_ms);
             let mut current_slam_mode = SlamMode::Manual;
-            let mut last_slam_update_time = web_time::Instant::now(); // std::time::Instant の代わりにweb_time::Instantを使用
-            const SLAM_UPDATE_INTERVAL_DURATION: web_time::Duration =
-                web_time::Duration::from_millis(1000); // 500ミリ秒に変更
+            let mut last_slam_update_time = web_time::Instant::now(); 
 
             loop {
                 // UIスレッドからのコマンドを処理
@@ -423,7 +422,6 @@ impl MyApp {
                                     map_points: slam_manager.get_map_points().clone(),
                                     robot_pose: *slam_manager.get_robot_pose(),
                                     scan_used: Vec::new(),
-                                    valid_point_count: 0,
                                 })
                                 .unwrap_or_default();
                         }
@@ -436,7 +434,6 @@ impl MyApp {
                                     map_points: slam_manager.get_map_points().clone(),
                                     robot_pose: *slam_manager.get_robot_pose(),
                                     scan_used: Vec::new(),
-                                    valid_point_count: 0,
                                 })
                                 .unwrap_or_default();
                         }
@@ -449,7 +446,7 @@ impl MyApp {
                             if current_slam_mode == SlamMode::Continuous {
                                 let now = web_time::Instant::now();
                                 if now.duration_since(last_slam_update_time)
-                                    >= SLAM_UPDATE_INTERVAL_DURATION
+                                    >= slam_update_interval_duration
                                 {
                                     is_slam_processing_for_thread.store(true, Ordering::SeqCst);
 
@@ -468,7 +465,6 @@ impl MyApp {
                                             map_points: slam_manager.get_map_points().clone(),
                                             robot_pose: *slam_manager.get_robot_pose(),
                                             scan_used: raw_scan.clone(),
-                                            valid_point_count: slam_manager.last_valid_point_count,
                                         })
                                         .unwrap_or_default();
                                     last_slam_update_time = now;
@@ -496,7 +492,6 @@ impl MyApp {
                                     map_points: slam_manager.get_map_points().clone(),
                                     robot_pose: *slam_manager.get_robot_pose(),
                                     scan_used: raw_scan.clone(),
-                                    valid_point_count: slam_manager.last_valid_point_count,
                                 })
                                 .unwrap_or_default();
                             is_slam_processing_for_thread.store(false, Ordering::SeqCst);
@@ -1229,6 +1224,17 @@ impl eframe::App for MyApp {
                     if self.app_mode == AppMode::Slam {
                         if id < self.pending_scans.len() {
                             self.pending_scans[id] = Some(scan_with_features);
+
+                            // リアルタイムで有効なLidarの合計点数を計算してUIに渡す
+                            let total_points: usize = self
+                                .lidars
+                                .iter()
+                                .filter(|l| l.is_active_for_slam)
+                                .filter_map(|l| self.pending_scans.get(l.id))
+                                .filter_map(|opt_scan| opt_scan.as_ref())
+                                .map(|scan| scan.len())
+                                .sum();
+                            self.slam_screen.valid_point_count = total_points;
                         }
 
                         // SLAMが有効なLidarがすべてデータを受信したか確認
@@ -1546,7 +1552,6 @@ impl eframe::App for MyApp {
             self.current_map_points = slam_result.map_points;
             self.current_robot_pose = slam_result.robot_pose;
             self.latest_scan_for_draw = slam_result.scan_used;
-            self.slam_screen.valid_point_count = slam_result.valid_point_count;
 
             // 軌跡に新しい位置と向きを追加
             let new_pos = egui::pos2(
