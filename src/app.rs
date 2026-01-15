@@ -1072,38 +1072,15 @@ impl eframe::App for MyApp {
                     if let Some(progress) = &self.current_submap_load_progress {
                         if progress.next_scan_index % 10 == 0 {
                             self.generate_map_texture(ctx);
-                            // Calculate and set the grid's world bounds
-                            if let Some(grid) = &self.offline_map {
-                                let half_width =
-                                    grid.width as f32 * self.config.slam.csize / 2.0;
-                                let half_height =
-                                    grid.height as f32 * self.config.slam.csize / 2.0;
-                                let grid_rect = egui::Rect::from_min_max(
-                                    egui::pos2(-half_width, -half_height),
-                                    egui::pos2(half_width, half_height),
-                                );
-                                self.grid_world_bounds = Some(grid_rect);
-                                // Also update the main bounding box for view scaling
-                                self.slam_map_bounding_box = Some(grid_rect);
-                            }
+                            self.update_bounds();
                         }
                     }
                     ctx.request_repaint();
                 }
                 Ok(false) => {
-                    // Finished processing one submap. Generate the final texture and bounding box.
+                    // Finished processing one submap. Generate the final texture and bounding boxes.
                     self.generate_map_texture(ctx);
-                    if let Some(grid) = &self.offline_map {
-                        let half_width = grid.width as f32 * self.config.slam.csize / 2.0;
-                        let half_height = grid.height as f32 * self.config.slam.csize / 2.0;
-                        let grid_rect = egui::Rect::from_min_max(
-                            egui::pos2(-half_width, -half_height),
-                            egui::pos2(half_width, half_height),
-                        );
-                        self.grid_world_bounds = Some(grid_rect);
-                        // Also update the main bounding box for view scaling
-                        self.slam_map_bounding_box = Some(grid_rect);
-                    }
+                    self.update_bounds();
                     ctx.request_repaint();
                 }
                 Err(e) => {
@@ -2105,6 +2082,7 @@ impl eframe::App for MyApp {
                     &mut self.lidar_draw_rect,
                     &self.current_robot_pose,
                     &self.slam_map_bounding_box,
+                    &self.grid_world_bounds,
                     &self.robot_trajectory,
                     &self.map_texture,
                     map_loading_complete,
@@ -2213,6 +2191,25 @@ impl MyApp {
                 egui::TextureOptions::NEAREST,
             ));
         }
+    }
+}
+
+impl MyApp {
+    fn update_bounds(&mut self) {
+        // Calculate and set the grid's world bounds
+        if let Some(grid) = &self.offline_map {
+            let half_width = grid.width as f32 * self.config.slam.csize / 2.0;
+            let half_height = grid.height as f32 * self.config.slam.csize / 2.0;
+            self.grid_world_bounds = Some(egui::Rect::from_min_max(
+                egui::pos2(-half_width, -half_height),
+                egui::pos2(half_width, half_height),
+            ));
+        }
+
+        // Calculate and set the bounding box of valid points
+        self.update_map_points_from_grid();
+        self.update_slam_map_bounding_box();
+        self.current_map_points.clear();
     }
 }
 
