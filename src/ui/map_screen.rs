@@ -255,6 +255,9 @@ impl MapScreen {
                 let width_text_galley =
                     ui.fonts(|f| f.layout_no_wrap(width_text.clone(), font_id.clone(), text_color));
 
+                // テキストの中心が width_text_center_screen になるように、左上座標を計算
+                let width_text_top_left = width_text_center_screen - width_text_galley.size() / 2.0;
+
                 let width_text_rect = egui::Rect::from_center_size(
                     width_text_center_screen,
                     width_text_galley.size(),
@@ -262,7 +265,7 @@ impl MapScreen {
                 .expand(2.0);
 
                 painter.rect_filled(width_text_rect, 0.0, bg_color); // 角丸Rは0
-                painter.galley(width_text_center_screen, width_text_galley);
+                painter.galley(width_text_top_left, width_text_galley);
 
                 // --- 縦幅の寸法 ---
                 let height_val = bbox_world.height();
@@ -335,6 +338,9 @@ impl MapScreen {
                 let height_text_galley =
                     ui.fonts(|f| f.layout_no_wrap(height_text.clone(), font_id, text_color));
 
+                // テキストの中心が height_text_center_screen になるように、左上座標を計算
+                let height_text_top_left = height_text_center_screen - height_text_galley.size() / 2.0;
+
                 let height_text_rect = egui::Rect::from_center_size(
                     height_text_center_screen,
                     height_text_galley.size(),
@@ -342,7 +348,7 @@ impl MapScreen {
                 .expand(2.0);
 
                 painter.rect_filled(height_text_rect, 0.0, bg_color);
-                painter.galley(height_text_center_screen, height_text_galley);
+                painter.galley(height_text_top_left, height_text_galley);
             }
         }
     }

@@ -236,6 +236,9 @@ pub struct MyApp {
     pub(crate) clear_command_requested: bool,
 
     pub(crate) osmo_capture_session_path: Option<PathBuf>,
+    pub(crate) trajectory_save_path: Option<PathBuf>,
+    pub(crate) map_image_save_path: Option<PathBuf>,
+    pub(crate) map_info_save_path: Option<PathBuf>,
 
     pub(crate) config: crate::config::Config, // 追加
 
@@ -579,6 +582,7 @@ impl MyApp {
             command_submission_requested: false,
             clear_command_requested: false,
             osmo_capture_session_path: None,
+            trajectory_save_path: None,
             xppen: XppenState {
                 connection_status: "Disconnected".to_string(),
             },
@@ -1100,6 +1104,52 @@ impl eframe::App for MyApp {
                     // Finished processing one submap. Generate the final texture and bounding boxes.
                     self.generate_map_texture(ctx);
                     self.update_bounds();
+
+                    // If this was the last submap, save the trajectory.
+                    if self.submap_load_queue.as_ref().map_or(true, |q| q.is_empty()) {
+                        if let Some(path) = self.trajectory_save_path.take() {
+                            let trajectory_clone = self.robot_trajectory.clone();
+                            let command_output_sender_clone = self.command_output_sender.clone();
+                            thread::spawn(move || {
+                                use std::io::Write;
+                                match std::fs::File::create(&path) {
+                                    Ok(mut file) => {
+                                        let mut content = String::new();
+                                        for (pos, angle) in trajectory_clone {
+                                            content.push_str(&format!(
+                                                "{} {} {}\n",
+                                                pos.x, pos.y, angle
+                                            ));
+                                        }
+                                        match file.write_all(content.as_bytes()) {
+                                            Ok(_) => command_output_sender_clone
+                                                .send(format!(
+                                                    "Trajectory saved to '{}'.",
+                                                    path.display()
+                                                ))
+                                                .unwrap_or_default(),
+                                            Err(e) => command_output_sender_clone
+                                                .send(format!(
+                                                    "ERROR: Failed to write to file '{}': {}",
+                                                    path.display(),
+                                                    e
+                                                ))
+                                                .unwrap_or_default(),
+                                        }
+                                    }
+                                    Err(e) => {
+                                        command_output_sender_clone
+                                            .send(format!(
+                                                "ERROR: Failed to create file '{}': {}",
+                                                path.display(),
+                                                e
+                                            ))
+                                            .unwrap_or_default();
+                                    }
+                                }
+                            });
+                        }
+                    }
                     ctx.request_repaint();
                 }
                 Err(e) => {
