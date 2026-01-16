@@ -3,6 +3,7 @@ use chrono::Local;
 use clap::Parser;
 use eframe::egui;
 use egui::Vec2;
+use image::imageops;
 use nalgebra::Isometry2;
 use std::collections::HashMap;
 use std::fs;
@@ -1182,21 +1183,56 @@ impl eframe::App for MyApp {
                                                     return;
                                                 }
                                             };
+                                        
+                                        // 2. バウンディングボックスを計算して画像をトリミング
+                                        let (min_x, min_y, max_x, max_y) = {
+                                            let mut min_x = u32::MAX;
+                                            let mut min_y = u32::MAX;
+                                            let mut max_x = 0;
+                                            let mut max_y = 0;
+                                            let background_color = image::Rgba([20, 20, 20, 255]);
 
-                                        // 2. PNGとして保存
-                                        if let Err(e) = img_buffer.save(&image_path) {
+                                            for (x, y, pixel) in img_buffer.enumerate_pixels() {
+                                                if *pixel != background_color {
+                                                    min_x = min_x.min(x);
+                                                    min_y = min_y.min(y);
+                                                    max_x = max_x.max(x);
+                                                    max_y = max_y.max(y);
+                                                }
+                                            }
+                                            (min_x, min_y, max_x, max_y)
+                                        };
+
+                                        let (cropped_img, crop_x, crop_y) = if min_x <= max_x && min_y <= max_y {
+                                            let width = max_x - min_x + 1;
+                                            let height = max_y - min_y + 1;
+                                            (imageops::crop_imm(&img_buffer, min_x, min_y, width, height).to_image(), min_x, min_y)
+                                        } else {
+                                            // 有効なピクセルがない場合は、1x1の黒い画像を保存
+                                            sender.send("WARNING: No valid map data found to save. Creating a 1x1 placeholder image.".to_string()).unwrap_or_default();
+                                            (image::RgbaImage::new(1, 1), 0, 0)
+                                        };
+
+                                        // 3. PNGとして保存
+                                        if let Err(e) = cropped_img.save(&image_path) {
                                             sender.send(format!("ERROR: Failed to save map image to '{}': {}", image_path.display(), e)).unwrap_or_default();
                                         } else {
                                             sender.send(format!("Map image saved to '{}'.", image_path.display())).unwrap_or_default();
                                         }
 
-                                        // 3. map_info.toml の内容を生成
+                                        // 4. map_info.toml の内容を生成
                                         let map_info_content = {
                                             let resolution = map_config.csize;
-                                            let half_width_m = color_image.width() as f32 * resolution / 2.0;
-                                            let half_height_m = color_image.height() as f32 * resolution / 2.0;
-                                            let origin_x = -half_width_m;
-                                            let origin_y = half_height_m;
+                                            // 元の画像の中心を基準としたorigin
+                                            let initial_half_width_m = color_image.width() as f32 * resolution / 2.0;
+                                            let initial_half_height_m = color_image.height() as f32 * resolution / 2.0;
+                                            let initial_origin_x = -initial_half_width_m;
+                                            let initial_origin_y = initial_half_height_m;
+                                            
+                                            // トリミングによるオフセットを考慮してoriginを再計算
+                                            // Y軸は画像の上方が正なので、yのオフセットは減算する
+                                            let final_origin_x = initial_origin_x + (crop_x as f32 * resolution);
+                                            let final_origin_y = initial_origin_y - (crop_y as f32 * resolution);
 
                                             format!(
                                                 r#"# Map information file
@@ -1207,11 +1243,11 @@ free_thresh = 0.196
 occupied_thresh = 0.65
 negate = 0
 "#,
-                                                resolution, origin_x, origin_y
+                                                resolution, final_origin_x, final_origin_y
                                             )
                                         };
 
-                                        // 4. map_info.toml として保存
+                                        // 5. map_info.toml として保存
                                         if let Err(e) = std::fs::write(&info_path, map_info_content) {
                                             sender.send(format!("ERROR: Failed to write map info to '{}': {}", info_path.display(), e)).unwrap_or_default();
                                         } else {
