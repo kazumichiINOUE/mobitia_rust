@@ -583,6 +583,8 @@ impl MyApp {
             clear_command_requested: false,
             osmo_capture_session_path: None,
             trajectory_save_path: None,
+            map_image_save_path: None,
+            map_info_save_path: None,
             xppen: XppenState {
                 connection_status: "Disconnected".to_string(),
             },
@@ -1094,7 +1096,7 @@ impl eframe::App for MyApp {
                     }
 
                     if should_update {
-                        self.generate_map_texture(ctx);
+                        let _ = self.generate_map_texture(ctx); // Ignore the returned image
                         self.update_bounds();
                         self.last_map_update_pose = Some(current_pose); // 更新した姿勢を記録
                     }
@@ -1102,14 +1104,15 @@ impl eframe::App for MyApp {
                 }
                 Ok(false) => {
                     // Finished processing one submap. Generate the final texture and bounding boxes.
-                    self.generate_map_texture(ctx);
+                    let generated_image = self.generate_map_texture(ctx);
                     self.update_bounds();
 
-                    // If this was the last submap, save the trajectory.
+                    // If this was the last submap, save all the generated data.
                     if self.submap_load_queue.as_ref().map_or(true, |q| q.is_empty()) {
+                        // Trajectory saving
                         if let Some(path) = self.trajectory_save_path.take() {
                             let trajectory_clone = self.robot_trajectory.clone();
-                            let command_output_sender_clone = self.command_output_sender.clone();
+                            let sender = self.command_output_sender.clone();
                             thread::spawn(move || {
                                 use std::io::Write;
                                 match std::fs::File::create(&path) {
@@ -1121,24 +1124,25 @@ impl eframe::App for MyApp {
                                                 pos.x, pos.y, angle
                                             ));
                                         }
-                                        match file.write_all(content.as_bytes()) {
-                                            Ok(_) => command_output_sender_clone
-                                                .send(format!(
-                                                    "Trajectory saved to '{}'.",
-                                                    path.display()
-                                                ))
-                                                .unwrap_or_default(),
-                                            Err(e) => command_output_sender_clone
+                                        if let Err(e) = file.write_all(content.as_bytes()) {
+                                            sender
                                                 .send(format!(
                                                     "ERROR: Failed to write to file '{}': {}",
                                                     path.display(),
                                                     e
                                                 ))
-                                                .unwrap_or_default(),
+                                                .unwrap_or_default();
+                                        } else {
+                                            sender
+                                                .send(format!(
+                                                    "Trajectory saved to '{}'.",
+                                                    path.display()
+                                                ))
+                                                .unwrap_or_default();
                                         }
                                     }
                                     Err(e) => {
-                                        command_output_sender_clone
+                                        sender
                                             .send(format!(
                                                 "ERROR: Failed to create file '{}': {}",
                                                 path.display(),
@@ -1148,6 +1152,89 @@ impl eframe::App for MyApp {
                                     }
                                 }
                             });
+                        }
+
+                        // Map image and info saving
+                        if let Some(image_path) = self.map_image_save_path.take() {
+                            if let Some(info_path) = self.map_info_save_path.take() {
+                                if let Some(color_image) = generated_image {
+                                    let sender = self.command_output_sender.clone();
+                                    let map_config = self.config.slam.clone();
+
+                                    thread::spawn(move || {
+                                        // 1. ColorImageをimage::RgbaImageに変換
+                                        let pixels: Vec<u8> = color_image
+                                            .pixels
+                                            .iter()
+                                            .flat_map(|color| {
+                                                [color.r(), color.g(), color.b(), color.a()]
+                                            })
+                                            .collect();
+                                        let img_buffer: image::RgbaImage =
+                                            match image::ImageBuffer::from_raw(
+                                                color_image.width() as u32,
+                                                color_image.height() as u32,
+                                                pixels,
+                                            ) {
+                                                Some(buf) => buf,
+                                                None => {
+                                                    sender.send(format!("ERROR: Failed to create image buffer for '{}'.", image_path.display())).unwrap_or_default();
+                                                    return;
+                                                }
+                                            };
+
+                                        // 2. PNGとして保存
+                                        if let Err(e) = img_buffer.save(&image_path) {
+                                            sender.send(format!("ERROR: Failed to save map image to '{}': {}", image_path.display(), e)).unwrap_or_default();
+                                        } else {
+                                            sender.send(format!("Map image saved to '{}'.", image_path.display())).unwrap_or_default();
+                                        }
+
+                                        // 3. map_info.toml の内容を生成
+                                        let map_info_content = {
+                                            let resolution = map_config.csize;
+                                            let half_width_m = color_image.width() as f32 * resolution / 2.0;
+                                            let half_height_m = color_image.height() as f32 * resolution / 2.0;
+                                            let origin_x = -half_width_m;
+                                            let origin_y = half_height_m;
+
+                                            format!(
+                                                r#"# Map information file
+image = "occMap.png"
+resolution = {}
+origin = [{}, {}, 0.0]
+free_thresh = 0.196
+occupied_thresh = 0.65
+negate = 0
+"#,
+                                                resolution, origin_x, origin_y
+                                            )
+                                        };
+
+                                        // 4. map_info.toml として保存
+                                        if let Err(e) = std::fs::write(&info_path, map_info_content) {
+                                            sender.send(format!("ERROR: Failed to write map info to '{}': {}", info_path.display(), e)).unwrap_or_default();
+                                        } else {
+                                            sender.send(format!("Map info saved to '{}'.", info_path.display())).unwrap_or_default();
+                                        }
+                                    });
+                                } else {
+                                    let sender = self.command_output_sender.clone();
+                                    sender
+                                        .send("ERROR: Generated image not available for saving.".to_string())
+                                        .unwrap_or_default();
+                                }
+                            } else {
+                                let sender = self.command_output_sender.clone();
+                                sender
+                                    .send("ERROR: Map info path not set for saving.".to_string())
+                                    .unwrap_or_default();
+                            }
+                        } else {
+                            let sender = self.command_output_sender.clone();
+                            sender
+                                .send("ERROR: Map image path not set for saving.".to_string())
+                                .unwrap_or_default();
                         }
                     }
                     ctx.request_repaint();
@@ -2218,7 +2305,7 @@ impl eframe::App for MyApp {
 
 impl MyApp {
     /// Converts the current offline grid to a texture for visualization.
-    pub fn generate_map_texture(&mut self, ctx: &egui::Context) {
+    pub fn generate_map_texture(&mut self, ctx: &egui::Context) -> Option<egui::ColorImage> {
         if let Some(grid) = &self.offline_map {
             let mut image = egui::ColorImage::new(
                 [grid.width, grid.height],
@@ -2256,8 +2343,14 @@ impl MyApp {
                 }
             }
 
-            self.map_texture =
-                Some(ctx.load_texture("map-texture", image, egui::TextureOptions::NEAREST));
+            self.map_texture = Some(ctx.load_texture(
+                "map-texture",
+                image.clone(),
+                egui::TextureOptions::NEAREST,
+            ));
+            Some(image)
+        } else {
+            None
         }
     }
 }

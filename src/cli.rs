@@ -712,6 +712,8 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                 app.slam_map_bounding_box = None;
                 app.current_submap_load_progress = None; // Reset progress
                 app.trajectory_save_path = Some(path.join("trajectory.txt"));
+                app.map_image_save_path = Some(path.join("occMap.png"));
+                app.map_info_save_path = Some(path.join("map_info.toml"));
                 app.offline_map = Some(OccupancyGrid::new(
                     app.config.slam.map_width,
                     app.config.slam.map_height,
