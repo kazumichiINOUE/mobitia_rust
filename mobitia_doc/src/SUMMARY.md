@@ -13,5 +13,6 @@
   - [LiDAR (`lidar/`)](subsystems/07_lidar.md)
   - [SLAM (`slam/mod.rs`)](subsystems/08_slam.md)
   - [SLAM Optimizer (`differential_evolution.rs`)](subsystems/09_de.md)
+  - [Navigation (`navigation/`)](subsystems/11_navigation.md)
 - [Command Interface](command_interface.md)
   - [CLI (`cli.rs`)](10_cli.md)
