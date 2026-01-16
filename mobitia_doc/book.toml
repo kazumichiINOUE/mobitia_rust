@@ -1,0 +1,6 @@
+[book]
+authors = ["KazumichiINOUE"]
+language = "en"
+multilingual = false
+src = "src"
+title = "mobitia_doc"
