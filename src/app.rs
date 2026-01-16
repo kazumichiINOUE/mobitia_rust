@@ -5,9 +5,22 @@ use eframe::egui;
 use egui::Vec2;
 use image::imageops;
 use nalgebra::Isometry2;
+use serde::Deserialize;
 use std::collections::HashMap;
+
+#[derive(Deserialize, Debug)]
+pub struct MapInfo {
+    pub image: String,
+    pub resolution: f32,
+    pub origin: [f32; 3],
+    pub free_thresh: f64,
+    pub occupied_thresh: f64,
+    pub negate: i32,
+}
+
+
 use std::fs;
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
@@ -86,6 +99,7 @@ pub enum AppMode {
     Osmo,
     LidarAnalysis,
     Map,
+    Nav,
 }
 
 #[derive(PartialEq)]
@@ -268,6 +282,14 @@ pub struct MyApp {
     pub(crate) demo_screen: crate::ui::demo_screen::DemoScreen,
     pub(crate) osmo_screen: crate::ui::osmo_screen::OsmoScreen,
     pub(crate) camera_screen: crate::ui::camera_screen::CameraScreen,
+    pub(crate) nav_screen: crate::ui::nav_screen::NavScreen,
+
+    // --- Navigation Mode State ---
+    pub(crate) nav_map_texture: Option<egui::TextureHandle>,
+    pub(crate) nav_map_bounds: Option<egui::Rect>,
+    pub(crate) nav_trajectory_points: Vec<egui::Pos2>,
+    pub(crate) current_nav_target: Option<egui::Pos2>,
+
 }
 
 impl MyApp {
@@ -605,6 +627,11 @@ impl MyApp {
             demo_screen: crate::ui::demo_screen::DemoScreen::new(),
             osmo_screen: crate::ui::osmo_screen::OsmoScreen::new(),
             camera_screen: crate::ui::camera_screen::CameraScreen::new(),
+            nav_screen: crate::ui::nav_screen::NavScreen::new(),
+            nav_map_texture: None,
+            nav_map_bounds: None,
+            nav_trajectory_points: Vec::new(),
+            current_nav_target: None,
             motor_thread_active: true, // Initialize to true
             motor_odometry: (0.0, 0.0, 0.0),
             last_slam_odom: (0.0, 0.0, 0.0),
@@ -875,6 +902,42 @@ impl MyApp {
                         "servo-free".to_string(),
                         "read-state".to_string(),
                     ];
+                }
+
+                ["nav", "test", partial_path] | ["nav", "start", partial_path] => {
+                    let path_buf = PathBuf::from(partial_path);
+                    let (dir_to_read, prefix) = if partial_path.ends_with('/')
+                        || (path_buf.is_dir() && path_buf.exists())
+                    {
+                        (path_buf, "".to_string())
+                    } else {
+                        let parent = path_buf.parent().unwrap_or(Path::new(""));
+                        let file_name = path_buf
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .to_string();
+                        (parent.to_path_buf(), file_name)
+                    };
+                    self.current_suggestions =
+                        get_path_suggestions(&dir_to_read.to_string_lossy(), &prefix);
+                }
+                ["nav", "test"] if ends_with_space => {
+                    self.current_suggestions = vec!["./slam_results/".to_string()];
+                }
+                ["nav", "start"] if ends_with_space => {
+                    self.current_suggestions = vec!["./slam_results/".to_string()];
+                }
+                ["nav", partial_subcommand] => {
+                    let options = vec!["test", "start", "stop"];
+                    self.current_suggestions = options
+                        .into_iter()
+                        .filter(|opt| opt.starts_with(partial_subcommand))
+                        .map(|s| s.to_string())
+                        .collect();
+                }
+                ["nav"] if ends_with_space => {
+                    self.current_suggestions = vec!["test".to_string(), "start".to_string(), "stop".to_string()];
                 }
 
                 ["map" | "m", "load"] if ends_with_space => {
@@ -1171,7 +1234,7 @@ impl eframe::App for MyApp {
                                                 [color.r(), color.g(), color.b(), color.a()]
                                             })
                                             .collect();
-                                        let img_buffer: image::RgbaImage =
+                                        let mut img_buffer: image::RgbaImage =
                                             match image::ImageBuffer::from_raw(
                                                 color_image.width() as u32,
                                                 color_image.height() as u32,
@@ -1183,6 +1246,8 @@ impl eframe::App for MyApp {
                                                     return;
                                                 }
                                             };
+                                        
+                                        imageops::flip_vertical_in_place(&mut img_buffer);
                                         
                                         // 2. バウンディングボックスを計算して画像をトリミング
                                         let (min_x, min_y, max_x, max_y) = {
@@ -2289,6 +2354,18 @@ negate = 0
             AppMode::Camera => {
                 self.camera_screen.draw(ui, &self.cameras);
             }
+            AppMode::Nav => {
+                self.nav_screen.draw(
+                    ui,
+                    &mut self.lidar_draw_rect,
+                    &self.nav_map_texture,
+                    &self.nav_map_bounds,
+                    &self.nav_trajectory_points,
+                    &self.current_robot_pose,
+                    &self.latest_scan_for_draw,
+                    &self.current_nav_target,
+                );
+            }
         });
 
         // --- Motor control via keyboard for testing ---
@@ -2407,6 +2484,104 @@ impl MyApp {
         self.update_map_points_from_grid();
         self.update_slam_map_bounding_box();
         self.current_map_points.clear();
+    }
+}
+
+impl MyApp {
+    /// Loads navigation data (map, trajectory) from the specified path.
+    pub fn load_nav_data(&mut self, path: &PathBuf, ctx: &egui::Context) {
+        self.reset_nav_data();
+
+        let sender = self.command_output_sender.clone();
+
+        // 1. Load map_info.toml
+        let map_info_path = path.join("map_info.toml");
+        let map_info: MapInfo = match fs::read_to_string(&map_info_path) {
+            Ok(content) => match toml::from_str(&content) {
+                Ok(info) => {
+                    sender.send(format!("Successfully loaded '{}'", map_info_path.display())).unwrap_or_default();
+                    info
+                }
+                Err(e) => {
+                    sender.send(format!("ERROR: Failed to parse '{}': {}", map_info_path.display(), e)).unwrap_or_default();
+                    return;
+                }
+            },
+            Err(e) => {
+                sender.send(format!("ERROR: Failed to read '{}': {}", map_info_path.display(), e)).unwrap_or_default();
+                return;
+            }
+        };
+
+        // 2. Load occMap.png
+        let map_image_path = path.join(&map_info.image);
+        match image::open(&map_image_path) {
+            Ok(img) => {
+                let size = [img.width() as _, img.height() as _];
+                let rgba_image = img.to_rgba8();
+                let pixels = rgba_image.as_flat_samples();
+                let color_image = egui::ColorImage::from_rgba_unmultiplied(size, pixels.as_slice());
+                
+                self.nav_map_texture = Some(ctx.load_texture(
+                    "nav-map-texture",
+                    color_image,
+                    egui::TextureOptions::NEAREST,
+                ));
+
+                // 3. Calculate map bounds
+                let resolution = map_info.resolution;
+                let origin_x = map_info.origin[0];
+                let origin_y = map_info.origin[1];
+                let width_m = size[0] as f32 * resolution;
+                let height_m = size[1] as f32 * resolution;
+
+                self.nav_map_bounds = Some(egui::Rect::from_min_size(
+                    egui::pos2(origin_x, origin_y - height_m), // egui's y is down, map's y is up
+                    egui::vec2(width_m, height_m),
+                ));
+                
+                sender.send(format!("Successfully loaded '{}'", map_image_path.display())).unwrap_or_default();
+            }
+            Err(e) => {
+                 sender.send(format!("ERROR: Failed to load map image '{}': {}", map_image_path.display(), e)).unwrap_or_default();
+                 return;
+            }
+        }
+
+        // 4. Load trajectory.txt
+        let trajectory_path = path.join("trajectory.txt");
+        match fs::File::open(&trajectory_path) {
+            Ok(file) => {
+                let reader = BufReader::new(file);
+                let mut points = Vec::new();
+                for line in reader.lines() {
+                    if let Ok(line_str) = line {
+                        let parts: Vec<f32> = line_str
+                            .split_whitespace()
+                            .filter_map(|s| s.parse().ok())
+                            .collect();
+                        if parts.len() >= 2 {
+                            points.push(egui::pos2(parts[0], parts[1]));
+                        }
+                    }
+                }
+                self.nav_trajectory_points = points;
+                 sender.send(format!("Successfully loaded {} points from '{}'", self.nav_trajectory_points.len(), trajectory_path.display())).unwrap_or_default();
+            }
+            Err(e) => {
+                sender.send(format!("ERROR: Failed to load trajectory file '{}': {}", trajectory_path.display(), e)).unwrap_or_default();
+            }
+        }
+    }
+
+    /// Resets the navigation state.
+    pub fn reset_nav_data(&mut self) {
+        self.nav_map_texture = None;
+        self.nav_map_bounds = None;
+        self.nav_trajectory_points.clear();
+        self.current_nav_target = None;
+        let sender = self.command_output_sender.clone();
+        sender.send("Navigation data reset.".to_string()).unwrap_or_default();
     }
 }
 

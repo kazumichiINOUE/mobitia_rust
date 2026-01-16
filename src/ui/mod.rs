@@ -4,5 +4,6 @@ pub mod get_path_suggestions;
 pub mod lidar_analysis_screen;
 pub mod lidar_screen;
 pub mod map_screen;
+pub mod nav_screen;
 pub mod osmo_screen;
 pub mod slam_screen;

@@ -83,6 +83,27 @@ pub enum Commands {
         #[command(subcommand)]
         command: MotorCommands,
     },
+    /// Manage navigation.
+    Nav {
+        #[command(subcommand)]
+        command: Option<NavCommands>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum NavCommands {
+    /// Test navigation with a given path.
+    Test {
+        /// Path to the directory containing map and trajectory data.
+        path: PathBuf,
+    },
+    /// Start navigation along a given path.
+    Start {
+        /// Path to the directory containing map and trajectory data.
+        path: PathBuf,
+    },
+    /// Stop the current navigation.
+    Stop,
 }
 
 #[derive(Subcommand, Debug)]
@@ -889,6 +910,33 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                     });
                     send_motor_cmd(app, crate::motors::MotorCommand::ReadState);
                 }
+            }
+        }
+        Commands::Nav { command } => {
+            app.app_mode = AppMode::Nav;
+            if let Some(nav_command) = command {
+                match nav_command {
+                    NavCommands::Test { path } | NavCommands::Start { path } => {
+                        app.command_history.push(ConsoleOutputEntry {
+                            text: format!("Loading navigation data from '{}'...", path.display()),
+                            group_id: current_group_id,
+                        });
+                        app.load_nav_data(&path, ctx);
+                    }
+                    NavCommands::Stop => {
+                        app.command_history.push(ConsoleOutputEntry {
+                            text: "Stopping navigation and returning to LiDAR mode.".to_string(),
+                            group_id: current_group_id,
+                        });
+                        app.reset_nav_data();
+                        app.app_mode = AppMode::Lidar;
+                    }
+                }
+            } else {
+                app.command_history.push(ConsoleOutputEntry {
+                    text: "Switched to Navigation mode.".to_string(),
+                    group_id: current_group_id,
+                });
             }
         }
     }
