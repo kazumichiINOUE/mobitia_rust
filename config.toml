@@ -169,3 +169,7 @@ gear_ratio = 50.0
 # Control limits
 max_linear_velocity = 1.5 # m/s
 max_angular_velocity = 1.0 # rad/s
+
+[nav]
+# Initial pose for navigation mode [x, y, angle_degrees]
+initial_pose = [0.0, 0.0, 0.0]

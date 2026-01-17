@@ -2493,6 +2493,15 @@ impl MyApp {
     pub fn load_nav_data(&mut self, path: &PathBuf, ctx: &egui::Context) {
         self.reset_nav_data();
 
+        // Set initial pose from config
+        let pose_config = self.config.nav.initial_pose;
+        let initial_x = pose_config[0];
+        let initial_y = pose_config[1];
+        let initial_angle_rad = pose_config[2].to_radians();
+        self.current_robot_pose =
+            Isometry2::new(nalgebra::Vector2::new(initial_x, initial_y), initial_angle_rad);
+
+
         let sender = self.command_output_sender.clone();
 
         // 1. Load map_info.toml

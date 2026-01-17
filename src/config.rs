@@ -129,6 +129,25 @@ impl Default for MotorConfig {
     }
 }
 
+// --- Navigation Configuration ---
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct NavConfig {
+    #[serde(default = "default_initial_pose")]
+    pub initial_pose: [f32; 3], // [x, y, angle_degrees]
+}
+
+fn default_initial_pose() -> [f32; 3] {
+    [0.0, 0.0, 0.0]
+}
+
+impl Default for NavConfig {
+    fn default() -> Self {
+        Self {
+            initial_pose: default_initial_pose(),
+        }
+    }
+}
+
 // --- Application-wide Configuration ---
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct Config {
@@ -142,6 +161,8 @@ pub struct Config {
     pub motor: MotorConfig,
     #[serde(default = "default_lidars")]
     pub lidar: Vec<LidarTomlConfig>,
+    #[serde(default)]
+    pub nav: NavConfig,
 }
 
 impl Config {
