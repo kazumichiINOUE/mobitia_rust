@@ -11,8 +11,10 @@ mod config; // Add config module
 mod demo;
 mod lidar;
 mod motors;
+mod navigation;
 mod osmo;
 mod slam;
+
 mod ui;
 mod xppen;
 

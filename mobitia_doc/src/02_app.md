@@ -62,6 +62,7 @@ pub enum AppMode {
     Osmo,
     LidarAnalysis,
     Map,
+    Nav,
 }
 
 #[derive(PartialEq)]
@@ -214,6 +215,10 @@ pub struct MyApp {
     pub(crate) demo_screen: crate::ui::demo_screen::DemoScreen,
     pub(crate) osmo_screen: crate::ui::osmo_screen::OsmoScreen,
     pub(crate) camera_screen: crate::ui::camera_screen::CameraScreen,
+    pub(crate) nav_screen: crate::ui::nav_screen::NavScreen,
+
+    // --- Navigation Subsystem ---
+    pub(crate) navigation_manager: NavigationManager,
 }
 ```
 
@@ -281,80 +286,17 @@ impl MyApp {
         let osmo_info = OsmoInfo { /* ... */ };
         start_osmo_thread(osmo_info, osmo_message_sender.clone(), osmo_stop_flag);
 
-        // SLAMスレッドの起動
+        // SLAMスレッドの起動 (一部省略)
         let is_slam_processing = Arc::new(AtomicBool::new(false));
-        let is_slam_processing_for_thread = is_slam_processing.clone();
-        let slam_config_for_thread = config.slam.clone();
-        let slam_thread_handle = Some(thread::spawn(move || {
-            let mut slam_manager = SlamManager::new( /* ... */ );
-            // ... (SLAMスレッドのループロジック) ...
-        }));
+        // ... (SLAMスレッドのループ) ...
+
+        // ナビゲーションマネージャーの初期化
+        let navigation_manager = NavigationManager::new(config.nav.clone());
 
         // MyApp構造体の初期化
         Self {
             input_string: String::new(),
-            command_history: vec![/* ... Welcome messages ... */],
-            user_command_history: Vec::new(),
-            history_index: 0,
-            current_suggestions: Vec::new(),
-            suggestion_selection_index: None,
-            lidars,
-            cameras,
-            osmo: osmo_state,
-            lidar_message_receiver,
-            camera_message_receiver,
-            osmo_message_receiver,
-            motor_message_receiver,
-            xppen_message_receiver,
-            xppen_status_receiver,
-            xppen_trigger_sender,
-            pending_scans,
-            command_output_receiver,
-            command_output_sender,
-            lidar_draw_rect: None,
-            app_mode: AppMode::Lidar,
-            demo_manager: DemoManager::new(),
-            show_command_window: true,
-            focus_console_requested: true,
-            requested_point_save_path: None,
-            next_group_id: 0,
-            slam_mode: SlamMode::Manual,
-            slam_command_sender,
-            slam_result_receiver,
-            motor_command_sender,
-            is_slam_processing,
-            current_map_points: Vec::new(),
-            current_robot_pose: nalgebra::Isometry2::identity(),
-            single_scan_requested_by_ui: false,
-            latest_scan_for_draw: Vec::new(),
-            robot_trajectory: Vec::new(),
-            last_map_update_pose: None,
-            submap_counter: 0,
-            current_submap_scan_buffer: Vec::new(),
-            current_submap_robot_poses: Vec<nalgebra::Isometry2<f32>>,
-            submaps: HashMap::new(),
-            slam_map_bounding_box: None,
-            grid_world_bounds: None,
-            submap_load_queue: None,
-            current_submap_load_progress: None,
-            last_submap_load_time: None,
-            offline_map: None,
-            map_texture: None,
-            suggestion_completion_requested: false,
-            command_submission_requested: false,
-            clear_command_requested: false,
-            osmo_capture_session_path: None,
-            trajectory_save_path: None,
-            map_image_save_path: None,
-            map_info_save_path: None,
-            xppen: XppenState {
-                connection_status: "Disconnected".to_string(),
-            },
-            config,
-            motor_thread_handle: Some(motor_thread_handle),
-            shared_odometry,
-            is_shutting_down: false,
-            slam_thread_handle,
+            // ... (中略) ...
             lidar_screen: crate::ui::lidar_screen::LidarScreen::new(),
             lidar_analysis_screen: crate::ui::lidar_analysis_screen::LidarAnalysisScreen::new(),
             slam_screen: crate::ui::slam_screen::SlamScreen::new(),
@@ -362,9 +304,9 @@ impl MyApp {
             demo_screen: crate::ui::demo_screen::DemoScreen::new(),
             osmo_screen: crate::ui::osmo_screen::OsmoScreen::new(),
             camera_screen: crate::ui::camera_screen::CameraScreen::new(),
-            motor_thread_active: true,
-            motor_odometry: (0.0, 0.0, 0.0),
-            last_slam_odom: (0.0, 0.0, 0.0),
+            nav_screen: crate::ui::nav_screen::NavScreen::new(),
+            navigation_manager,
+            // ... (中略) ...
             is_motor_initialized: false,
         }
     }

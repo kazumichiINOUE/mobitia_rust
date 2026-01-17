@@ -24,5 +24,47 @@
 ### `nav stop`
 現在実行中のナビゲーションプロセスを停止します。このコマンドの実行後、アプリケーションの描画モードはデフォルトでLiDARモードに戻ります。
 
+## アーキテクチャと設計方針
+
+### モジュール構成
+ナビゲーション機能は `src/navigation/` ディレクトリ以下のモジュールに集約されています。
+
+- **`src/navigation/mod.rs`**: `NavigationManager` 構造体とその実装が含まれます。これがナビゲーションサブシステムのメインエントリーポイントです。
+- **`src/navigation/localization.rs`**: 将来的な自己位置推定ロジック（現状は定義のみ）。
+- **`src/navigation/pure_pursuit.rs`**: 将来的な経路追従ロジック（現状は定義のみ）。
+
+### `NavigationManager`
+`src/app.rs` の肥大化を防ぐため、ナビゲーションに関連する状態とロジックは `NavigationManager` にカプセル化されています。`MyApp` はこのマネージャーのインスタンスを保持し、処理を委譲します。
+
+#### 管理する状態
+- **地図データ**: `nav_map_texture`, `nav_map_bounds`
+- **経路情報**: `nav_trajectory_points`
+- **現在のターゲット**: `current_nav_target`
+- **ロボットの現在姿勢**: `current_robot_pose`
+- **オドメトリ履歴**: `last_odom`（前回フレームの値を保持し、差分計算に使用）
+
+### 自己位置更新ロジック
+`NavigationManager::update` メソッドは毎フレーム呼び出され、以下の手順でロボットの自己位置を更新します。この設計は、将来的にLiDARスキャンマッチングなどの他のセンサー情報を融合させる際の拡張性を考慮しています。
+
+1.  **オドメトリ差分の計算**: モーター制御スレッドから得られる現在のオドメトリ値と、前回フレームの値 (`last_odom`) との差分を計算します。
+2.  **座標変換**: グローバル座標系での差分を、ロボットのローカル座標系での移動量に変換します。
+3.  **姿勢の更新**: 変換された移動量を現在のロボット姿勢 (`current_robot_pose`) に適用します。
+
+```rust
+// src/navigation/mod.rs の update メソッド（抜粋）
+pub fn update(&mut self, current_odom: (f32, f32, f32)) {
+    if let Some((last_x, last_y, last_theta)) = self.last_odom {
+        // ... (差分計算と座標変換) ...
+        
+        let movement = Isometry2::new(
+            nalgebra::Vector2::new(delta_x_local, delta_y_local),
+            delta_theta,
+        );
+        self.current_robot_pose *= movement;
+    }
+    self.last_odom = Some(current_odom);
+}
+```
+
 ## サジェスト
 `nav` コマンドとそのサブコマンド (`test`, `start`, `stop`)、および `<path>` 引数は、コマンド入力時のサジェストの対象となります。

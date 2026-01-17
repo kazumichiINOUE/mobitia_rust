@@ -8,15 +8,7 @@ use nalgebra::Isometry2;
 use serde::Deserialize;
 use std::collections::HashMap;
 
-#[derive(Deserialize, Debug)]
-pub struct MapInfo {
-    pub image: String,
-    pub resolution: f32,
-    pub origin: [f32; 3],
-    pub free_thresh: f64,
-    pub occupied_thresh: f64,
-    pub negate: i32,
-}
+
 
 
 use std::fs;
@@ -35,6 +27,7 @@ pub use crate::demo::DemoMode;
 use crate::lidar::features::{compute_features, interpolate_lidar_scan};
 use crate::lidar::{start_lidar_thread, LidarInfo};
 use crate::motors::{start_modbus_motor_thread, MotorCommand, MotorMessage};
+use crate::navigation::NavigationManager;
 use crate::osmo::{start_osmo_thread, OsmoInfo, OsmoMessage};
 use crate::slam::{OccupancyGrid, SlamManager, Submap};
 use crate::xppen::{start_xppen_thread, XppenMessage};
@@ -285,10 +278,7 @@ pub struct MyApp {
     pub(crate) nav_screen: crate::ui::nav_screen::NavScreen,
 
     // --- Navigation Mode State ---
-    pub(crate) nav_map_texture: Option<egui::TextureHandle>,
-    pub(crate) nav_map_bounds: Option<egui::Rect>,
-    pub(crate) nav_trajectory_points: Vec<egui::Pos2>,
-    pub(crate) current_nav_target: Option<egui::Pos2>,
+    pub(crate) navigation_manager: NavigationManager,
 
 }
 
@@ -533,6 +523,8 @@ impl MyApp {
             }
         }));
 
+        let navigation_manager = NavigationManager::new(config.nav.clone());
+
         let command_history = vec![
             ConsoleOutputEntry {
                 text: "Welcome to the interactive console!".to_string(),
@@ -628,10 +620,7 @@ impl MyApp {
             osmo_screen: crate::ui::osmo_screen::OsmoScreen::new(),
             camera_screen: crate::ui::camera_screen::CameraScreen::new(),
             nav_screen: crate::ui::nav_screen::NavScreen::new(),
-            nav_map_texture: None,
-            nav_map_bounds: None,
-            nav_trajectory_points: Vec::new(),
-            current_nav_target: None,
+            navigation_manager,
             motor_thread_active: true, // Initialize to true
             motor_odometry: (0.0, 0.0, 0.0),
             last_slam_odom: (0.0, 0.0, 0.0),
@@ -1653,6 +1642,77 @@ negate = 0
                                 }
                             }
                         }
+                    } else if self.app_mode == AppMode::Nav {
+                        // Navモードの場合、LiDARの最新スキャンをlatest_scan_for_drawに統合して表示する
+                        if id < self.pending_scans.len() {
+                            self.pending_scans[id] = Some(scan_with_features);
+                        }
+
+                        let active_lidars: Vec<_> = self
+                            .lidars
+                            .iter()
+                            .filter(|l| l.is_active_for_slam)
+                            .collect();
+
+                        let all_active_scans_received = active_lidars.iter().all(|l| {
+                            self.pending_scans
+                                .get(l.id)
+                                .and_then(|o| o.as_ref())
+                                .is_some()
+                        });
+
+                        if all_active_scans_received {
+                            let mut raw_combined_scan: Vec<(
+                                f32, f32, f32, f32, f32, f32, f32, f32,
+                            )> = Vec::new();
+
+                            for lidar_state in active_lidars {
+                                if let Some(Some(points)) = self.pending_scans.get(lidar_state.id) {
+                                    let rotation = lidar_state.rotation;
+                                    let origin = lidar_state.origin;
+
+                                    for point in points {
+                                        let px_raw = point.0;
+                                        let py_raw = point.1;
+                                        let r_val = point.2;
+                                        let theta_val = point.3;
+                                        let feature_val = point.4;
+                                        let nx_raw = point.5;
+                                        let ny_raw = point.6;
+
+                                        let px_rotated =
+                                            px_raw * rotation.cos() - py_raw * rotation.sin();
+                                        let py_rotated =
+                                            px_raw * rotation.sin() + py_raw * rotation.cos();
+
+                                        let nx_rotated =
+                                            nx_raw * rotation.cos() - ny_raw * rotation.sin();
+                                        let ny_rotated =
+                                            nx_raw * rotation.sin() + ny_raw * rotation.cos();
+
+                                        let world_x = px_rotated + origin.x;
+                                        let world_y = py_rotated + origin.y;
+
+                                        raw_combined_scan.push((
+                                            world_x, world_y, r_val, theta_val, feature_val,
+                                            nx_rotated, ny_rotated, 0.0,
+                                        ));
+                                    }
+                                }
+                            }
+                            self.latest_scan_for_draw = raw_combined_scan;
+
+                            // 統合後は処理したLidarの保留中スキャンをクリア
+                            for lidar_state in &self.lidars {
+                                if lidar_state.is_active_for_slam {
+                                    if let Some(scan_option) =
+                                        self.pending_scans.get_mut(lidar_state.id)
+                                    {
+                                        *scan_option = None;
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
                 LidarMessage::StatusUpdate { id, message } => {
@@ -2356,15 +2416,18 @@ negate = 0
                 self.camera_screen.draw(ui, &self.cameras);
             }
             AppMode::Nav => {
+                self.navigation_manager.update(self.motor_odometry);
+                self.current_robot_pose = self.navigation_manager.current_robot_pose;
+
                 self.nav_screen.draw(
                     ui,
                     &mut self.lidar_draw_rect,
-                    &self.nav_map_texture,
-                    &self.nav_map_bounds,
-                    &self.nav_trajectory_points,
+                    &self.navigation_manager.nav_map_texture,
+                    &self.navigation_manager.nav_map_bounds,
+                    &self.navigation_manager.nav_trajectory_points,
                     &self.current_robot_pose,
                     &self.latest_scan_for_draw,
-                    &self.current_nav_target,
+                    &self.navigation_manager.current_nav_target,
                 );
             }
         });
@@ -2491,109 +2554,31 @@ impl MyApp {
 impl MyApp {
     /// Loads navigation data (map, trajectory) from the specified path.
     pub fn load_nav_data(&mut self, path: &PathBuf, ctx: &egui::Context) {
-        self.reset_nav_data();
-
-        // Set initial pose from config
-        let pose_config = self.config.nav.initial_pose;
-        let initial_x = pose_config[0];
-        let initial_y = pose_config[1];
-        let initial_angle_rad = pose_config[2].to_radians();
-        self.current_robot_pose =
-            Isometry2::new(nalgebra::Vector2::new(initial_x, initial_y), initial_angle_rad);
-
-
-        let sender = self.command_output_sender.clone();
-
-        // 1. Load map_info.toml
-        let map_info_path = path.join("map_info.toml");
-        let map_info: MapInfo = match fs::read_to_string(&map_info_path) {
-            Ok(content) => match toml::from_str(&content) {
-                Ok(info) => {
-                    sender.send(format!("Successfully loaded '{}'", map_info_path.display())).unwrap_or_default();
-                    info
-                }
-                Err(e) => {
-                    sender.send(format!("ERROR: Failed to parse '{}': {}", map_info_path.display(), e)).unwrap_or_default();
-                    return;
-                }
-            },
-            Err(e) => {
-                sender.send(format!("ERROR: Failed to read '{}': {}", map_info_path.display(), e)).unwrap_or_default();
-                return;
-            }
-        };
-
-        // 2. Load occMap.png
-        let map_image_path = path.join(&map_info.image);
-        match image::open(&map_image_path) {
-            Ok(img) => {
-                let size = [img.width() as _, img.height() as _];
-                let rgba_image = img.to_rgba8();
-                let pixels = rgba_image.as_flat_samples();
-                let color_image = egui::ColorImage::from_rgba_unmultiplied(size, pixels.as_slice());
-                
-                self.nav_map_texture = Some(ctx.load_texture(
-                    "nav-map-texture",
-                    color_image,
-                    egui::TextureOptions::NEAREST,
-                ));
-
-                // 3. Calculate map bounds
-                let resolution = map_info.resolution;
-                let origin_x = map_info.origin[0];
-                let origin_y = map_info.origin[1];
-                let width_m = size[0] as f32 * resolution;
-                let height_m = size[1] as f32 * resolution;
-
-                self.nav_map_bounds = Some(egui::Rect::from_min_size(
-                    egui::pos2(origin_x, origin_y - height_m), // egui's y is down, map's y is up
-                    egui::vec2(width_m, height_m),
-                ));
-                
-                sender.send(format!("Successfully loaded '{}'", map_image_path.display())).unwrap_or_default();
+        match self.navigation_manager.load_data(path, ctx) {
+            Ok(msg) => {
+                self.command_output_sender
+                    .send(msg)
+                    .unwrap_or_default();
+                // マネージャーから初期姿勢をコピー
+                self.current_robot_pose = self.navigation_manager.current_robot_pose;
             }
             Err(e) => {
-                 sender.send(format!("ERROR: Failed to load map image '{}': {}", map_image_path.display(), e)).unwrap_or_default();
-                 return;
-            }
-        }
-
-        // 4. Load trajectory.txt
-        let trajectory_path = path.join("trajectory.txt");
-        match fs::File::open(&trajectory_path) {
-            Ok(file) => {
-                let reader = BufReader::new(file);
-                let mut points = Vec::new();
-                for line in reader.lines() {
-                    if let Ok(line_str) = line {
-                        let parts: Vec<f32> = line_str
-                            .split_whitespace()
-                            .filter_map(|s| s.parse().ok())
-                            .collect();
-                        if parts.len() >= 2 {
-                            points.push(egui::pos2(parts[0], parts[1]));
-                        }
-                    }
-                }
-                self.nav_trajectory_points = points;
-                 sender.send(format!("Successfully loaded {} points from '{}'", self.nav_trajectory_points.len(), trajectory_path.display())).unwrap_or_default();
-            }
-            Err(e) => {
-                sender.send(format!("ERROR: Failed to load trajectory file '{}': {}", trajectory_path.display(), e)).unwrap_or_default();
+                self.command_output_sender
+                    .send(e)
+                    .unwrap_or_default();
             }
         }
     }
 
     /// Resets the navigation state.
     pub fn reset_nav_data(&mut self) {
-        self.nav_map_texture = None;
-        self.nav_map_bounds = None;
-        self.nav_trajectory_points.clear();
-        self.current_nav_target = None;
-        let sender = self.command_output_sender.clone();
-        sender.send("Navigation data reset.".to_string()).unwrap_or_default();
+        self.navigation_manager.reset();
+        self.command_output_sender
+            .send("Navigation data reset.".to_string())
+            .unwrap_or_default();
     }
 }
+
 
 impl Drop for MyApp {
     fn drop(&mut self) {
