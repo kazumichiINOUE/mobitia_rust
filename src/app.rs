@@ -753,6 +753,7 @@ impl MyApp {
             "map",
             "fkeys",
             "motor",
+            "nav",
         ];
 
         if input.is_empty() {
