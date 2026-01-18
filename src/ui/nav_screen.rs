@@ -107,8 +107,32 @@ impl NavScreen {
             }
         }
         
+        // --- Draw DE Particles ---
+        if navigation_manager.is_localizing {
+            let particles = &navigation_manager.de_solver.population;
+            for particle in particles {
+                // particle is Vector3 (x, y, theta)
+                // World coordinates
+                let screen_pos = to_screen.transform_pos(egui::pos2(particle.x, particle.y));
+                if rect.contains(screen_pos) {
+                    painter.circle_filled(screen_pos, 2.0, egui::Color32::from_rgba_unmultiplied(255, 0, 0, 150));
+                    
+                    // Optional: Draw orientation
+                    let arrow_len = 5.0;
+                    let end_pos = screen_pos + egui::vec2(particle.z.cos(), -particle.z.sin()) * arrow_len;
+                    painter.line_segment([screen_pos, end_pos], egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(255, 0, 0, 100)));
+                }
+            }
+        }
+        
         // --- Real-time Drawing ---
-        for point in latest_scan_for_draw {
+        let scan_to_draw = if !navigation_manager.viz_scan.is_empty() {
+            &navigation_manager.viz_scan
+        } else {
+            latest_scan_for_draw
+        };
+
+        for point in scan_to_draw {
             let local_point = nalgebra::Point2::new(point.0, point.1);
             let world_point = current_robot_pose * local_point;
             let screen_pos = to_screen.transform_pos(egui::pos2(world_point.x, world_point.y));

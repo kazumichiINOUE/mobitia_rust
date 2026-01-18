@@ -1,8 +1,10 @@
 pub mod localization;
 pub mod pure_pursuit;
+pub mod de_tiny;
 
-use crate::config::NavConfig;
+use crate::config::{NavConfig, SlamConfig};
 use crate::slam::{CellData, OccupancyGrid};
+use crate::navigation::de_tiny::DeTinySolver;
 use eframe::egui;
 use image::imageops;
 use nalgebra::{Isometry2, Point2};
@@ -36,6 +38,15 @@ pub struct NavigationManager {
     // オドメトリ履歴 (前回フレームの値: x, y, theta)
     last_odom: Option<(f32, f32, f32)>,
     
+    // Localization (DE)
+    pub de_solver: DeTinySolver,
+    pub initial_scan: Option<Vec<Point2<f32>>>,
+    pub is_localizing: bool,
+    pub de_frame_counter: usize,
+    
+    // Visualization
+    pub viz_scan: Vec<(f32, f32, f32, f32, f32, f32, f32, f32)>,
+    
     config: NavConfig,
 }
 
@@ -46,6 +57,8 @@ impl NavigationManager {
             nalgebra::Vector2::new(pose_config[0], pose_config[1]),
             pose_config[2].to_radians(),
         );
+        
+        let slam_config = SlamConfig::default(); 
 
         Self {
             nav_map_texture: None,
@@ -56,6 +69,11 @@ impl NavigationManager {
             occupancy_grid: None,
             map_info: None,
             last_odom: None,
+            de_solver: DeTinySolver::new(slam_config),
+            initial_scan: None,
+            is_localizing: true,
+            de_frame_counter: 0,
+            viz_scan: Vec::new(),
             config,
         }
     }
@@ -181,32 +199,105 @@ impl NavigationManager {
         self.nav_trajectory_points.clear();
         self.current_nav_target = None;
         self.last_odom = None;
+        self.initial_scan = None;
+        self.is_localizing = true;
+        self.de_frame_counter = 0;
+        self.viz_scan.clear();
     }
 
     pub fn update(
         &mut self,
         current_odom: (f32, f32, f32),
-        // latest_scan: &[(f32, f32, f32, f32, f32, f32, f32, f32)], // Unused for now
+        latest_scan: &[(f32, f32, f32, f32, f32, f32, f32, f32)],
     ) {
-        // 1. Odometry Update
-        if let Some((last_x, last_y, last_theta)) = self.last_odom {
-            let (curr_x, curr_y, curr_theta) = current_odom;
+        // --- Temporary Dummy Scan Injection ---
+        let dummy_scan_storage; // To keep the vec alive
+        let effective_scan = if latest_scan.is_empty() {
+            // Generate a U-shape (corridor) dummy scan
+            let mut dummy = Vec::new();
+            
+            // Forward wall at x = 5.0m
+            for i in 0..100 {
+                let y = (i as f32 / 100.0) * 2.6 - 1.3; // -1.3 to 1.3
+                let x = 5.0;
+                let r = (x*x + y*y).sqrt();
+                let theta = y.atan2(x);
+                // (x, y, r, theta, feature, nx, ny, corner)
+                dummy.push((x, y, r, theta, 0.0, 0.0, 0.0, 0.0));
+            }
+            
+            // Left wall at y = 1.3m
+            for i in 0..100 {
+                let x = (i as f32 / 100.0) * 5.0; // 0.0 to 5.0
+                let y = 1.3;
+                let r = (x*x + y*y).sqrt();
+                let theta = y.atan2(x);
+                dummy.push((x, y, r, theta, 0.0, 0.0, 0.0, 0.0));
+            }
 
-            let delta_x_global = curr_x - last_x;
-            let delta_y_global = curr_y - last_y;
-            let delta_theta = curr_theta - last_theta;
+            // Right wall at y = -1.3m
+            for i in 0..100 {
+                let x = (i as f32 / 100.0) * 5.0; // 0.0 to 5.0
+                let y = -1.3;
+                let r = (x*x + y*y).sqrt();
+                let theta = y.atan2(x);
+                dummy.push((x, y, r, theta, 0.0, 0.0, 0.0, 0.0));
+            }
+            
+            dummy_scan_storage = dummy;
+            &dummy_scan_storage[..]
+        } else {
+            latest_scan
+        };
+        // --------------------------------------
+        
+        // Update visualization scan
+        self.viz_scan = effective_scan.to_vec();
 
-            let cos_theta = last_theta.cos();
-            let sin_theta = last_theta.sin();
-            let delta_x_local = delta_x_global * cos_theta + delta_y_global * sin_theta;
-            let delta_y_local = -delta_x_global * sin_theta + delta_y_global * cos_theta;
-
-            let movement = Isometry2::new(
-                nalgebra::Vector2::new(delta_x_local, delta_y_local),
-                delta_theta,
-            );
-            self.current_robot_pose *= movement;
+        // If we are localizing and haven't captured the initial scan yet
+        if self.is_localizing && self.initial_scan.is_none() && !effective_scan.is_empty() {
+            // Capture initial scan (convert to Point2)
+            let points: Vec<Point2<f32>> = effective_scan.iter()
+                .map(|p| Point2::new(p.0, p.1))
+                .collect();
+            
+            // Initialize DE solver
+            self.de_solver.init(self.current_robot_pose);
+            self.initial_scan = Some(points);
         }
-        self.last_odom = Some(current_odom);
+
+        if self.is_localizing {
+            // --- Localization Mode ---
+            if let (Some(scan), Some(grid), Some(info)) = (&self.initial_scan, &self.occupancy_grid, &self.map_info) {
+                // Throttle DE updates to observe convergence
+                if self.de_frame_counter % 30 == 0 {
+                    self.de_solver.step(grid, scan, info.resolution, info.origin);
+                    self.current_robot_pose = self.de_solver.get_best_pose();
+                }
+                self.de_frame_counter += 1;
+            }
+            self.last_odom = Some(current_odom);
+        } else {
+            // --- Tracking Mode ---
+            if let Some((last_x, last_y, last_theta)) = self.last_odom {
+                let (curr_x, curr_y, curr_theta) = current_odom;
+
+                let delta_x_global = curr_x - last_x;
+                let delta_y_global = curr_y - last_y;
+                let delta_theta = curr_theta - last_theta;
+
+                let cos_theta = last_theta.cos();
+                let sin_theta = last_theta.sin();
+                let delta_x_local = delta_x_global * cos_theta + delta_y_global * sin_theta;
+                let delta_y_local = -delta_x_global * sin_theta + delta_y_global * cos_theta;
+
+                let movement = Isometry2::new(
+                    nalgebra::Vector2::new(delta_x_local, delta_y_local),
+                    delta_theta,
+                );
+                self.current_robot_pose *= movement;
+            }
+            self.last_odom = Some(current_odom);
+        }
     }
 }
