@@ -88,6 +88,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: Option<NavCommands>,
     },
+    /// Execute a script file containing a list of commands.
+    Script {
+        /// Path to the script file.
+        path: PathBuf,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -937,6 +942,77 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                     text: "Switched to Navigation mode.".to_string(),
                     group_id: current_group_id,
                 });
+            }
+        }
+        Commands::Script { path } => {
+            app.command_history.push(ConsoleOutputEntry {
+                text: format!("Executing script from '{}'...", path.display()),
+                group_id: current_group_id,
+            });
+
+            match std::fs::File::open(&path) {
+                Ok(file) => {
+                    use std::io::{BufRead, BufReader};
+                    let reader = BufReader::new(file);
+
+                    for line_result in reader.lines() {
+                        match line_result {
+                            Ok(line) => {
+                                let trimmed = line.trim();
+                                if trimmed.is_empty() || trimmed.starts_with('#') {
+                                    continue;
+                                }
+                                if trimmed == "end" {
+                                    app.command_history.push(ConsoleOutputEntry {
+                                        text: "Script execution ended by 'end' command.".to_string(),
+                                        group_id: current_group_id,
+                                    });
+                                    break;
+                                }
+
+                                app.command_history.push(ConsoleOutputEntry {
+                                    text: format!("Script > {}", trimmed),
+                                    group_id: current_group_id,
+                                });
+
+                                match shlex::split(trimmed) {
+                                    Some(args) => match Cli::try_parse_from(args.into_iter()) {
+                                        Ok(cli_command) => {
+                                            handle_command(app, ctx, cli_command);
+                                        }
+                                        Err(e) => {
+                                            for line in e.to_string().lines() {
+                                                app.command_history.push(ConsoleOutputEntry {
+                                                    text: format!("Script Error: {}", line),
+                                                    group_id: current_group_id,
+                                                });
+                                            }
+                                        }
+                                    },
+                                    None => {
+                                        app.command_history.push(ConsoleOutputEntry {
+                                            text: format!("Script Error: Failed to parse line '{}'", trimmed),
+                                            group_id: current_group_id,
+                                        });
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                app.command_history.push(ConsoleOutputEntry {
+                                    text: format!("Error reading script line: {}", e),
+                                    group_id: current_group_id,
+                                });
+                                break;
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    app.command_history.push(ConsoleOutputEntry {
+                        text: format!("Error opening script file '{}': {}", path.display(), e),
+                        group_id: current_group_id,
+                    });
+                }
             }
         }
     }

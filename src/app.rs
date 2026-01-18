@@ -744,6 +744,7 @@ impl MyApp {
             "fkeys",
             "motor",
             "nav",
+            "script",
         ];
 
         if input.is_empty() {
@@ -929,6 +930,28 @@ impl MyApp {
                 }
                 ["nav"] if ends_with_space => {
                     self.current_suggestions = vec!["test".to_string(), "start".to_string(), "stop".to_string()];
+                }
+
+                ["script", partial_path] => {
+                    let path_buf = PathBuf::from(partial_path);
+                    let (dir_to_read, prefix) = if partial_path.ends_with('/')
+                        || (path_buf.is_dir() && path_buf.exists())
+                    {
+                        (path_buf, "".to_string())
+                    } else {
+                        let parent = path_buf.parent().unwrap_or(Path::new(""));
+                        let file_name = path_buf
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .to_string();
+                        (parent.to_path_buf(), file_name)
+                    };
+                    self.current_suggestions =
+                        get_path_suggestions(&dir_to_read.to_string_lossy(), &prefix);
+                }
+                ["script"] if ends_with_space => {
+                    self.current_suggestions = get_path_suggestions(".", "");
                 }
 
                 ["map" | "m", "load"] if ends_with_space => {
