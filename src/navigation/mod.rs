@@ -1,10 +1,8 @@
-pub mod de_tiny;
 pub mod localization;
 pub mod pure_pursuit;
 
-use crate::config::{NavConfig, SlamConfig};
+use crate::config::NavConfig;
 use crate::slam::{CellData, OccupancyGrid};
-use de_tiny::DeTinySolver;
 use eframe::egui;
 use image::imageops;
 use nalgebra::{Isometry2, Point2};
@@ -12,7 +10,6 @@ use serde::Deserialize;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
-use web_time::Instant;
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct MapInfo {
@@ -39,15 +36,11 @@ pub struct NavigationManager {
     // オドメトリ履歴 (前回フレームの値: x, y, theta)
     last_odom: Option<(f32, f32, f32)>,
     
-    // DE実行制御用
-    last_de_update_time: Option<Instant>,
-    
     config: NavConfig,
-    localization_solver: DeTinySolver,
 }
 
 impl NavigationManager {
-    pub fn new(config: NavConfig, slam_config: SlamConfig) -> Self {
+    pub fn new(config: NavConfig) -> Self {
         let pose_config = config.initial_pose;
         let initial_pose = Isometry2::new(
             nalgebra::Vector2::new(pose_config[0], pose_config[1]),
@@ -63,9 +56,7 @@ impl NavigationManager {
             occupancy_grid: None,
             map_info: None,
             last_odom: None,
-            last_de_update_time: None,
             config,
-            localization_solver: DeTinySolver::new(slam_config),
         }
     }
 
@@ -190,13 +181,12 @@ impl NavigationManager {
         self.nav_trajectory_points.clear();
         self.current_nav_target = None;
         self.last_odom = None;
-        self.last_de_update_time = None;
     }
 
     pub fn update(
         &mut self,
         current_odom: (f32, f32, f32),
-        latest_scan: &[(f32, f32, f32, f32, f32, f32, f32, f32)],
+        // latest_scan: &[(f32, f32, f32, f32, f32, f32, f32, f32)], // Unused for now
     ) {
         // 1. Odometry Update
         if let Some((last_x, last_y, last_theta)) = self.last_odom {
@@ -218,34 +208,5 @@ impl NavigationManager {
             self.current_robot_pose *= movement;
         }
         self.last_odom = Some(current_odom);
-
-        // 2. Localization Update (DeTiny)
-        if !latest_scan.is_empty() {
-            let now = Instant::now();
-            let should_update_de = match self.last_de_update_time {
-                Some(last_time) => now.duration_since(last_time).as_millis() >= 200, // 200ms interval (5Hz)
-                None => true,
-            };
-
-            if should_update_de {
-                if let (Some(grid), Some(info)) = (&self.occupancy_grid, &self.map_info) {
-                    let scan_points: Vec<Point2<f32>> = latest_scan
-                        .iter()
-                        .map(|p| Point2::new(p.0, p.1))
-                        .collect();
-
-                    let (new_pose, _score) = self.localization_solver.optimize_de(
-                        grid,
-                        &scan_points,
-                        self.current_robot_pose,
-                        info.resolution,
-                        info.origin,
-                    );
-                    
-                    self.current_robot_pose = new_pose;
-                    self.last_de_update_time = Some(now);
-                }
-            }
-        }
     }
 }

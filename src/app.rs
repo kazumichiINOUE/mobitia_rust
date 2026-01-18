@@ -523,7 +523,8 @@ impl MyApp {
             }
         }));
 
-        let navigation_manager = NavigationManager::new(config.nav.clone(), config.slam.clone());
+        // ナビゲーションマネージャーの初期化
+        let navigation_manager = NavigationManager::new(config.nav.clone());
 
         let command_history = vec![
             ConsoleOutputEntry {
@@ -2416,10 +2417,7 @@ negate = 0
                 self.camera_screen.draw(ui, &self.cameras);
             }
             AppMode::Nav => {
-                self.navigation_manager.update(
-                    self.motor_odometry,
-                    &self.latest_scan_for_draw,
-                );
+                self.navigation_manager.update(self.motor_odometry);
                 self.current_robot_pose = self.navigation_manager.current_robot_pose;
 
                 self.nav_screen.draw(
