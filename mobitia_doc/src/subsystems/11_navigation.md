@@ -24,27 +24,63 @@
 ### `nav stop`
 現在実行中のナビゲーションプロセスを停止します。このコマンドの実行後、アプリケーションの描画モードはデフォルトでLiDARモードに戻ります。
 
+## 座標系と地図データの仕様
+本システムにおけるナビゲーションでは、ワールド座標系とグリッド座標系（地図画像）の間で正確な変換が求められます。以下の仕様に基づいて実装されています。
+
+### 1. 座標系の定義
+- **ワールド座標系 (World Coordinates)**:
+    - X軸: 右（東）が正。
+    - Y軸: 上（北）が正。
+    - 単位: メートル (m)。
+    - 一般的なデカルト座標系およびROSの標準（ENU: East-North-Up）に準拠します。
+
+- **グリッド座標系 (Grid/Image Coordinates)**:
+    - 原点 (0, 0): 地図画像の**左上（北西）**。
+    - U軸 (Column): 右に向かって増加。ワールドX軸に対応。
+    - V軸 (Row): **下に向かって増加**。ワールドY軸とは逆向き（北から南へ）。
+
+### 2. 地図情報 (`map_info.toml`)
+- `origin`: 地図画像の**左上（北西端）**のワールド座標 `[x, y, theta]` を指します。
+- `resolution`: 1ピクセルあたりのメートル数 (m/pixel)。
+
+### 3. 座標変換式
+ワールド座標 $(x, y)$ からグリッドインデックス $(u, v)$ への変換は以下の式で行います。
+
+$$ u = \lfloor \frac{x - origin\_x}{resolution} \rfloor $$
+$$ v = \lfloor \frac{origin\_y - y}{resolution} \rfloor $$
+
+ここで注意すべきは $v$ (行インデックス) の計算です。ワールドY座標は北へ行くほど大きくなりますが、グリッドの行インデックスは南へ行くほど（上から下へ）大きくなります。そのため、$(origin\_y - y)$ という減算になります。
+
+### 4. 地図データの配色仕様
+地図画像 (`occMap.png`) および内部データ (`OccupancyGrid`) の配色は以下のように定義されます。
+
+- **黒 (0, 0, 0)**: 占有領域 (Occupied) / 壁。確率 $\approx 1.0$。
+- **白 (255, 255, 255)**: 自由領域 (Free) / 通路。確率 $\approx 0.0$。
+- **グレー (128, 128, 128)**: 未計測領域 (Unknown)。確率 $\approx 0.5$。
+
+`map load` コマンドによる保存時もこの仕様に従って画像が生成されます。
+
 ## アーキテクチャと設計方針
 
 ### モジュール構成
 ナビゲーション機能は `src/navigation/` ディレクトリ以下のモジュールに集約されています。
 
 - **`src/navigation/mod.rs`**: `NavigationManager` 構造体とその実装が含まれます。これがナビゲーションサブシステムのメインエントリーポイントです。
-- **`src/navigation/localization.rs`**: 将来的な自己位置推定ロジック（現状は定義のみ）。
-- **`src/navigation/pure_pursuit.rs`**: 将来的な経路追従ロジック（現状は定義のみ）。
+- **`src/navigation/localization.rs`**: 自己位置推定ロジック（現在、再実装中）。
+- **`src/navigation/pure_pursuit.rs`**: 経路追従ロジック（Pure Pursuitアルゴリズム）。
 
 ### `NavigationManager`
 `src/app.rs` の肥大化を防ぐため、ナビゲーションに関連する状態とロジックは `NavigationManager` にカプセル化されています。`MyApp` はこのマネージャーのインスタンスを保持し、処理を委譲します。
 
 #### 管理する状態
-- **地図データ**: `nav_map_texture`, `nav_map_bounds`
+- **地図データ**: `nav_map_texture`, `nav_map_bounds`, `occupancy_grid`
 - **経路情報**: `nav_trajectory_points`
 - **現在のターゲット**: `current_nav_target`
 - **ロボットの現在姿勢**: `current_robot_pose`
 - **オドメトリ履歴**: `last_odom`（前回フレームの値を保持し、差分計算に使用）
 
 ### 自己位置更新ロジック
-`NavigationManager::update` メソッドは毎フレーム呼び出され、以下の手順でロボットの自己位置を更新します。この設計は、将来的にLiDARスキャンマッチングなどの他のセンサー情報を融合させる際の拡張性を考慮しています。
+`NavigationManager::update` メソッドは毎フレーム呼び出され、以下の手順でロボットの自己位置を更新します。
 
 1.  **オドメトリ差分の計算**: モーター制御スレッドから得られる現在のオドメトリ値と、前回フレームの値 (`last_odom`) との差分を計算します。
 2.  **座標変換**: グローバル座標系での差分を、ロボットのローカル座標系での移動量に変換します。
@@ -53,7 +89,9 @@
 ```rust
 // src/navigation/mod.rs の update メソッド（抜粋）
 pub fn update(&mut self, current_odom: (f32, f32, f32)) {
+    // 1. Odometry Update
     if let Some((last_x, last_y, last_theta)) = self.last_odom {
+        let (curr_x, curr_y, curr_theta) = current_odom;
         // ... (差分計算と座標変換) ...
         
         let movement = Isometry2::new(
@@ -66,5 +104,9 @@ pub fn update(&mut self, current_odom: (f32, f32, f32)) {
 }
 ```
 
+このオドメトリ更新に加え、LiDAR点群と地図とのマッチング（スキャンマッチング）による補正（自己位置推定）が組み込まれる予定です。
+
 ## サジェスト
 `nav` コマンドとそのサブコマンド (`test`, `start`, `stop`)、および `<path>` 引数は、コマンド入力時のサジェストの対象となります。
+
+```
