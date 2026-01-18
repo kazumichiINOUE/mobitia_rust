@@ -22,8 +22,52 @@ impl NavScreen {
         current_robot_pose: &Isometry2<f32>,
         latest_scan_for_draw: &[(f32, f32, f32, f32, f32, f32, f32, f32)],
         current_nav_target: &Option<egui::Pos2>,
+        motor_odometry: &(f32, f32, f32),
     ) {
         ui.heading("Navigation Mode");
+
+        // --- Info Overlay ---
+        egui::Area::new("nav_info_overlay")
+            .fixed_pos(ui.min_rect().min)
+            .show(ui.ctx(), |ui| {
+                let background_color = egui::Color32::from_rgba_unmultiplied(0, 0, 0, 128);
+
+                // Estimated Pose
+                let pose_x = current_robot_pose.translation.x;
+                let pose_y = current_robot_pose.translation.y;
+                let pose_angle_deg = current_robot_pose.rotation.angle().to_degrees();
+                let pose_text = format!(
+                    "Est Pose: x: {:>8.3}, y: {:>8.3}, a: {:>6.1}°",
+                    pose_x, pose_y, pose_angle_deg
+                );
+                ui.label(
+                    egui::RichText::new(pose_text)
+                        .monospace()
+                        .background_color(background_color),
+                );
+
+                // Motor Odometry
+                let (odom_x, odom_y, odom_angle) = motor_odometry;
+                let odom_angle_deg = odom_angle.to_degrees();
+                let odom_text = format!(
+                    "Motor Odom: x: {:>8.3}, y: {:>8.3}, a: {:>6.1}°",
+                    odom_x, odom_y, odom_angle_deg
+                );
+                ui.label(
+                    egui::RichText::new(odom_text)
+                        .monospace()
+                        .background_color(background_color),
+                );
+
+                // Valid Lidar Points
+                let points_text = format!("Lidar Points: {}", latest_scan_for_draw.len());
+                ui.label(
+                    egui::RichText::new(points_text)
+                        .monospace()
+                        .background_color(background_color),
+                );
+            });
+
         let (response, painter) = ui.allocate_painter(ui.available_size(), egui::Sense::hover());
         let rect = response.rect;
         *lidar_draw_rect = Some(rect);

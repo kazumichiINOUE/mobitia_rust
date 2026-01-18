@@ -523,7 +523,7 @@ impl MyApp {
             }
         }));
 
-        let navigation_manager = NavigationManager::new(config.nav.clone());
+        let navigation_manager = NavigationManager::new(config.nav.clone(), config.slam.clone());
 
         let command_history = vec![
             ConsoleOutputEntry {
@@ -2416,7 +2416,10 @@ negate = 0
                 self.camera_screen.draw(ui, &self.cameras);
             }
             AppMode::Nav => {
-                self.navigation_manager.update(self.motor_odometry);
+                self.navigation_manager.update(
+                    self.motor_odometry,
+                    &self.latest_scan_for_draw,
+                );
                 self.current_robot_pose = self.navigation_manager.current_robot_pose;
 
                 self.nav_screen.draw(
@@ -2428,6 +2431,7 @@ negate = 0
                     &self.current_robot_pose,
                     &self.latest_scan_for_draw,
                     &self.navigation_manager.current_nav_target,
+                    &self.motor_odometry,
                 );
             }
         });
