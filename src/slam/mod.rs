@@ -112,6 +112,7 @@ impl Default for CellData {
 }
 
 /// Represents a 2D occupancy grid map where each cell holds a log-odds value.
+#[derive(Clone)]
 pub struct OccupancyGrid {
     pub width: usize,
     pub height: usize,

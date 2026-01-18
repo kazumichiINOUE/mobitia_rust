@@ -1212,41 +1212,43 @@ impl eframe::App for MyApp {
                         // Map image and info saving
                         if let Some(image_path) = self.map_image_save_path.take() {
                             if let Some(info_path) = self.map_info_save_path.take() {
-                                if let Some(color_image) = generated_image {
+                                if let Some(grid) = self.offline_map.clone() {
                                     let sender = self.command_output_sender.clone();
                                     let map_config = self.config.slam.clone();
 
                                     thread::spawn(move || {
-                                        // 1. ColorImageをimage::RgbaImageに変換
-                                        let pixels: Vec<u8> = color_image
-                                            .pixels
-                                            .iter()
-                                            .flat_map(|color| {
-                                                [color.r(), color.g(), color.b(), color.a()]
-                                            })
-                                            .collect();
-                                        let mut img_buffer: image::RgbaImage =
-                                            match image::ImageBuffer::from_raw(
-                                                color_image.width() as u32,
-                                                color_image.height() as u32,
-                                                pixels,
-                                            ) {
-                                                Some(buf) => buf,
-                                                None => {
-                                                    sender.send(format!("ERROR: Failed to create image buffer for '{}'.", image_path.display())).unwrap_or_default();
-                                                    return;
-                                                }
-                                            };
+                                        let width = grid.width as u32;
+                                        let height = grid.height as u32;
+                                        let mut img_buffer = image::RgbaImage::new(width, height);
+
+                                        // Set pixels based on OccupancyGrid data and new color scheme
+                                        for y in 0..grid.height {
+                                            for x in 0..grid.width {
+                                                let cell = grid.data[y * grid.width + x];
+                                                let prob = crate::slam::log_odds_to_probability(cell.log_odds);
+                                                
+                                                let color = if prob > map_config.prob_occupied {
+                                                    [0, 0, 0, 255]       // Occupied: Black
+                                                } else if prob < map_config.prob_free {
+                                                    [255, 255, 255, 255] // Free: White
+                                                } else {
+                                                    [128, 128, 128, 255] // Unknown: Gray
+                                                };
+                                                
+                                                // Maintain current orientation mapping
+                                                img_buffer.put_pixel(x as u32, (grid.height - 1 - y) as u32, image::Rgba(color));
+                                            }
+                                        }
                                         
                                         imageops::flip_vertical_in_place(&mut img_buffer);
                                         
-                                        // 2. バウンディングボックスを計算して画像をトリミング
+                                        // 2. Calculate bounding box and crop (using Gray 128 as background)
                                         let (min_x, min_y, max_x, max_y) = {
                                             let mut min_x = u32::MAX;
                                             let mut min_y = u32::MAX;
                                             let mut max_x = 0;
                                             let mut max_y = 0;
-                                            let background_color = image::Rgba([20, 20, 20, 255]);
+                                            let background_color = image::Rgba([128, 128, 128, 255]);
 
                                             for (x, y, pixel) in img_buffer.enumerate_pixels() {
                                                 if *pixel != background_color {
@@ -1264,29 +1266,25 @@ impl eframe::App for MyApp {
                                             let height = max_y - min_y + 1;
                                             (imageops::crop_imm(&img_buffer, min_x, min_y, width, height).to_image(), min_x, min_y)
                                         } else {
-                                            // 有効なピクセルがない場合は、1x1の黒い画像を保存
                                             sender.send("WARNING: No valid map data found to save. Creating a 1x1 placeholder image.".to_string()).unwrap_or_default();
                                             (image::RgbaImage::new(1, 1), 0, 0)
                                         };
 
-                                        // 3. PNGとして保存
+                                        // 3. Save as PNG
                                         if let Err(e) = cropped_img.save(&image_path) {
                                             sender.send(format!("ERROR: Failed to save map image to '{}': {}", image_path.display(), e)).unwrap_or_default();
                                         } else {
                                             sender.send(format!("Map image saved to '{}'.", image_path.display())).unwrap_or_default();
                                         }
 
-                                        // 4. map_info.toml の内容を生成
+                                        // 4. Generate map_info.toml content
                                         let map_info_content = {
                                             let resolution = map_config.csize;
-                                            // 元の画像の中心を基準としたorigin
-                                            let initial_half_width_m = color_image.width() as f32 * resolution / 2.0;
-                                            let initial_half_height_m = color_image.height() as f32 * resolution / 2.0;
+                                            let initial_half_width_m = width as f32 * resolution / 2.0;
+                                            let initial_half_height_m = height as f32 * resolution / 2.0;
                                             let initial_origin_x = -initial_half_width_m;
                                             let initial_origin_y = initial_half_height_m;
                                             
-                                            // トリミングによるオフセットを考慮してoriginを再計算
-                                            // Y軸は画像の上方が正なので、yのオフセットは減算する
                                             let final_origin_x = initial_origin_x + (crop_x as f32 * resolution);
                                             let final_origin_y = initial_origin_y - (crop_y as f32 * resolution);
 
@@ -1303,7 +1301,7 @@ negate = 0
                                             )
                                         };
 
-                                        // 5. map_info.toml として保存
+                                        // 5. Save map_info.toml
                                         if let Err(e) = std::fs::write(&info_path, map_info_content) {
                                             sender.send(format!("ERROR: Failed to write map info to '{}': {}", info_path.display(), e)).unwrap_or_default();
                                         } else {
@@ -1313,7 +1311,7 @@ negate = 0
                                 } else {
                                     let sender = self.command_output_sender.clone();
                                     sender
-                                        .send("ERROR: Generated image not available for saving.".to_string())
+                                        .send("ERROR: Offline map data not available for saving.".to_string())
                                         .unwrap_or_default();
                                 }
                             } else {
@@ -2423,12 +2421,8 @@ negate = 0
                 self.nav_screen.draw(
                     ui,
                     &mut self.lidar_draw_rect,
-                    &self.navigation_manager.nav_map_texture,
-                    &self.navigation_manager.nav_map_bounds,
-                    &self.navigation_manager.nav_trajectory_points,
-                    &self.current_robot_pose,
+                    &self.navigation_manager,
                     &self.latest_scan_for_draw,
-                    &self.navigation_manager.current_nav_target,
                     &self.motor_odometry,
                 );
             }

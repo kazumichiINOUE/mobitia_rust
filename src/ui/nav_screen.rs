@@ -1,3 +1,4 @@
+use crate::navigation::NavigationManager;
 use eframe::egui;
 use nalgebra::Isometry2;
 
@@ -14,58 +15,25 @@ impl NavScreen {
         &mut self,
         ui: &mut egui::Ui,
         lidar_draw_rect: &mut Option<egui::Rect>,
-        // Static data
-        nav_map_texture: &Option<egui::TextureHandle>,
-        nav_map_bounds: &Option<egui::Rect>,
-        nav_trajectory_points: &[egui::Pos2],
-        // Real-time data
-        current_robot_pose: &Isometry2<f32>,
+        navigation_manager: &NavigationManager,
         latest_scan_for_draw: &[(f32, f32, f32, f32, f32, f32, f32, f32)],
-        current_nav_target: &Option<egui::Pos2>,
         motor_odometry: &(f32, f32, f32),
     ) {
         ui.heading("Navigation Mode");
 
         // --- Info Overlay ---
+        let current_robot_pose = &navigation_manager.current_robot_pose;
         egui::Area::new("nav_info_overlay")
             .fixed_pos(ui.min_rect().min)
             .show(ui.ctx(), |ui| {
                 let background_color = egui::Color32::from_rgba_unmultiplied(0, 0, 0, 128);
-
-                // Estimated Pose
                 let pose_x = current_robot_pose.translation.x;
                 let pose_y = current_robot_pose.translation.y;
                 let pose_angle_deg = current_robot_pose.rotation.angle().to_degrees();
-                let pose_text = format!(
-                    "Est Pose: x: {:>8.3}, y: {:>8.3}, a: {:>6.1}°",
-                    pose_x, pose_y, pose_angle_deg
-                );
-                ui.label(
-                    egui::RichText::new(pose_text)
-                        .monospace()
-                        .background_color(background_color),
-                );
-
-                // Motor Odometry
+                ui.label(egui::RichText::new(format!("Est Pose: x: {:>8.3}, y: {:>8.3}, a: {:>6.1}°", pose_x, pose_y, pose_angle_deg)).monospace().background_color(background_color));
                 let (odom_x, odom_y, odom_angle) = motor_odometry;
-                let odom_angle_deg = odom_angle.to_degrees();
-                let odom_text = format!(
-                    "Motor Odom: x: {:>8.3}, y: {:>8.3}, a: {:>6.1}°",
-                    odom_x, odom_y, odom_angle_deg
-                );
-                ui.label(
-                    egui::RichText::new(odom_text)
-                        .monospace()
-                        .background_color(background_color),
-                );
-
-                // Valid Lidar Points
-                let points_text = format!("Lidar Points: {}", latest_scan_for_draw.len());
-                ui.label(
-                    egui::RichText::new(points_text)
-                        .monospace()
-                        .background_color(background_color),
-                );
+                ui.label(egui::RichText::new(format!("Motor Odom: x: {:>8.3}, y: {:>8.3}, a: {:>6.1}°", odom_x, odom_y, odom_angle.to_degrees())).monospace().background_color(background_color));
+                ui.label(egui::RichText::new(format!("Lidar Points: {}", latest_scan_for_draw.len())).monospace().background_color(background_color));
             });
 
         let (response, painter) = ui.allocate_painter(ui.available_size(), egui::Sense::hover());
@@ -73,8 +41,12 @@ impl NavScreen {
         *lidar_draw_rect = Some(rect);
         painter.rect_filled(rect, 0.0, egui::Color32::from_rgb(20, 20, 20));
 
+        let nav_map_bounds = &navigation_manager.nav_map_bounds;
+        let nav_map_texture = &navigation_manager.nav_map_texture;
+        let nav_trajectory_points = &navigation_manager.nav_trajectory_points;
+        let current_nav_target = &navigation_manager.current_nav_target;
+
         // --- Coordinate System Setup ---
-        // Scale the view to fit the entire map, similar to map_screen.rs
         let map_view_rect = if let Some(bounds) = nav_map_bounds {
             let screen_aspect = rect.width() / rect.height();
             let bounds_aspect = bounds.width() / bounds.height();
@@ -86,7 +58,6 @@ impl NavScreen {
             };
             egui::Rect::from_center_size(center, egui::vec2(width, height))
         } else {
-            // Default view if no map is loaded, centered on the robot
              let robot_center_world = egui::pos2(current_robot_pose.translation.x, current_robot_pose.translation.y);
             egui::Rect::from_center_size(robot_center_world, egui::vec2(20.0, 20.0))
         };
@@ -97,32 +68,30 @@ impl NavScreen {
         let to_screen = egui::emath::RectTransform::from_to(inverted_map_view_rect, rect);
 
         // --- Static Drawing ---
-
-        // 1. Draw the map texture
         if let (Some(texture), Some(bounds)) = (nav_map_texture, nav_map_bounds) {
             let screen_rect = to_screen.transform_rect(*bounds);
             painter.image(
                 texture.id(),
                 screen_rect,
-                egui::Rect::from_min_max(egui::pos2(0.0, 1.0), egui::pos2(1.0, 0.0)), // Flipped UV Y-axis
+                egui::Rect::from_min_max(egui::pos2(0.0, 1.0), egui::pos2(1.0, 0.0)),
                 egui::Color32::WHITE,
             );
         }
 
-        // 2. Draw Origin and Axes
+        // Axes
         let origin_world = egui::Pos2::ZERO;
         let origin_screen = to_screen.transform_pos(origin_world);
-        let axis_length_world = 1.0; // 1 meter
+        let axis_length_world = 1.0;
         painter.line_segment(
             [origin_screen, to_screen.transform_pos(egui::pos2(axis_length_world, 0.0))],
-            egui::Stroke::new(1.0, egui::Color32::from_rgb(100, 50, 50)), // Dim Red
+            egui::Stroke::new(1.0, egui::Color32::from_rgb(100, 50, 50)),
         );
         painter.line_segment(
             [origin_screen, to_screen.transform_pos(egui::pos2(0.0, axis_length_world))],
-            egui::Stroke::new(1.0, egui::Color32::from_rgb(50, 100, 50)), // Dim Green
+            egui::Stroke::new(1.0, egui::Color32::from_rgb(50, 100, 50)),
         );
 
-        // 3. Draw the full trajectory path
+        // Trajectory
         if nav_trajectory_points.len() > 1 {
              let path_points: Vec<egui::Pos2> = nav_trajectory_points
                 .iter()
@@ -139,8 +108,6 @@ impl NavScreen {
         }
         
         // --- Real-time Drawing ---
-
-        // 4. Draw the latest LiDAR scan
         for point in latest_scan_for_draw {
             let local_point = nalgebra::Point2::new(point.0, point.1);
             let world_point = current_robot_pose * local_point;
@@ -150,7 +117,6 @@ impl NavScreen {
             }
         }
 
-        // 5. Draw the current navigation target
         if let Some(target) = current_nav_target {
             let screen_pos = to_screen.transform_pos(*target);
             if rect.contains(screen_pos) {
@@ -160,7 +126,7 @@ impl NavScreen {
             }
         }
 
-        // 6. Draw the robot's current pose
+        // Robot
         let robot_pos_on_screen = to_screen.transform_pos(egui::pos2(
             current_robot_pose.translation.x,
             current_robot_pose.translation.y,
@@ -174,5 +140,44 @@ impl NavScreen {
             ],
             egui::Stroke::new(2.0, egui::Color32::GREEN),
         );
+
+        // --- Debug Info on Hover ---
+        if let Some(mouse_pos) = ui.input(|i| i.pointer.hover_pos()) {
+            if rect.contains(mouse_pos) {
+                let world_pos = to_screen.inverse().transform_pos(mouse_pos);
+                let mut debug_text = format!("World: ({:.3}, {:.3})", world_pos.x, world_pos.y);
+
+                if let (Some(grid), Some(info)) = (&navigation_manager.occupancy_grid, &navigation_manager.map_info) {
+                    let resolution = info.resolution;
+                    let origin_x = info.origin[0];
+                    let origin_y = info.origin[1];
+                    let width = grid.width;
+                    let height = grid.height;
+
+                    // Assuming Origin = Top-Left (confirmed by user)
+                    let gx = ((world_pos.x - origin_x) / resolution).floor() as i32;
+                    let gy = ((origin_y - world_pos.y) / resolution).floor() as i32;
+                    
+                    debug_text += &format!("\nGrid(TL): ({}, {})", gx, gy);
+
+                    if gx >= 0 && gx < width as i32 && gy >= 0 && gy < height as i32 {
+                        // For display, gy is the index from top (0) to bottom (height-1)
+                        let idx = (gy as usize) * width + (gx as usize);
+                        if let Some(cell) = grid.data.get(idx) {
+                            debug_text += &format!("\nLogOdds: {:.2}", cell.log_odds);
+                            if cell.log_odds > 0.0 { debug_text += "\n[OCCUPIED]"; } 
+                            else if cell.log_odds < 0.0 { debug_text += "\n[FREE]"; } 
+                            else { debug_text += "\n[UNKNOWN]"; }
+                        }
+                    } else {
+                        debug_text += "\n[OUT OF BOUNDS]";
+                    }
+                }
+
+                egui::show_tooltip(ui.ctx(), egui::Id::new("nav_debug_tooltip"), |ui| {
+                    ui.label(debug_text);
+                });
+            }
+        }
     }
 }
