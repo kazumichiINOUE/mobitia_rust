@@ -212,7 +212,7 @@ impl NavigationManager {
     ) {
         // --- Temporary Dummy Scan Injection ---
         let dummy_scan_storage; // To keep the vec alive
-        let effective_scan = if latest_scan.is_empty() {
+        let effective_scan = if self.config.debug_use_dummy_scan && latest_scan.is_empty() {
             // Generate a U-shape (corridor) dummy scan
             let mut dummy = Vec::new();
             

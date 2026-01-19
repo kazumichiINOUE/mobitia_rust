@@ -134,6 +134,8 @@ impl Default for MotorConfig {
 pub struct NavConfig {
     #[serde(default = "default_initial_pose")]
     pub initial_pose: [f32; 3], // [x, y, angle_degrees]
+    #[serde(default)]
+    pub debug_use_dummy_scan: bool,
 }
 
 fn default_initial_pose() -> [f32; 3] {
@@ -144,6 +146,7 @@ impl Default for NavConfig {
     fn default() -> Self {
         Self {
             initial_pose: default_initial_pose(),
+            debug_use_dummy_scan: false,
         }
     }
 }
