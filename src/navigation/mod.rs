@@ -218,7 +218,7 @@ impl NavigationManager {
             
             // Forward wall at x = 5.0m
             for i in 0..100 {
-                let y = (i as f32 / 100.0) * 2.6 - 1.3; // -1.3 to 1.3
+                let y = (i as f32 / 100.0) * 1.6 - 0.8; // -0.8 to 0.8
                 let x = 5.0;
                 let r = (x*x + y*y).sqrt();
                 let theta = y.atan2(x);
@@ -226,19 +226,19 @@ impl NavigationManager {
                 dummy.push((x, y, r, theta, 0.0, 0.0, 0.0, 0.0));
             }
             
-            // Left wall at y = 1.3m
+            // Left wall at y = 0.8m
             for i in 0..100 {
                 let x = (i as f32 / 100.0) * 5.0; // 0.0 to 5.0
-                let y = 1.3;
+                let y = 0.8;
                 let r = (x*x + y*y).sqrt();
                 let theta = y.atan2(x);
                 dummy.push((x, y, r, theta, 0.0, 0.0, 0.0, 0.0));
             }
 
-            // Right wall at y = -1.3m
+            // Right wall at y = -0.8m
             for i in 0..100 {
                 let x = (i as f32 / 100.0) * 5.0; // 0.0 to 5.0
-                let y = -1.3;
+                let y = -0.8;
                 let r = (x*x + y*y).sqrt();
                 let theta = y.atan2(x);
                 dummy.push((x, y, r, theta, 0.0, 0.0, 0.0, 0.0));
@@ -267,18 +267,25 @@ impl NavigationManager {
         }
 
         if self.is_localizing {
-            // --- Localization Mode ---
+            // --- Localization Mode (Initial Scan Matching) ---
             if let (Some(scan), Some(grid), Some(info)) = (&self.initial_scan, &self.occupancy_grid, &self.map_info) {
                 // Throttle DE updates to observe convergence
                 if self.de_frame_counter % 30 == 0 {
                     self.de_solver.step(grid, scan, info.resolution, info.origin);
                     self.current_robot_pose = self.de_solver.get_best_pose();
+                    
+                    if self.de_solver.is_converged {
+                        self.is_localizing = false;
+                        self.de_frame_counter = 0; // Reset counter for tracking
+                    }
                 }
                 self.de_frame_counter += 1;
             }
             self.last_odom = Some(current_odom);
         } else {
-            // --- Tracking Mode ---
+            // --- Tracking Mode (Odometry + Periodic Correction) ---
+            
+            // 1. Update pose with Odometry
             if let Some((last_x, last_y, last_theta)) = self.last_odom {
                 let (curr_x, curr_y, curr_theta) = current_odom;
 
@@ -298,6 +305,28 @@ impl NavigationManager {
                 self.current_robot_pose *= movement;
             }
             self.last_odom = Some(current_odom);
+            
+            // 2. Periodic DE Correction (e.g., every 60 frames)
+            if self.de_frame_counter % 60 == 0 && !effective_scan.is_empty() {
+                if let (Some(grid), Some(info)) = (&self.occupancy_grid, &self.map_info) {
+                    // Use latest scan for correction
+                    let points: Vec<Point2<f32>> = effective_scan.iter()
+                        .map(|p| Point2::new(p.0, p.1))
+                        .collect();
+                    
+                    // Re-initialize solver around current pose
+                    self.de_solver.init(self.current_robot_pose);
+                    
+                    // Run DE until convergence (instantaneous correction)
+                    while !self.de_solver.is_converged {
+                        self.de_solver.step(grid, &points, info.resolution, info.origin);
+                    }
+                    
+                    // Apply corrected pose
+                    self.current_robot_pose = self.de_solver.get_best_pose();
+                }
+            }
+            self.de_frame_counter += 1;
         }
     }
 }
