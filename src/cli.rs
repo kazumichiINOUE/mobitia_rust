@@ -921,12 +921,19 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
             app.app_mode = AppMode::Nav;
             if let Some(nav_command) = command {
                 match nav_command {
-                    NavCommands::Test { path } | NavCommands::Start { path } => {
+                    NavCommands::Test { path } => {
                         app.command_history.push(ConsoleOutputEntry {
                             text: format!("Loading navigation data from '{}'...", path.display()),
                             group_id: current_group_id,
                         });
-                        app.load_nav_data(&path, ctx);
+                        app.load_nav_data(&path, ctx, false);
+                    }
+                    NavCommands::Start { path } => {
+                        app.command_history.push(ConsoleOutputEntry {
+                            text: format!("Starting navigation with data from '{}'...", path.display()),
+                            group_id: current_group_id,
+                        });
+                        app.load_nav_data(&path, ctx, true);
                     }
                     NavCommands::Stop => {
                         app.command_history.push(ConsoleOutputEntry {

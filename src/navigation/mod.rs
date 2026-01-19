@@ -48,6 +48,9 @@ pub struct NavigationManager {
     pub viz_scan: Vec<(f32, f32, f32, f32, f32, f32, f32, f32)>,
     pub converged_message_timer: usize,
 
+    // Autonomous Navigation
+    pub is_autonomous: bool,
+
     config: NavConfig,
 }
 
@@ -76,12 +79,19 @@ impl NavigationManager {
             de_frame_counter: 0,
             viz_scan: Vec::new(),
             converged_message_timer: 0,
+            is_autonomous: false,
             config,
         }
     }
 
-    pub fn load_data(&mut self, path: &PathBuf, ctx: &egui::Context) -> Result<String, String> {
+    pub fn load_data(
+        &mut self,
+        path: &PathBuf,
+        ctx: &egui::Context,
+        is_autonomous: bool,
+    ) -> Result<String, String> {
         self.reset();
+        self.is_autonomous = is_autonomous;
 
         // 初期姿勢のリセット
         let pose_config = self.config.initial_pose;
@@ -218,13 +228,14 @@ impl NavigationManager {
         self.is_localizing = true;
         self.de_frame_counter = 0;
         self.viz_scan.clear();
+        self.is_autonomous = false;
     }
 
     pub fn update(
         &mut self,
         current_odom: (f32, f32, f32),
         latest_scan: &[(f32, f32, f32, f32, f32, f32, f32, f32)],
-    ) {
+    ) -> Option<(f32, f32)> {
         if self.converged_message_timer > 0 {
             self.converged_message_timer -= 1;
         }
@@ -306,6 +317,7 @@ impl NavigationManager {
                 self.de_frame_counter += 1;
             }
             self.last_odom = Some(current_odom);
+            None // No motor command during initialization
         } else {
             // --- Tracking Mode (Odometry + Periodic Correction) ---
 
@@ -363,6 +375,20 @@ impl NavigationManager {
                 }
             }
             self.de_frame_counter += 1;
+            
+            // 3. Autonomous Navigation (Pure Pursuit)
+            if self.is_autonomous && !self.is_localizing {
+                // Call Pure Pursuit logic
+                use crate::navigation::pure_pursuit;
+                
+                pure_pursuit::compute_command(
+                    &self.current_robot_pose,
+                    &self.nav_trajectory_points,
+                    &mut self.current_nav_target
+                )
+            } else {
+                None
+            }
         }
     }
 }

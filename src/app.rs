@@ -2502,8 +2502,13 @@ negate = 0
                 self.camera_screen.draw(ui, &self.cameras);
             }
             AppMode::Nav => {
-                self.navigation_manager
-                    .update(self.motor_odometry, &self.latest_scan_for_draw);
+                if let Some((v, w)) = self.navigation_manager.update(self.motor_odometry, &self.latest_scan_for_draw) {
+                    if self.motor_thread_active {
+                        if let Err(e) = self.motor_command_sender.send(crate::motors::MotorCommand::SetVelocity(v, w)) {
+                            eprintln!("ERROR: Failed to send navigation motor command: {}", e);
+                        }
+                    }
+                }
                 self.current_robot_pose = self.navigation_manager.current_robot_pose;
 
                 self.nav_screen.draw(
@@ -2634,8 +2639,8 @@ impl MyApp {
 
 impl MyApp {
     /// Loads navigation data (map, trajectory) from the specified path.
-    pub fn load_nav_data(&mut self, path: &PathBuf, ctx: &egui::Context) {
-        match self.navigation_manager.load_data(path, ctx) {
+    pub fn load_nav_data(&mut self, path: &PathBuf, ctx: &egui::Context, is_autonomous: bool) {
+        match self.navigation_manager.load_data(path, ctx, is_autonomous) {
             Ok(msg) => {
                 self.command_output_sender.send(msg).unwrap_or_default();
                 // マネージャーから初期姿勢をコピー
