@@ -88,13 +88,13 @@ penalty_factor = 1.0
 population_size = 200
 
 # Number of generations the DE algorithm runs for.
-generations = 100
+generations = 50
 
 # Search window size for translation (x, y) in meters.
 wxy = 0.8
 
 # Search window size for rotation (angle) in degrees.
-wa_degrees = 35.0
+wa_degrees = 15.0
 
 # Mutation factor for Differential Evolution.
 f_de = 0.1
@@ -174,3 +174,9 @@ max_angular_velocity = 1.0 # rad/s
 # Initial pose for navigation mode [x, y, angle_degrees]
 initial_pose = [0.0, 0.0, 0.0]
 debug_use_dummy_scan = false
+initial_localization_interval_frames = 10
+tracking_update_interval_frames = 1
+tracking_wxy = 0.05
+tracking_wa_degrees = 2.0
+tracking_population_size = 30
+tracking_generations = 5

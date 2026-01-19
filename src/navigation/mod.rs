@@ -268,7 +268,7 @@ impl NavigationManager {
                 .collect();
             
             // Initialize DE solver
-            self.de_solver.init(self.current_robot_pose);
+            self.de_solver.init(self.current_robot_pose, None);
             self.initial_scan = Some(points);
         }
 
@@ -276,7 +276,7 @@ impl NavigationManager {
             // --- Localization Mode (Initial Scan Matching) ---
             if let (Some(scan), Some(grid), Some(info)) = (&self.initial_scan, &self.occupancy_grid, &self.map_info) {
                 // Throttle DE updates to observe convergence
-                if self.de_frame_counter % 30 == 0 {
+                if self.de_frame_counter % self.config.initial_localization_interval_frames == 0 {
                     self.de_solver.step(grid, scan, info.resolution, info.origin);
                     self.current_robot_pose = self.de_solver.get_best_pose();
                     
@@ -313,16 +313,24 @@ impl NavigationManager {
             }
             self.last_odom = Some(current_odom);
             
-            // 2. Periodic DE Correction (e.g., every 60 frames)
-            if self.de_frame_counter % 60 == 0 && !effective_scan.is_empty() {
+            // 2. Periodic DE Correction
+            if self.de_frame_counter % self.config.tracking_update_interval_frames == 0 && !effective_scan.is_empty() {
                 if let (Some(grid), Some(info)) = (&self.occupancy_grid, &self.map_info) {
                     // Use latest scan for correction
                     let points: Vec<Point2<f32>> = effective_scan.iter()
                         .map(|p| Point2::new(p.0, p.1))
                         .collect();
                     
-                    // Re-initialize solver around current pose
-                    self.de_solver.init(self.current_robot_pose);
+                    // Re-initialize solver around current pose with TRACKING params
+                    self.de_solver.init(
+                        self.current_robot_pose,
+                        Some((
+                            self.config.tracking_wxy,
+                            self.config.tracking_wa_degrees,
+                            self.config.tracking_population_size,
+                            self.config.tracking_generations
+                        ))
+                    );
                     
                     // Run DE until convergence (instantaneous correction)
                     while !self.de_solver.is_converged {

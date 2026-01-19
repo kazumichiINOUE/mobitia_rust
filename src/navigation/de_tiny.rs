@@ -45,6 +45,10 @@ pub struct DeTinySolver {
     pub is_initialized: bool,
     pub is_converged: bool,
     
+    // Dynamic parameters for tracking
+    current_population_size: usize,
+    current_generations: usize,
+    
     gaussian_kernel: GaussianKernel,
     rng: rand::rngs::ThreadRng,
 }
@@ -56,6 +60,8 @@ impl DeTinySolver {
                 config.gaussian_kernel_sigma,
                 config.gaussian_kernel_radius,
             ),
+            current_population_size: config.population_size,
+            current_generations: config.generations,
             config: config.clone(), // Clone config to keep ownership
             population: Vec::new(),
             scores: Vec::new(),
@@ -69,10 +75,16 @@ impl DeTinySolver {
     }
 
     /// Initializes the population around the initial pose guess.
-    pub fn init(&mut self, initial_pose: Isometry2<f32>) {
-        let wxy = self.config.wxy; // Search width (meters)
-        let wa = self.config.wa_degrees.to_radians(); // Search angle (radians)
-        let population_size = self.config.population_size;
+    /// Optional override_params: (wxy, wa_deg, pop_size, generations)
+    pub fn init(&mut self, initial_pose: Isometry2<f32>, override_params: Option<(f32, f32, usize, usize)>) {
+        let (wxy, wa, population_size, generations) = if let Some((w, a, p, g)) = override_params {
+            (w, a.to_radians(), p, g)
+        } else {
+            (self.config.wxy, self.config.wa_degrees.to_radians(), self.config.population_size, self.config.generations)
+        };
+        
+        self.current_population_size = population_size;
+        self.current_generations = generations;
 
         let center_x = initial_pose.translation.x;
         let center_y = initial_pose.translation.y;
@@ -111,7 +123,7 @@ impl DeTinySolver {
             return;
         }
 
-        let population_size = self.config.population_size;
+        let population_size = self.current_population_size;
         
         // Generation 0: Evaluate the initial population
         if self.generation == 0 {
@@ -136,6 +148,12 @@ impl DeTinySolver {
         for i in 0..population_size {
             // Select 3 random distinct candidates
             let mut candidates: Vec<usize> = (0..population_size).filter(|&idx| idx != i).collect();
+            // Since population size can be small, handle the case where we don't have enough candidates
+            if candidates.len() < 3 {
+                 // Not enough population for DE mutation, skip or use just random mutation
+                 continue; 
+            }
+            
             candidates.shuffle(&mut self.rng);
             let r1 = candidates[0];
             let r2 = candidates[1];
@@ -190,7 +208,7 @@ impl DeTinySolver {
         }
 
         self.generation += 1;
-        if self.generation >= self.config.generations {
+        if self.generation >= self.current_generations {
             self.is_converged = true;
         }
     }

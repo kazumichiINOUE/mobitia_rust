@@ -136,10 +136,46 @@ pub struct NavConfig {
     pub initial_pose: [f32; 3], // [x, y, angle_degrees]
     #[serde(default)]
     pub debug_use_dummy_scan: bool,
+    #[serde(default = "default_initial_localization_interval_frames")]
+    pub initial_localization_interval_frames: usize,
+    #[serde(default = "default_tracking_update_interval_frames")]
+    pub tracking_update_interval_frames: usize,
+    #[serde(default = "default_tracking_wxy")]
+    pub tracking_wxy: f32,
+    #[serde(default = "default_tracking_wa_degrees")]
+    pub tracking_wa_degrees: f32,
+    #[serde(default = "default_tracking_population_size")]
+    pub tracking_population_size: usize,
+    #[serde(default = "default_tracking_generations")]
+    pub tracking_generations: usize,
 }
 
 fn default_initial_pose() -> [f32; 3] {
     [0.0, 0.0, 0.0]
+}
+
+fn default_initial_localization_interval_frames() -> usize {
+    30
+}
+
+fn default_tracking_update_interval_frames() -> usize {
+    60
+}
+
+fn default_tracking_wxy() -> f32 {
+    0.05
+}
+
+fn default_tracking_wa_degrees() -> f32 {
+    2.0
+}
+
+fn default_tracking_population_size() -> usize {
+    30
+}
+
+fn default_tracking_generations() -> usize {
+    5
 }
 
 impl Default for NavConfig {
@@ -147,6 +183,12 @@ impl Default for NavConfig {
         Self {
             initial_pose: default_initial_pose(),
             debug_use_dummy_scan: false,
+            initial_localization_interval_frames: default_initial_localization_interval_frames(),
+            tracking_update_interval_frames: default_tracking_update_interval_frames(),
+            tracking_wxy: default_tracking_wxy(),
+            tracking_wa_degrees: default_tracking_wa_degrees(),
+            tracking_population_size: default_tracking_population_size(),
+            tracking_generations: default_tracking_generations(),
         }
     }
 }
