@@ -8,9 +8,6 @@ use nalgebra::Isometry2;
 use serde::Deserialize;
 use std::collections::HashMap;
 
-
-
-
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -279,7 +276,6 @@ pub struct MyApp {
 
     // --- Navigation Mode State ---
     pub(crate) navigation_manager: NavigationManager,
-
 }
 
 impl MyApp {
@@ -929,7 +925,8 @@ impl MyApp {
                         .collect();
                 }
                 ["nav"] if ends_with_space => {
-                    self.current_suggestions = vec!["test".to_string(), "start".to_string(), "stop".to_string()];
+                    self.current_suggestions =
+                        vec!["test".to_string(), "start".to_string(), "stop".to_string()];
                 }
 
                 ["script", partial_path] => {
@@ -1186,7 +1183,11 @@ impl eframe::App for MyApp {
                     self.update_bounds();
 
                     // If this was the last submap, save all the generated data.
-                    if self.submap_load_queue.as_ref().map_or(true, |q| q.is_empty()) {
+                    if self
+                        .submap_load_queue
+                        .as_ref()
+                        .map_or(true, |q| q.is_empty())
+                    {
                         // Trajectory saving
                         if let Some(path) = self.trajectory_save_path.take() {
                             let trajectory_clone = self.robot_trajectory.clone();
@@ -1248,30 +1249,37 @@ impl eframe::App for MyApp {
                                         for y in 0..grid.height {
                                             for x in 0..grid.width {
                                                 let cell = grid.data[y * grid.width + x];
-                                                let prob = crate::slam::log_odds_to_probability(cell.log_odds);
-                                                
+                                                let prob = crate::slam::log_odds_to_probability(
+                                                    cell.log_odds,
+                                                );
+
                                                 let color = if prob > map_config.prob_occupied {
-                                                    [0, 0, 0, 255]       // Occupied: Black
+                                                    [0, 0, 0, 255] // Occupied: Black
                                                 } else if prob < map_config.prob_free {
                                                     [255, 255, 255, 255] // Free: White
                                                 } else {
                                                     [128, 128, 128, 255] // Unknown: Gray
                                                 };
-                                                
+
                                                 // Maintain current orientation mapping
-                                                img_buffer.put_pixel(x as u32, (grid.height - 1 - y) as u32, image::Rgba(color));
+                                                img_buffer.put_pixel(
+                                                    x as u32,
+                                                    (grid.height - 1 - y) as u32,
+                                                    image::Rgba(color),
+                                                );
                                             }
                                         }
-                                        
+
                                         imageops::flip_vertical_in_place(&mut img_buffer);
-                                        
+
                                         // 2. Calculate bounding box and crop (using Gray 128 as background)
                                         let (min_x, min_y, max_x, max_y) = {
                                             let mut min_x = u32::MAX;
                                             let mut min_y = u32::MAX;
                                             let mut max_x = 0;
                                             let mut max_y = 0;
-                                            let background_color = image::Rgba([128, 128, 128, 255]);
+                                            let background_color =
+                                                image::Rgba([128, 128, 128, 255]);
 
                                             for (x, y, pixel) in img_buffer.enumerate_pixels() {
                                                 if *pixel != background_color {
@@ -1284,10 +1292,23 @@ impl eframe::App for MyApp {
                                             (min_x, min_y, max_x, max_y)
                                         };
 
-                                        let (cropped_img, crop_x, crop_y) = if min_x <= max_x && min_y <= max_y {
+                                        let (cropped_img, crop_x, crop_y) = if min_x <= max_x
+                                            && min_y <= max_y
+                                        {
                                             let width = max_x - min_x + 1;
                                             let height = max_y - min_y + 1;
-                                            (imageops::crop_imm(&img_buffer, min_x, min_y, width, height).to_image(), min_x, min_y)
+                                            (
+                                                imageops::crop_imm(
+                                                    &img_buffer,
+                                                    min_x,
+                                                    min_y,
+                                                    width,
+                                                    height,
+                                                )
+                                                .to_image(),
+                                                min_x,
+                                                min_y,
+                                            )
                                         } else {
                                             sender.send("WARNING: No valid map data found to save. Creating a 1x1 placeholder image.".to_string()).unwrap_or_default();
                                             (image::RgbaImage::new(1, 1), 0, 0)
@@ -1295,21 +1316,36 @@ impl eframe::App for MyApp {
 
                                         // 3. Save as PNG
                                         if let Err(e) = cropped_img.save(&image_path) {
-                                            sender.send(format!("ERROR: Failed to save map image to '{}': {}", image_path.display(), e)).unwrap_or_default();
+                                            sender
+                                                .send(format!(
+                                                    "ERROR: Failed to save map image to '{}': {}",
+                                                    image_path.display(),
+                                                    e
+                                                ))
+                                                .unwrap_or_default();
                                         } else {
-                                            sender.send(format!("Map image saved to '{}'.", image_path.display())).unwrap_or_default();
+                                            sender
+                                                .send(format!(
+                                                    "Map image saved to '{}'.",
+                                                    image_path.display()
+                                                ))
+                                                .unwrap_or_default();
                                         }
 
                                         // 4. Generate map_info.toml content
                                         let map_info_content = {
                                             let resolution = map_config.csize;
-                                            let initial_half_width_m = width as f32 * resolution / 2.0;
-                                            let initial_half_height_m = height as f32 * resolution / 2.0;
+                                            let initial_half_width_m =
+                                                width as f32 * resolution / 2.0;
+                                            let initial_half_height_m =
+                                                height as f32 * resolution / 2.0;
                                             let initial_origin_x = -initial_half_width_m;
                                             let initial_origin_y = initial_half_height_m;
-                                            
-                                            let final_origin_x = initial_origin_x + (crop_x as f32 * resolution);
-                                            let final_origin_y = initial_origin_y - (crop_y as f32 * resolution);
+
+                                            let final_origin_x =
+                                                initial_origin_x + (crop_x as f32 * resolution);
+                                            let final_origin_y =
+                                                initial_origin_y - (crop_y as f32 * resolution);
 
                                             format!(
                                                 r#"# Map information file
@@ -1325,16 +1361,31 @@ negate = 0
                                         };
 
                                         // 5. Save map_info.toml
-                                        if let Err(e) = std::fs::write(&info_path, map_info_content) {
-                                            sender.send(format!("ERROR: Failed to write map info to '{}': {}", info_path.display(), e)).unwrap_or_default();
+                                        if let Err(e) = std::fs::write(&info_path, map_info_content)
+                                        {
+                                            sender
+                                                .send(format!(
+                                                    "ERROR: Failed to write map info to '{}': {}",
+                                                    info_path.display(),
+                                                    e
+                                                ))
+                                                .unwrap_or_default();
                                         } else {
-                                            sender.send(format!("Map info saved to '{}'.", info_path.display())).unwrap_or_default();
+                                            sender
+                                                .send(format!(
+                                                    "Map info saved to '{}'.",
+                                                    info_path.display()
+                                                ))
+                                                .unwrap_or_default();
                                         }
                                     });
                                 } else {
                                     let sender = self.command_output_sender.clone();
                                     sender
-                                        .send("ERROR: Offline map data not available for saving.".to_string())
+                                        .send(
+                                            "ERROR: Offline map data not available for saving."
+                                                .to_string(),
+                                        )
                                         .unwrap_or_default();
                                 }
                             } else {
@@ -1685,7 +1736,14 @@ negate = 0
 
                         if all_active_scans_received {
                             let mut raw_combined_scan: Vec<(
-                                f32, f32, f32, f32, f32, f32, f32, f32,
+                                f32,
+                                f32,
+                                f32,
+                                f32,
+                                f32,
+                                f32,
+                                f32,
+                                f32,
                             )> = Vec::new();
 
                             for lidar_state in active_lidars {
@@ -1716,8 +1774,14 @@ negate = 0
                                         let world_y = py_rotated + origin.y;
 
                                         raw_combined_scan.push((
-                                            world_x, world_y, r_val, theta_val, feature_val,
-                                            nx_rotated, ny_rotated, 0.0,
+                                            world_x,
+                                            world_y,
+                                            r_val,
+                                            theta_val,
+                                            feature_val,
+                                            nx_rotated,
+                                            ny_rotated,
+                                            0.0,
                                         ));
                                     }
                                 }
@@ -2438,7 +2502,8 @@ negate = 0
                 self.camera_screen.draw(ui, &self.cameras);
             }
             AppMode::Nav => {
-                self.navigation_manager.update(self.motor_odometry, &self.latest_scan_for_draw);
+                self.navigation_manager
+                    .update(self.motor_odometry, &self.latest_scan_for_draw);
                 self.current_robot_pose = self.navigation_manager.current_robot_pose;
 
                 self.nav_screen.draw(
@@ -2539,11 +2604,8 @@ impl MyApp {
                 }
             }
 
-            self.map_texture = Some(ctx.load_texture(
-                "map-texture",
-                image.clone(),
-                egui::TextureOptions::NEAREST,
-            ));
+            self.map_texture =
+                Some(ctx.load_texture("map-texture", image.clone(), egui::TextureOptions::NEAREST));
             Some(image)
         } else {
             None
@@ -2575,16 +2637,12 @@ impl MyApp {
     pub fn load_nav_data(&mut self, path: &PathBuf, ctx: &egui::Context) {
         match self.navigation_manager.load_data(path, ctx) {
             Ok(msg) => {
-                self.command_output_sender
-                    .send(msg)
-                    .unwrap_or_default();
+                self.command_output_sender.send(msg).unwrap_or_default();
                 // マネージャーから初期姿勢をコピー
                 self.current_robot_pose = self.navigation_manager.current_robot_pose;
             }
             Err(e) => {
-                self.command_output_sender
-                    .send(e)
-                    .unwrap_or_default();
+                self.command_output_sender.send(e).unwrap_or_default();
             }
         }
     }
@@ -2597,7 +2655,6 @@ impl MyApp {
             .unwrap_or_default();
     }
 }
-
 
 impl Drop for MyApp {
     fn drop(&mut self) {

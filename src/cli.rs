@@ -964,7 +964,8 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                                 }
                                 if trimmed == "end" {
                                     app.command_history.push(ConsoleOutputEntry {
-                                        text: "Script execution ended by 'end' command.".to_string(),
+                                        text: "Script execution ended by 'end' command."
+                                            .to_string(),
                                         group_id: current_group_id,
                                     });
                                     break;
@@ -991,7 +992,10 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                                     },
                                     None => {
                                         app.command_history.push(ConsoleOutputEntry {
-                                            text: format!("Script Error: Failed to parse line '{}'", trimmed),
+                                            text: format!(
+                                                "Script Error: Failed to parse line '{}'",
+                                                trimmed
+                                            ),
                                             group_id: current_group_id,
                                         });
                                     }

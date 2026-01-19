@@ -339,7 +339,8 @@ impl MapScreen {
                     ui.fonts(|f| f.layout_no_wrap(height_text.clone(), font_id, text_color));
 
                 // テキストの中心が height_text_center_screen になるように、左上座標を計算
-                let height_text_top_left = height_text_center_screen - height_text_galley.size() / 2.0;
+                let height_text_top_left =
+                    height_text_center_screen - height_text_galley.size() / 2.0;
 
                 let height_text_rect = egui::Rect::from_center_size(
                     height_text_center_screen,
