@@ -180,3 +180,6 @@ tracking_wxy = 0.05
 tracking_wa_degrees = 2.0
 tracking_population_size = 30
 tracking_generations = 5
+lookahead_distance = 1.0
+target_velocity = 0.3
+goal_tolerance = 0.2

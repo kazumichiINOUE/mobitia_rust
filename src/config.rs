@@ -148,6 +148,12 @@ pub struct NavConfig {
     pub tracking_population_size: usize,
     #[serde(default = "default_tracking_generations")]
     pub tracking_generations: usize,
+    #[serde(default = "default_lookahead_distance")]
+    pub lookahead_distance: f32,
+    #[serde(default = "default_target_velocity")]
+    pub target_velocity: f32,
+    #[serde(default = "default_goal_tolerance")]
+    pub goal_tolerance: f32,
 }
 
 fn default_initial_pose() -> [f32; 3] {
@@ -178,6 +184,18 @@ fn default_tracking_generations() -> usize {
     5
 }
 
+fn default_lookahead_distance() -> f32 {
+    0.5
+}
+
+fn default_target_velocity() -> f32 {
+    0.3
+}
+
+fn default_goal_tolerance() -> f32 {
+    0.2
+}
+
 impl Default for NavConfig {
     fn default() -> Self {
         Self {
@@ -189,6 +207,9 @@ impl Default for NavConfig {
             tracking_wa_degrees: default_tracking_wa_degrees(),
             tracking_population_size: default_tracking_population_size(),
             tracking_generations: default_tracking_generations(),
+            lookahead_distance: default_lookahead_distance(),
+            target_velocity: default_target_velocity(),
+            goal_tolerance: default_goal_tolerance(),
         }
     }
 }

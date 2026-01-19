@@ -384,7 +384,10 @@ impl NavigationManager {
                 pure_pursuit::compute_command(
                     &self.current_robot_pose,
                     &self.nav_trajectory_points,
-                    &mut self.current_nav_target
+                    &mut self.current_nav_target,
+                    self.config.lookahead_distance,
+                    self.config.target_velocity,
+                    self.config.goal_tolerance,
                 )
             } else {
                 None
