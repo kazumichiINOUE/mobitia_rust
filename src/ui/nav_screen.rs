@@ -165,6 +165,29 @@ impl NavScreen {
             egui::Stroke::new(2.0, egui::Color32::GREEN),
         );
 
+        // --- Converged Message ---
+        if navigation_manager.converged_message_timer > 0 {
+            let center = rect.center();
+            let text = "Localization Converged";
+            let font_id = egui::FontId::proportional(30.0);
+            
+            // Draw text with a simple shadow/outline for visibility
+            painter.text(
+                center + egui::vec2(2.0, 2.0),
+                egui::Align2::CENTER_CENTER,
+                text,
+                font_id.clone(),
+                egui::Color32::BLACK,
+            );
+            painter.text(
+                center,
+                egui::Align2::CENTER_CENTER,
+                text,
+                font_id,
+                egui::Color32::GREEN,
+            );
+        }
+
         // --- Debug Info on Hover ---
         if let Some(mouse_pos) = ui.input(|i| i.pointer.hover_pos()) {
             if rect.contains(mouse_pos) {

@@ -46,6 +46,7 @@ pub struct NavigationManager {
     
     // Visualization
     pub viz_scan: Vec<(f32, f32, f32, f32, f32, f32, f32, f32)>,
+    pub converged_message_timer: usize,
     
     config: NavConfig,
 }
@@ -74,6 +75,7 @@ impl NavigationManager {
             is_localizing: true,
             de_frame_counter: 0,
             viz_scan: Vec::new(),
+            converged_message_timer: 0,
             config,
         }
     }
@@ -210,6 +212,10 @@ impl NavigationManager {
         current_odom: (f32, f32, f32),
         latest_scan: &[(f32, f32, f32, f32, f32, f32, f32, f32)],
     ) {
+        if self.converged_message_timer > 0 {
+            self.converged_message_timer -= 1;
+        }
+
         // --- Temporary Dummy Scan Injection ---
         let dummy_scan_storage; // To keep the vec alive
         let effective_scan = if self.config.debug_use_dummy_scan && latest_scan.is_empty() {
@@ -277,6 +283,7 @@ impl NavigationManager {
                     if self.de_solver.is_converged {
                         self.is_localizing = false;
                         self.de_frame_counter = 0; // Reset counter for tracking
+                        self.converged_message_timer = 180;
                     }
                 }
                 self.de_frame_counter += 1;
