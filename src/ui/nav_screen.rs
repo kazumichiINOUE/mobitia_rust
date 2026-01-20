@@ -101,6 +101,37 @@ impl NavScreen {
             );
         }
 
+        // --- Debug: Show Corner Cells ---
+        if navigation_manager.config.debug_show_corner_cells {
+            if let (Some(grid), Some(info)) = (&navigation_manager.occupancy_grid, &navigation_manager.map_info) {
+                let resolution = info.resolution;
+                let origin_x = info.origin[0];
+                let origin_y = info.origin[1];
+                let width = grid.width;
+                let height = grid.height;
+
+                for y in 0..height {
+                    for x in 0..width {
+                        let idx = y * width + x;
+                        if grid.data[idx].edge_ness > 0.5 {
+                            // Grid to World (Top-Left Origin)
+                            let wx = origin_x + (x as f32 + 0.5) * resolution;
+                            let wy = origin_y - (y as f32 + 0.5) * resolution;
+                            
+                            let screen_pos = to_screen.transform_pos(egui::pos2(wx, wy));
+                            if rect.contains(screen_pos) {
+                                painter.rect_filled(
+                                    egui::Rect::from_center_size(screen_pos, egui::vec2(5.0, 5.0)),
+                                    0.0,
+                                    egui::Color32::BLUE
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Axes
         let origin_world = egui::Pos2::ZERO;
         let origin_screen = to_screen.transform_pos(origin_world);
@@ -175,12 +206,27 @@ impl NavScreen {
             latest_scan_for_draw
         };
 
+        // Pass 1: Draw non-feature points in YELLOW
         for point in scan_to_draw {
-            let local_point = nalgebra::Point2::new(point.0, point.1);
-            let world_point = current_robot_pose * local_point;
-            let screen_pos = to_screen.transform_pos(egui::pos2(world_point.x, world_point.y));
-            if rect.contains(screen_pos) {
-                painter.circle_filled(screen_pos, 1.5, egui::Color32::YELLOW);
+            if point.4 <= 0.5 {
+                let local_point = nalgebra::Point2::new(point.0, point.1);
+                let world_point = current_robot_pose * local_point;
+                let screen_pos = to_screen.transform_pos(egui::pos2(world_point.x, world_point.y));
+                if rect.contains(screen_pos) {
+                    painter.circle_filled(screen_pos, 1.5, egui::Color32::YELLOW);
+                }
+            }
+        }
+
+        // Pass 2: Draw feature points in MAGENTA on top
+        for point in scan_to_draw {
+            if point.4 > 0.5 {
+                let local_point = nalgebra::Point2::new(point.0, point.1);
+                let world_point = current_robot_pose * local_point;
+                let screen_pos = to_screen.transform_pos(egui::pos2(world_point.x, world_point.y));
+                if rect.contains(screen_pos) {
+                    painter.circle_filled(screen_pos, 2.0, egui::Color32::from_rgb(255, 0, 255));
+                }
             }
         }
 

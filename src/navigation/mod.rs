@@ -3,11 +3,12 @@ pub mod localization;
 pub mod pure_pursuit;
 
 use crate::config::{NavConfig, SlamConfig};
-use crate::navigation::de_tiny::DeTinySolver;
-use crate::slam::{CellData, OccupancyGrid};
+use crate::lidar::features::compute_features;
+use crate::navigation::de_tiny::{DeTinySolver, NavScanPoint};
+use crate::slam::{CellData, OccupancyGrid, ScanData, Submap};
 use eframe::egui;
 use image::imageops;
-use nalgebra::{Isometry2, Point2};
+use nalgebra::{Isometry2, Point2, Rotation2, Translation2, Vector2};
 use serde::Deserialize;
 use std::fs;
 use std::io::{BufRead, BufReader};
@@ -40,7 +41,7 @@ pub struct NavigationManager {
 
     // Localization (DE)
     pub de_solver: DeTinySolver,
-    pub initial_scan: Option<Vec<Point2<f32>>>,
+    pub initial_scan: Option<Vec<NavScanPoint>>,
     pub is_localizing: bool,
     pub de_frame_counter: usize,
 
@@ -51,7 +52,7 @@ pub struct NavigationManager {
     // Autonomous Navigation
     pub is_autonomous: bool,
 
-    config: NavConfig,
+    pub config: NavConfig,
 }
 
 impl NavigationManager {
@@ -116,7 +117,7 @@ impl NavigationManager {
 
         self.map_info = Some(map_info.clone());
 
-        // 2. Load occMap.png and create OccupancyGrid
+        // 2. Load occMap.png to determine the required grid dimensions
         let map_image_path = path.join(&map_info.image);
         let img = image::open(&map_image_path).map_err(|e| {
             format!(
@@ -130,22 +131,12 @@ impl NavigationManager {
         let height = img.height() as usize;
         let mut grid = OccupancyGrid::new(width, height);
 
-        // log_odds calculation (simplified from app.rs logic)
-        let _free_log_odds =
-            (1.0 - map_info.occupied_thresh).ln() - (map_info.occupied_thresh).ln();
-        let _occupied_log_odds = (map_info.free_thresh).ln() - (1.0 - map_info.free_thresh).ln();
-
-        let rgba_image = img.to_rgba8();
-        let pixels = rgba_image.as_flat_samples();
-        let color_image =
-            egui::ColorImage::from_rgba_unmultiplied([width, height], pixels.as_slice());
-
-        // Assuming image is grayscale, 0=black=occupied, 255=white=free
+        // Fill initial occupancy from image
         let luma_img = img.to_luma8();
         for (x, y, pixel) in luma_img.enumerate_pixels() {
             let value = pixel.0[0];
             let prob = if map_info.negate == 0 {
-                (255.0 - value as f64) / 255.0 // 0(black) -> 1.0(occupied), 255(white) -> 0.0(free)
+                (255.0 - value as f64) / 255.0 
             } else {
                 value as f64 / 255.0
             };
@@ -159,22 +150,120 @@ impl NavigationManager {
             };
 
             let index = (y as usize) * width + (x as usize);
-            grid.data[index] = CellData {
-                log_odds,
-                ..Default::default()
-            };
+            grid.data[index].log_odds = log_odds;
         }
 
-        self.occupancy_grid = Some(grid);
+        // --- 3. Submap Loading and Grid Reconstruction (Feature Enrichment) ---
+        let submaps_dir = path.join("submaps");
+        if submaps_dir.exists() && submaps_dir.is_dir() {
+            println!("Loading submaps for feature enrichment from: {}", submaps_dir.display());
+            
+            let mut submap_paths = Vec::new();
+            if let Ok(entries) = std::fs::read_dir(&submaps_dir) {
+                for entry in entries.flatten() {
+                    if entry.path().is_dir() {
+                        submap_paths.push(entry.path());
+                    }
+                }
+            }
+            submap_paths.sort(); 
 
-        // 3. Texture creation
+            for submap_path in submap_paths {
+                let info_path = submap_path.join("info.yaml");
+                let submap_meta: Submap = match fs::read_to_string(&info_path) {
+                    Ok(content) => match serde_yaml::from_str(&content) {
+                        Ok(info) => info,
+                        Err(_) => continue,
+                    },
+                    Err(_) => continue,
+                };
+
+                let scans_path = submap_path.join(&submap_meta.scans_file);
+                let scans_data: Vec<ScanData> = match fs::read_to_string(&scans_path) {
+                    Ok(content) => match serde_json::from_str(&content) {
+                        Ok(data) => data,
+                        Err(_) => continue,
+                    },
+                    Err(_) => continue,
+                };
+
+                let submap_rotation = Rotation2::new(submap_meta.pose_theta);
+                let submap_translation = Translation2::new(submap_meta.pose_x, submap_meta.pose_y);
+                let submap_global_pose = Isometry2::from_parts(submap_translation, submap_rotation.into());
+
+                for scan in scans_data {
+                    let rel_rotation = Rotation2::new(scan.relative_pose.theta);
+                    let rel_translation = Translation2::new(scan.relative_pose.x, scan.relative_pose.y);
+                    let relative_pose = Isometry2::from_parts(rel_translation, rel_rotation.into());
+                    
+                    let robot_global_pose = submap_global_pose * relative_pose;
+
+                    for p in scan.scan_points {
+                        let p_local = Point2::new(p.x, p.y);
+                        let p_global = robot_global_pose * p_local;
+                        
+                        let gx = ((p_global.x - map_info.origin[0]) / map_info.resolution).floor() as i32;
+                        let gy = ((map_info.origin[1] - p_global.y) / map_info.resolution).floor() as i32;
+
+                        if gx >= 0 && gx < width as i32 && gy >= 0 && gy < height as i32 {
+                            let idx = (gy as usize) * width + (gx as usize);
+                            let cell = &mut grid.data[idx];
+
+                            let normal_local = Vector2::new(p.nx, p.ny); 
+                            let normal_global = robot_global_pose.rotation * normal_local;
+                            
+                            cell.edge_ness = (cell.edge_ness * 0.7) + (p.feature as f64 * 0.3);
+                            cell.corner_ness = (cell.corner_ness * 0.7) + (p.corner as f64 * 0.3);
+                            
+                            // Debug print
+                            if p.feature > 0.5 {
+                                println!("DEBUG: Loaded high edge feature ({:.3}) at Grid({}, {}). Current cell edge_ness: {:.3}", p.feature, gx, gy, cell.edge_ness);
+                            }
+
+                            cell.normal_x = (cell.normal_x * 0.7) + (normal_global.x as f64 * 0.3);
+                            cell.normal_y = (cell.normal_y * 0.7) + (normal_global.y as f64 * 0.3);
+                            
+                            let len = (cell.normal_x.powi(2) + cell.normal_y.powi(2)).sqrt();
+                            if len > 1e-9 {
+                                cell.normal_x /= len;
+                                cell.normal_y /= len;
+                            }
+                            
+                            if cell.log_odds < 2.0 { cell.log_odds += 0.5; }
+                        }
+                    }
+                }
+            }
+        }
+
+        self.occupancy_grid = Some(grid.clone());
+
+        // 4. Texture creation
+        let mut color_image = egui::ColorImage::new([width, height], egui::Color32::TRANSPARENT);
+        for y in 0..height {
+            for x in 0..width {
+                let index = y * width + x;
+                let cell = &grid.data[index];
+                let prob = crate::slam::log_odds_to_probability(cell.log_odds);
+                
+                let color = if prob > map_info.occupied_thresh {
+                    egui::Color32::BLACK 
+                } else if prob < map_info.free_thresh {
+                    egui::Color32::WHITE
+                } else {
+                    egui::Color32::from_gray(128)
+                };
+                color_image[(x, y)] = color;
+            }
+        }
+
         self.nav_map_texture = Some(ctx.load_texture(
             "nav-map-texture",
             color_image,
             egui::TextureOptions::NEAREST,
         ));
 
-        // 4. Calculate map bounds
+        // 5. Calculate map bounds
         let resolution = map_info.resolution;
         let origin_x = map_info.origin[0];
         let origin_y = map_info.origin[1];
@@ -182,11 +271,11 @@ impl NavigationManager {
         let height_m = height as f32 * resolution;
 
         self.nav_map_bounds = Some(egui::Rect::from_min_size(
-            egui::pos2(origin_x, origin_y - height_m), // egui's y is down, map's y is up
+            egui::pos2(origin_x, origin_y - height_m), 
             egui::vec2(width_m, height_m),
         ));
 
-        // 5. Load trajectory.txt
+        // 6. Load trajectory.txt
         let trajectory_path = path.join("trajectory.txt");
         if let Ok(file) = fs::File::open(&trajectory_path) {
             let reader = BufReader::new(file);
@@ -211,7 +300,7 @@ impl NavigationManager {
         }
 
         Ok(format!(
-            "Successfully loaded navigation data from '{}'",
+            "Successfully loaded navigation data from '{}' (with high-precision reconstruction)",
             path.display()
         ))
     }
@@ -241,30 +330,24 @@ impl NavigationManager {
         }
 
         // --- Temporary Dummy Scan Injection ---
-        let dummy_scan_storage; // To keep the vec alive
+        let mut dummy_scan_storage; // To keep the vec alive
         let effective_scan = if self.config.debug_use_dummy_scan && latest_scan.is_empty() {
             // Generate a U-shape (corridor) dummy scan
             let mut dummy = Vec::new();
-
-            // Forward wall at x = 5.0m
             for i in 0..100 {
-                let y = (i as f32 / 100.0) * 1.6 - 0.8; // -0.8 to 0.8
+                let y = (i as f32 / 100.0) * 1.6 - 0.8; 
                 let x = 5.0;
                 let r = (x * x + y * y).sqrt();
                 let theta = y.atan2(x);
-                // (x, y, r, theta, feature, nx, ny, corner)
                 dummy.push((x, y, r, theta, 0.0, 0.0, 0.0, 0.0));
             }
-
-            // Left wall at y = 0.8m
             for i in 0..100 {
-                let x = (i as f32 / 100.0) * 5.0; // 0.0 to 5.0
+                let x = (i as f32 / 100.0) * 5.0; 
                 let y = 0.8;
                 let r = (x * x + y * y).sqrt();
                 let theta = y.atan2(x);
                 dummy.push((x, y, r, theta, 0.0, 0.0, 0.0, 0.0));
             }
-
             // Right wall at y = -0.8m
             for i in 0..100 {
                 let x = (i as f32 / 100.0) * 5.0; // 0.0 to 5.0
@@ -273,8 +356,20 @@ impl NavigationManager {
                 let theta = y.atan2(x);
                 dummy.push((x, y, r, theta, 0.0, 0.0, 0.0, 0.0));
             }
+            
+            // Sort by theta to simulate scan order for feature extraction
+            dummy.sort_by(|a, b| a.3.partial_cmp(&b.3).unwrap_or(std::cmp::Ordering::Equal));
 
-            dummy_scan_storage = dummy;
+            dummy_scan_storage = compute_features(&dummy);
+            
+            // Force artificial features at corners for visualization check
+            if !dummy_scan_storage.is_empty() {
+                let len = dummy_scan_storage.len();
+                // Indices around 100 and 200 are corners (since we pushed 100 points per wall)
+                if len > 100 { dummy_scan_storage[99].4 = 1.0; dummy_scan_storage[100].4 = 1.0; }
+                if len > 200 { dummy_scan_storage[199].4 = 1.0; dummy_scan_storage[200].4 = 1.0; }
+            }
+
             &dummy_scan_storage[..]
         } else {
             latest_scan
@@ -286,23 +381,24 @@ impl NavigationManager {
 
         // If we are localizing and haven't captured the initial scan yet
         if self.is_localizing && self.initial_scan.is_none() && !effective_scan.is_empty() {
-            // Capture initial scan (convert to Point2)
-            let points: Vec<Point2<f32>> = effective_scan
+            let points: Vec<NavScanPoint> = effective_scan
                 .iter()
-                .map(|p| Point2::new(p.0, p.1))
+                .map(|p| NavScanPoint {
+                    pos: Point2::new(p.0, p.1),
+                    normal: Vector2::new(p.5, p.6),
+                    feature: p.4,
+                })
                 .collect();
 
-            // Initialize DE solver
             self.de_solver.init(self.current_robot_pose, None);
             self.initial_scan = Some(points);
         }
 
         if self.is_localizing {
-            // --- Localization Mode (Initial Scan Matching) ---
+            // --- Localization Mode ---
             if let (Some(scan), Some(grid), Some(info)) =
                 (&self.initial_scan, &self.occupancy_grid, &self.map_info)
             {
-                // Throttle DE updates to observe convergence
                 if self.de_frame_counter % self.config.initial_localization_interval_frames == 0 {
                     self.de_solver
                         .step(grid, scan, info.resolution, info.origin);
@@ -310,50 +406,43 @@ impl NavigationManager {
 
                     if self.de_solver.is_converged {
                         self.is_localizing = false;
-                        self.de_frame_counter = 0; // Reset counter for tracking
+                        self.de_frame_counter = 0; 
                         self.converged_message_timer = 180;
                     }
                 }
                 self.de_frame_counter += 1;
             }
             self.last_odom = Some(current_odom);
-            None // No motor command during initialization
+            None
         } else {
-            // --- Tracking Mode (Odometry + Periodic Correction) ---
-
-            // 1. Update pose with Odometry
+            // --- Tracking Mode ---
             if let Some((last_x, last_y, last_theta)) = self.last_odom {
                 let (curr_x, curr_y, curr_theta) = current_odom;
-
                 let delta_x_global = curr_x - last_x;
                 let delta_y_global = curr_y - last_y;
                 let delta_theta = curr_theta - last_theta;
-
                 let cos_theta = last_theta.cos();
                 let sin_theta = last_theta.sin();
                 let delta_x_local = delta_x_global * cos_theta + delta_y_global * sin_theta;
                 let delta_y_local = -delta_x_global * sin_theta + delta_y_global * cos_theta;
-
-                let movement = Isometry2::new(
-                    nalgebra::Vector2::new(delta_x_local, delta_y_local),
-                    delta_theta,
-                );
+                let movement = Isometry2::new(nalgebra::Vector2::new(delta_x_local, delta_y_local), delta_theta);
                 self.current_robot_pose *= movement;
             }
             self.last_odom = Some(current_odom);
 
-            // 2. Periodic DE Correction
             if self.de_frame_counter % self.config.tracking_update_interval_frames == 0
                 && !effective_scan.is_empty()
             {
                 if let (Some(grid), Some(info)) = (&self.occupancy_grid, &self.map_info) {
-                    // Use latest scan for correction
-                    let points: Vec<Point2<f32>> = effective_scan
+                    let points: Vec<NavScanPoint> = effective_scan
                         .iter()
-                        .map(|p| Point2::new(p.0, p.1))
+                        .map(|p| NavScanPoint {
+                            pos: Point2::new(p.0, p.1),
+                            normal: Vector2::new(p.5, p.6),
+                            feature: p.4,
+                        })
                         .collect();
 
-                    // Re-initialize solver around current pose with TRACKING params
                     self.de_solver.init(
                         self.current_robot_pose,
                         Some((
@@ -364,23 +453,17 @@ impl NavigationManager {
                         )),
                     );
 
-                    // Run DE until convergence (instantaneous correction)
                     while !self.de_solver.is_converged {
                         self.de_solver
                             .step(grid, &points, info.resolution, info.origin);
                     }
-
-                    // Apply corrected pose
                     self.current_robot_pose = self.de_solver.get_best_pose();
                 }
             }
             self.de_frame_counter += 1;
             
-            // 3. Autonomous Navigation (Pure Pursuit)
             if self.is_autonomous && !self.is_localizing {
-                // Call Pure Pursuit logic
                 use crate::navigation::pure_pursuit;
-                
                 pure_pursuit::compute_command(
                     &self.current_robot_pose,
                     &self.nav_trajectory_points,

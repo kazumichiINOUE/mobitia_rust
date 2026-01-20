@@ -1,6 +1,6 @@
 use crate::config::SlamConfig;
 use crate::slam::OccupancyGrid;
-use nalgebra::{Isometry2, Point2, Rotation2, Translation2, Vector3};
+use nalgebra::{Isometry2, Point2, Rotation2, Translation2, Vector2, Vector3};
 use rand::seq::SliceRandom;
 use rand::Rng;
 
@@ -25,8 +25,6 @@ impl GaussianKernel {
             }
         }
 
-        // Normalize?
-        // In original SLAM, it was normalized. Let's keep it.
         for val in kernel.iter_mut() {
             *val /= sum_val;
         }
@@ -44,13 +42,19 @@ pub struct DeTinySolver {
     pub generation: usize,
     pub is_initialized: bool,
     pub is_converged: bool,
-
-    // Dynamic parameters for tracking
+    
     current_population_size: usize,
     current_generations: usize,
-
+    
     gaussian_kernel: GaussianKernel,
     rng: rand::rngs::ThreadRng,
+}
+
+/// A lightweight scan point structure for navigation localization
+pub struct NavScanPoint {
+    pub pos: Point2<f32>,
+    pub normal: Vector2<f32>,
+    pub feature: f32, // edge_ness
 }
 
 impl DeTinySolver {
@@ -62,7 +66,7 @@ impl DeTinySolver {
             ),
             current_population_size: config.population_size,
             current_generations: config.generations,
-            config: config.clone(), // Clone config to keep ownership
+            config: config.clone(),
             population: Vec::new(),
             scores: Vec::new(),
             best_pose_params: Vector3::zeros(),
@@ -74,24 +78,13 @@ impl DeTinySolver {
         }
     }
 
-    /// Initializes the population around the initial pose guess.
-    /// Optional override_params: (wxy, wa_deg, pop_size, generations)
-    pub fn init(
-        &mut self,
-        initial_pose: Isometry2<f32>,
-        override_params: Option<(f32, f32, usize, usize)>,
-    ) {
+    pub fn init(&mut self, initial_pose: Isometry2<f32>, override_params: Option<(f32, f32, usize, usize)>) {
         let (wxy, wa, population_size, generations) = if let Some((w, a, p, g)) = override_params {
             (w, a.to_radians(), p, g)
         } else {
-            (
-                self.config.wxy,
-                self.config.wa_degrees.to_radians(),
-                self.config.population_size,
-                self.config.generations,
-            )
+            (self.config.wxy, self.config.wa_degrees.to_radians(), self.config.population_size, self.config.generations)
         };
-
+        
         self.current_population_size = population_size;
         self.current_generations = generations;
 
@@ -101,12 +94,8 @@ impl DeTinySolver {
 
         self.population.clear();
         self.population.reserve(population_size);
-
-        // 1. Always include the initial guess itself
-        self.population
-            .push(Vector3::new(center_x, center_y, center_a));
-
-        // 2. Fill the rest with random samples around the center
+        self.population.push(Vector3::new(center_x, center_y, center_a));
+        
         for _ in 1..population_size {
             let x = self.rng.gen_range(-wxy..=wxy) + center_x;
             let y = self.rng.gen_range(-wxy..=wxy) + center_y;
@@ -121,11 +110,10 @@ impl DeTinySolver {
         self.is_converged = false;
     }
 
-    /// Advances the DE optimization by one generation.
     pub fn step(
         &mut self,
         gmap: &OccupancyGrid,
-        points: &[Point2<f32>],
+        points: &[NavScanPoint],
         resolution: f32,
         origin: [f32; 3],
     ) {
@@ -134,14 +122,13 @@ impl DeTinySolver {
         }
 
         let population_size = self.current_population_size;
-
-        // Generation 0: Evaluate the initial population
+        
         if self.generation == 0 {
             for i in 0..population_size {
                 let pose_vec = self.population[i];
                 let pose = self.vec_to_pose(pose_vec);
                 self.scores[i] = self.evaluate(gmap, points, &pose, resolution, origin);
-
+                
                 if self.scores[i] > self.best_score {
                     self.best_score = self.scores[i];
                     self.best_pose_params = pose_vec;
@@ -151,19 +138,13 @@ impl DeTinySolver {
             return;
         }
 
-        // DE Evolution: Mutation, Crossover, Selection
         let f_de = self.config.f_de;
         let cr = self.config.cr;
 
         for i in 0..population_size {
-            // Select 3 random distinct candidates
             let mut candidates: Vec<usize> = (0..population_size).filter(|&idx| idx != i).collect();
-            // Since population size can be small, handle the case where we don't have enough candidates
-            if candidates.len() < 3 {
-                // Not enough population for DE mutation, skip or use just random mutation
-                continue;
-            }
-
+            if candidates.len() < 3 { continue; }
+            
             candidates.shuffle(&mut self.rng);
             let r1 = candidates[0];
             let r2 = candidates[1];
@@ -173,11 +154,9 @@ impl DeTinySolver {
             let p_r2 = &self.population[r2];
             let p_r3 = &self.population[r3];
 
-            // Mutation
             let vx = p_r1.x + f_de * (p_r2.x - p_r3.x);
             let vy = p_r1.y + f_de * (p_r2.y - p_r3.y);
 
-            // Angular mutation
             let ax1 = p_r1.z.cos();
             let ay1 = p_r1.z.sin();
             let ax2 = p_r2.z.cos();
@@ -192,7 +171,6 @@ impl DeTinySolver {
             let mut trial_vec = self.population[i];
             let j_rand = self.rng.gen_range(0..3);
 
-            // Crossover
             if self.rng.gen::<f32>() < cr || j_rand == 0 {
                 trial_vec.x = vx;
             }
@@ -203,7 +181,6 @@ impl DeTinySolver {
                 trial_vec.z = va;
             }
 
-            // Selection
             let pose_trial = self.vec_to_pose(trial_vec);
             let score_trial = self.evaluate(gmap, points, &pose_trial, resolution, origin);
 
@@ -233,11 +210,11 @@ impl DeTinySolver {
         Isometry2::from_parts(translation, rotation.into())
     }
 
-    /// Evaluates a pose using Gaussian-weighted matching score.
+    /// Advanced evaluation using occupancy, normals, and features.
     fn evaluate(
         &self,
         gmap: &OccupancyGrid,
-        points: &[Point2<f32>],
+        points: &[NavScanPoint],
         pose: &Isometry2<f32>,
         resolution: f32,
         origin: [f32; 3],
@@ -247,24 +224,25 @@ impl DeTinySolver {
         let height = gmap.height as i32;
         let origin_x = origin[0];
         let origin_y = origin[1];
-
+        
         let kernel_radius = self.config.gaussian_kernel_radius;
         let kernel_size = (2 * kernel_radius + 1) as usize;
 
-        for p_local in points {
-            let p_world = pose * p_local;
+        // Weights from config
+        let pos_w = self.config.position_score_weight;
+        let feat_w = self.config.feature_score_weight;
+        let norm_w = self.config.normal_alignment_score_weight;
 
-            // Coordinate Transformation: World -> Grid
-            // Origin is Top-Left (North-West)
-            // World Y is Up (North)
-            // Grid Y (Row) is Down (South), so gy = (origin_y - world_y) / res
+        for p_nav in points {
+            let p_world = pose * p_nav.pos;
+            let normal_world = pose.rotation * p_nav.normal;
 
+            // Transform World Coordinates to Grid Index
             let gx = ((p_world.x - origin_x) / resolution).floor() as i32;
             let gy = ((origin_y - p_world.y) / resolution).floor() as i32;
 
             let mut point_score = 0.0;
-
-            // Search neighbors with Gaussian kernel
+            
             for dy in -kernel_radius..=kernel_radius {
                 for dx in -kernel_radius..=kernel_radius {
                     let map_x = gx + dx;
@@ -272,35 +250,37 @@ impl DeTinySolver {
 
                     if map_x >= 0 && map_x < width && map_y >= 0 && map_y < height {
                         let map_idx = (map_y as usize) * gmap.width + (map_x as usize);
-                        let cell_data = gmap.data[map_idx];
-
-                        if cell_data.log_odds > 0.0 {
-                            // Calculate distance between scan point and the center of the occupied cell
-                            // Grid X increases Right -> World X = origin_x + (x + 0.5) * res
-                            // Grid Y increases Down  -> World Y = origin_y - (y + 0.5) * res (Note the minus!)
-
+                        let cell = gmap.data[map_idx];
+                        
+                        if cell.log_odds > 0.0 {
                             let cell_world_x = origin_x + (map_x as f32 + 0.5) * resolution;
                             let cell_world_y = origin_y - (map_y as f32 + 0.5) * resolution;
                             let cell_center = Point2::new(cell_world_x, cell_world_y);
 
                             let dist_sq = (p_world - cell_center).norm_squared();
-
+                            
                             if dist_sq < self.config.max_matching_dist.powi(2) {
-                                // Simple Gaussian score based on distance
-                                // Note: Using match_sigma from config, not just kernel weights
-                                let distance_weight =
-                                    (-dist_sq / (2.0 * self.config.match_sigma.powi(2))).exp();
-
-                                // Also use the pre-computed kernel weight for the grid offset
+                                // 1. Position score (Gaussian distance penalty)
+                                let distance_penalty = (-dist_sq / (2.0 * self.config.match_sigma.powi(2))).exp();
+                                
+                                // 2. Normal alignment score
+                                let cell_normal = Vector2::new(cell.normal_x as f32, cell.normal_y as f32);
+                                let normal_alignment = (normal_world.dot(&cell_normal)).abs(); // Use abs for bi-directional walls
+                                
+                                // 3. Feature score (edge_ness similarity)
+                                let feature_similarity = 1.0 - (p_nav.feature as f64 - cell.edge_ness).abs();
+                                
+                                // Pre-computed kernel weight
                                 let kernel_idx = ((dy + kernel_radius) as usize) * kernel_size
                                     + ((dx + kernel_radius) as usize);
                                 let kernel_weight = self.gaussian_kernel.kernel[kernel_idx];
+                                
+                                let combined_score = pos_w * distance_penalty as f64 
+                                                   + norm_w * normal_alignment as f64
+                                                   + feat_w * feature_similarity;
 
-                                // Probability from log_odds (simplified: occupied=1.0)
-                                // or use exact prob: 1.0 - 1.0 / (1.0 + exp(log_odds))
-                                let prob = 1.0 - 1.0 / (1.0 + cell_data.log_odds.exp());
-
-                                point_score += prob * distance_weight as f64 * kernel_weight;
+                                let prob = 1.0 - 1.0 / (1.0 + cell.log_odds.exp());
+                                point_score += prob * combined_score * kernel_weight;
                             }
                         }
                     }

@@ -154,6 +154,8 @@ pub struct NavConfig {
     pub target_velocity: f32,
     #[serde(default = "default_goal_tolerance")]
     pub goal_tolerance: f32,
+    #[serde(default)]
+    pub debug_show_corner_cells: bool,
 }
 
 fn default_initial_pose() -> [f32; 3] {
@@ -210,6 +212,7 @@ impl Default for NavConfig {
             lookahead_distance: default_lookahead_distance(),
             target_velocity: default_target_velocity(),
             goal_tolerance: default_goal_tolerance(),
+            debug_show_corner_cells: false,
         }
     }
 }

@@ -172,8 +172,8 @@ max_angular_velocity = 1.0 # rad/s
 
 [nav]
 # Initial pose for navigation mode [x, y, angle_degrees]
-initial_pose = [0.0, 0.0, 0.0]
-debug_use_dummy_scan = false
+initial_pose = [-2.0, 0.0, 0.0]
+debug_use_dummy_scan = true
 initial_localization_interval_frames = 10
 tracking_update_interval_frames = 1
 tracking_wxy = 0.05
@@ -183,3 +183,4 @@ tracking_generations = 5
 lookahead_distance = 1.0
 target_velocity = 0.3
 goal_tolerance = 0.2
+debug_show_corner_cells = true
