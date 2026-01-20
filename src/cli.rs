@@ -449,9 +449,16 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
         }
         Commands::Quit => {
             app.command_history.push(ConsoleOutputEntry {
-                text: "Shutting down...".to_string(),
+                text: "Shutting down (Turning off motors)...".to_string(),
                 group_id: current_group_id,
             });
+
+            if app.motor_thread_active {
+                let _ = app
+                    .motor_command_sender
+                    .send(crate::motors::MotorCommand::ServoOff);
+            }
+
             app.is_shutting_down = true;
             app.slam_command_sender
                 .send(crate::app::SlamThreadCommand::Shutdown)
