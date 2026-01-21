@@ -103,7 +103,10 @@ impl NavScreen {
 
         // --- Debug: Show Corner Cells ---
         if navigation_manager.config.debug_show_corner_cells {
-            if let (Some(grid), Some(info)) = (&navigation_manager.occupancy_grid, &navigation_manager.map_info) {
+            if let (Some(grid), Some(info)) = (
+                &navigation_manager.occupancy_grid,
+                &navigation_manager.map_info,
+            ) {
                 let resolution = info.resolution;
                 let origin_x = info.origin[0];
                 let origin_y = info.origin[1];
@@ -117,13 +120,13 @@ impl NavScreen {
                             // Grid to World (Top-Left Origin)
                             let wx = origin_x + (x as f32 + 0.5) * resolution;
                             let wy = origin_y - (y as f32 + 0.5) * resolution;
-                            
+
                             let screen_pos = to_screen.transform_pos(egui::pos2(wx, wy));
                             if rect.contains(screen_pos) {
                                 painter.rect_filled(
                                     egui::Rect::from_center_size(screen_pos, egui::vec2(5.0, 5.0)),
                                     0.0,
-                                    egui::Color32::BLUE
+                                    egui::Color32::BLUE,
                                 );
                             }
                         }

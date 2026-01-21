@@ -42,10 +42,10 @@ pub struct DeTinySolver {
     pub generation: usize,
     pub is_initialized: bool,
     pub is_converged: bool,
-    
+
     current_population_size: usize,
     current_generations: usize,
-    
+
     gaussian_kernel: GaussianKernel,
     rng: rand::rngs::ThreadRng,
 }
@@ -78,13 +78,22 @@ impl DeTinySolver {
         }
     }
 
-    pub fn init(&mut self, initial_pose: Isometry2<f32>, override_params: Option<(f32, f32, usize, usize)>) {
+    pub fn init(
+        &mut self,
+        initial_pose: Isometry2<f32>,
+        override_params: Option<(f32, f32, usize, usize)>,
+    ) {
         let (wxy, wa, population_size, generations) = if let Some((w, a, p, g)) = override_params {
             (w, a.to_radians(), p, g)
         } else {
-            (self.config.wxy, self.config.wa_degrees.to_radians(), self.config.population_size, self.config.generations)
+            (
+                self.config.wxy,
+                self.config.wa_degrees.to_radians(),
+                self.config.population_size,
+                self.config.generations,
+            )
         };
-        
+
         self.current_population_size = population_size;
         self.current_generations = generations;
 
@@ -96,10 +105,11 @@ impl DeTinySolver {
 
         self.population.clear();
         self.population.reserve(population_size);
-        
+
         // 1. Always include the initial guess itself
-        self.population.push(Vector3::new(center_x, center_y, center_a));
-        
+        self.population
+            .push(Vector3::new(center_x, center_y, center_a));
+
         // 2. Fill the rest with random samples around the center
         for _ in 1..population_size {
             let x = self.rng.gen_range(-wxy..=wxy) + center_x;
@@ -135,13 +145,13 @@ impl DeTinySolver {
         }
 
         let population_size = self.current_population_size;
-        
+
         if self.generation == 0 {
             for i in 0..population_size {
                 let pose_vec = self.population[i];
                 let pose = self.vec_to_pose(pose_vec);
                 self.scores[i] = self.evaluate(gmap, points, &pose, resolution, origin);
-                
+
                 if self.scores[i] > self.best_score {
                     self.best_score = self.scores[i];
                     self.best_pose_params = pose_vec;
@@ -156,8 +166,10 @@ impl DeTinySolver {
 
         for i in 0..population_size {
             let mut candidates: Vec<usize> = (0..population_size).filter(|&idx| idx != i).collect();
-            if candidates.len() < 3 { continue; }
-            
+            if candidates.len() < 3 {
+                continue;
+            }
+
             candidates.shuffle(&mut self.rng);
             let r1 = candidates[0];
             let r2 = candidates[1];
@@ -237,7 +249,7 @@ impl DeTinySolver {
         let height = gmap.height as i32;
         let origin_x = origin[0];
         let origin_y = origin[1];
-        
+
         let kernel_radius = self.config.gaussian_kernel_radius;
         let kernel_size = (2 * kernel_radius + 1) as usize;
 
@@ -255,7 +267,7 @@ impl DeTinySolver {
             let gy = ((origin_y - p_world.y) / resolution).floor() as i32;
 
             let mut point_score = 0.0;
-            
+
             for dy in -kernel_radius..=kernel_radius {
                 for dx in -kernel_radius..=kernel_radius {
                     let map_x = gx + dx;
@@ -264,33 +276,36 @@ impl DeTinySolver {
                     if map_x >= 0 && map_x < width && map_y >= 0 && map_y < height {
                         let map_idx = (map_y as usize) * gmap.width + (map_x as usize);
                         let cell = gmap.data[map_idx];
-                        
+
                         if cell.log_odds > 0.0 {
                             let cell_world_x = origin_x + (map_x as f32 + 0.5) * resolution;
                             let cell_world_y = origin_y - (map_y as f32 + 0.5) * resolution;
                             let cell_center = Point2::new(cell_world_x, cell_world_y);
 
                             let dist_sq = (p_world - cell_center).norm_squared();
-                            
+
                             if dist_sq < self.config.max_matching_dist.powi(2) {
                                 // 1. Position score (Gaussian distance penalty)
-                                let distance_penalty = (-dist_sq / (2.0 * self.config.match_sigma.powi(2))).exp();
-                                
+                                let distance_penalty =
+                                    (-dist_sq / (2.0 * self.config.match_sigma.powi(2))).exp();
+
                                 // 2. Normal alignment score
-                                let cell_normal = Vector2::new(cell.normal_x as f32, cell.normal_y as f32);
+                                let cell_normal =
+                                    Vector2::new(cell.normal_x as f32, cell.normal_y as f32);
                                 let normal_alignment = (normal_world.dot(&cell_normal)).abs(); // Use abs for bi-directional walls
-                                
+
                                 // 3. Feature score (edge_ness similarity)
-                                let feature_similarity = 1.0 - (p_nav.feature as f64 - cell.edge_ness).abs();
-                                
+                                let feature_similarity =
+                                    1.0 - (p_nav.feature as f64 - cell.edge_ness).abs();
+
                                 // Pre-computed kernel weight
                                 let kernel_idx = ((dy + kernel_radius) as usize) * kernel_size
                                     + ((dx + kernel_radius) as usize);
                                 let kernel_weight = self.gaussian_kernel.kernel[kernel_idx];
-                                
-                                let combined_score = pos_w * distance_penalty as f64 
-                                                   + norm_w * normal_alignment as f64
-                                                   + feat_w * feature_similarity;
+
+                                let combined_score = pos_w * distance_penalty as f64
+                                    + norm_w * normal_alignment as f64
+                                    + feat_w * feature_similarity;
 
                                 let prob = 1.0 - 1.0 / (1.0 + cell.log_odds.exp());
                                 point_score += prob * combined_score * kernel_weight;

@@ -937,7 +937,10 @@ pub fn handle_command(app: &mut MyApp, ctx: &egui::Context, cli: Cli) {
                     }
                     NavCommands::Start { path } => {
                         app.command_history.push(ConsoleOutputEntry {
-                            text: format!("Starting navigation with data from '{}'...", path.display()),
+                            text: format!(
+                                "Starting navigation with data from '{}'...",
+                                path.display()
+                            ),
                             group_id: current_group_id,
                         });
                         app.load_nav_data(&path, ctx, true);

@@ -134,7 +134,7 @@ impl NavigationManager {
         for (x, y, pixel) in luma_img.enumerate_pixels() {
             let value = pixel.0[0];
             let prob = if map_info.negate == 0 {
-                (255.0 - value as f64) / 255.0 
+                (255.0 - value as f64) / 255.0
             } else {
                 value as f64 / 255.0
             };
@@ -154,8 +154,11 @@ impl NavigationManager {
         // --- 3. Submap Loading and Grid Reconstruction (Feature Enrichment) ---
         let submaps_dir = path.join("submaps");
         if submaps_dir.exists() && submaps_dir.is_dir() {
-            println!("Loading submaps for feature enrichment from: {}", submaps_dir.display());
-            
+            println!(
+                "Loading submaps for feature enrichment from: {}",
+                submaps_dir.display()
+            );
+
             let mut submap_paths = Vec::new();
             if let Ok(entries) = std::fs::read_dir(&submaps_dir) {
                 for entry in entries.flatten() {
@@ -164,7 +167,7 @@ impl NavigationManager {
                     }
                 }
             }
-            submap_paths.sort(); 
+            submap_paths.sort();
 
             for submap_path in submap_paths {
                 let info_path = submap_path.join("info.yaml");
@@ -187,32 +190,36 @@ impl NavigationManager {
 
                 let submap_rotation = Rotation2::new(submap_meta.pose_theta);
                 let submap_translation = Translation2::new(submap_meta.pose_x, submap_meta.pose_y);
-                let submap_global_pose = Isometry2::from_parts(submap_translation, submap_rotation.into());
+                let submap_global_pose =
+                    Isometry2::from_parts(submap_translation, submap_rotation.into());
 
                 for scan in scans_data {
                     let rel_rotation = Rotation2::new(scan.relative_pose.theta);
-                    let rel_translation = Translation2::new(scan.relative_pose.x, scan.relative_pose.y);
+                    let rel_translation =
+                        Translation2::new(scan.relative_pose.x, scan.relative_pose.y);
                     let relative_pose = Isometry2::from_parts(rel_translation, rel_rotation.into());
-                    
+
                     let robot_global_pose = submap_global_pose * relative_pose;
 
                     for p in scan.scan_points {
                         let p_local = Point2::new(p.x, p.y);
                         let p_global = robot_global_pose * p_local;
-                        
-                        let gx = ((p_global.x - map_info.origin[0]) / map_info.resolution).floor() as i32;
-                        let gy = ((map_info.origin[1] - p_global.y) / map_info.resolution).floor() as i32;
+
+                        let gx = ((p_global.x - map_info.origin[0]) / map_info.resolution).floor()
+                            as i32;
+                        let gy = ((map_info.origin[1] - p_global.y) / map_info.resolution).floor()
+                            as i32;
 
                         if gx >= 0 && gx < width as i32 && gy >= 0 && gy < height as i32 {
                             let idx = (gy as usize) * width + (gx as usize);
                             let cell = &mut grid.data[idx];
 
-                            let normal_local = Vector2::new(p.nx, p.ny); 
+                            let normal_local = Vector2::new(p.nx, p.ny);
                             let normal_global = robot_global_pose.rotation * normal_local;
-                            
+
                             cell.edge_ness = (cell.edge_ness * 0.7) + (p.feature as f64 * 0.3);
                             cell.corner_ness = (cell.corner_ness * 0.7) + (p.corner as f64 * 0.3);
-                            
+
                             // Debug print
                             if p.feature > 0.5 {
                                 println!("DEBUG: Loaded high edge feature ({:.3}) at Grid({}, {}). Current cell edge_ness: {:.3}", p.feature, gx, gy, cell.edge_ness);
@@ -220,14 +227,16 @@ impl NavigationManager {
 
                             cell.normal_x = (cell.normal_x * 0.7) + (normal_global.x as f64 * 0.3);
                             cell.normal_y = (cell.normal_y * 0.7) + (normal_global.y as f64 * 0.3);
-                            
+
                             let len = (cell.normal_x.powi(2) + cell.normal_y.powi(2)).sqrt();
                             if len > 1e-9 {
                                 cell.normal_x /= len;
                                 cell.normal_y /= len;
                             }
-                            
-                            if cell.log_odds < 2.0 { cell.log_odds += 0.5; }
+
+                            if cell.log_odds < 2.0 {
+                                cell.log_odds += 0.5;
+                            }
                         }
                     }
                 }
@@ -243,9 +252,9 @@ impl NavigationManager {
                 let index = y * width + x;
                 let cell = &grid.data[index];
                 let prob = crate::slam::log_odds_to_probability(cell.log_odds);
-                
+
                 let color = if prob > map_info.occupied_thresh {
-                    egui::Color32::BLACK 
+                    egui::Color32::BLACK
                 } else if prob < map_info.free_thresh {
                     egui::Color32::WHITE
                 } else {
@@ -269,7 +278,7 @@ impl NavigationManager {
         let height_m = height as f32 * resolution;
 
         self.nav_map_bounds = Some(egui::Rect::from_min_size(
-            egui::pos2(origin_x, origin_y - height_m), 
+            egui::pos2(origin_x, origin_y - height_m),
             egui::vec2(width_m, height_m),
         ));
 
@@ -333,14 +342,14 @@ impl NavigationManager {
             // Generate a U-shape (corridor) dummy scan
             let mut dummy = Vec::new();
             for i in 0..100 {
-                let y = (i as f32 / 100.0) * 1.6 - 0.8; 
+                let y = (i as f32 / 100.0) * 1.6 - 0.8;
                 let x = 5.0;
                 let r = (x * x + y * y).sqrt();
                 let theta = y.atan2(x);
                 dummy.push((x, y, r, theta, 0.0, 0.0, 0.0, 0.0));
             }
             for i in 0..100 {
-                let x = (i as f32 / 100.0) * 5.0; 
+                let x = (i as f32 / 100.0) * 5.0;
                 let y = 0.8;
                 let r = (x * x + y * y).sqrt();
                 let theta = y.atan2(x);
@@ -354,18 +363,24 @@ impl NavigationManager {
                 let theta = y.atan2(x);
                 dummy.push((x, y, r, theta, 0.0, 0.0, 0.0, 0.0));
             }
-            
+
             // Sort by theta to simulate scan order for feature extraction
             dummy.sort_by(|a, b| a.3.partial_cmp(&b.3).unwrap_or(std::cmp::Ordering::Equal));
 
             dummy_scan_storage = compute_features(&dummy);
-            
+
             // Force artificial features at corners for visualization check
             if !dummy_scan_storage.is_empty() {
                 let len = dummy_scan_storage.len();
                 // Indices around 100 and 200 are corners (since we pushed 100 points per wall)
-                if len > 100 { dummy_scan_storage[99].4 = 1.0; dummy_scan_storage[100].4 = 1.0; }
-                if len > 200 { dummy_scan_storage[199].4 = 1.0; dummy_scan_storage[200].4 = 1.0; }
+                if len > 100 {
+                    dummy_scan_storage[99].4 = 1.0;
+                    dummy_scan_storage[100].4 = 1.0;
+                }
+                if len > 200 {
+                    dummy_scan_storage[199].4 = 1.0;
+                    dummy_scan_storage[200].4 = 1.0;
+                }
             }
 
             &dummy_scan_storage[..]
@@ -397,16 +412,16 @@ impl NavigationManager {
             if let (Some(scan), Some(grid), Some(info)) =
                 (&self.initial_scan, &self.occupancy_grid, &self.map_info)
             {
-                                // Throttle DE updates to observe convergence
-                                if self.de_frame_counter % self.config.initial_localization_interval_frames == 0 {
-                                    self.de_solver
-                                        .step(grid, scan, info.resolution, info.origin);
-                                    //println!("DEBUG: Step executed. Gen: {}", self.de_solver.generation);
-                                    self.current_robot_pose = self.de_solver.get_best_pose();
-                
-                                    if self.de_solver.is_converged {
-                                        self.is_localizing = false;
-                        self.de_frame_counter = 0; 
+                // Throttle DE updates to observe convergence
+                if self.de_frame_counter % self.config.initial_localization_interval_frames == 0 {
+                    self.de_solver
+                        .step(grid, scan, info.resolution, info.origin);
+                    //println!("DEBUG: Step executed. Gen: {}", self.de_solver.generation);
+                    self.current_robot_pose = self.de_solver.get_best_pose();
+
+                    if self.de_solver.is_converged {
+                        self.is_localizing = false;
+                        self.de_frame_counter = 0;
                         self.converged_message_timer = 180;
                     }
                 }
@@ -425,7 +440,10 @@ impl NavigationManager {
                 let sin_theta = last_theta.sin();
                 let delta_x_local = delta_x_global * cos_theta + delta_y_global * sin_theta;
                 let delta_y_local = -delta_x_global * sin_theta + delta_y_global * cos_theta;
-                let movement = Isometry2::new(nalgebra::Vector2::new(delta_x_local, delta_y_local), delta_theta);
+                let movement = Isometry2::new(
+                    nalgebra::Vector2::new(delta_x_local, delta_y_local),
+                    delta_theta,
+                );
                 self.current_robot_pose *= movement;
             }
             self.last_odom = Some(current_odom);
@@ -461,7 +479,7 @@ impl NavigationManager {
                 }
             }
             self.de_frame_counter += 1;
-            
+
             if self.is_autonomous && !self.is_localizing {
                 use crate::navigation::pure_pursuit;
                 pure_pursuit::compute_command(
