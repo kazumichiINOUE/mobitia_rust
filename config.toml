@@ -184,7 +184,10 @@ lookahead_distance = 1.0
 target_velocity = 0.3
 goal_tolerance = 0.2
 debug_show_corner_cells = true
+lidar_avoid_dist = 0.5
+collision_check_predict_time = 1.0
 
 [robot]
-width = 1.0
-length = 1.2
+width = 0.6
+length = 0.6
+min_mapping_dist = 0.5

@@ -134,6 +134,7 @@ impl Default for MotorConfig {
 pub struct RobotConfig {
     pub width: f32,
     pub length: f32,
+    pub min_mapping_dist: f32,
 }
 
 impl Default for RobotConfig {
@@ -141,6 +142,7 @@ impl Default for RobotConfig {
         Self {
             width: 0.4,
             length: 0.5,
+            min_mapping_dist: 0.3,
         }
     }
 }
@@ -172,6 +174,10 @@ pub struct NavConfig {
     pub goal_tolerance: f32,
     #[serde(default)]
     pub debug_show_corner_cells: bool,
+    #[serde(default = "default_lidar_avoid_dist")]
+    pub lidar_avoid_dist: f32,
+    #[serde(default = "default_collision_check_predict_time")]
+    pub collision_check_predict_time: f32,
 }
 
 fn default_initial_pose() -> [f32; 3] {
@@ -214,6 +220,14 @@ fn default_goal_tolerance() -> f32 {
     0.2
 }
 
+fn default_lidar_avoid_dist() -> f32 {
+    0.4
+}
+
+fn default_collision_check_predict_time() -> f32 {
+    1.0
+}
+
 impl Default for NavConfig {
     fn default() -> Self {
         Self {
@@ -229,6 +243,8 @@ impl Default for NavConfig {
             target_velocity: default_target_velocity(),
             goal_tolerance: default_goal_tolerance(),
             debug_show_corner_cells: false,
+            lidar_avoid_dist: default_lidar_avoid_dist(),
+            collision_check_predict_time: default_collision_check_predict_time(),
         }
     }
 }

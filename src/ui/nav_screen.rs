@@ -271,6 +271,23 @@ impl NavScreen {
             egui::Stroke::new(1.0, egui::Color32::GREEN),
         ));
 
+        // Predicted Footprint
+        if let Some(pred_pose) = navigation_manager.predicted_footprint_pose {
+            let corners_screen_pred: Vec<egui::Pos2> = corners_local
+                .iter()
+                .map(|p| {
+                    let world_p = pred_pose * p;
+                    to_screen.transform_pos(egui::pos2(world_p.x, world_p.y))
+                })
+                .collect();
+
+            painter.add(egui::Shape::convex_polygon(
+                corners_screen_pred,
+                egui::Color32::from_rgba_unmultiplied(0, 255, 255, 30), // Cyan, transparent
+                egui::Stroke::new(1.0, egui::Color32::from_rgb(0, 255, 255)), // Cyan outline
+            ));
+        }
+
         // Robot
         let robot_pos_on_screen = to_screen.transform_pos(egui::pos2(
             current_robot_pose.translation.x,

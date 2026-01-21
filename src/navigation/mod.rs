@@ -51,6 +51,7 @@ pub struct NavigationManager {
 
     // Autonomous Navigation
     pub is_autonomous: bool,
+    pub predicted_footprint_pose: Option<Isometry2<f32>>,
 
     pub config: NavConfig,
     pub robot_config: RobotConfig,
@@ -80,6 +81,7 @@ impl NavigationManager {
             viz_scan: Vec::new(),
             converged_message_timer: 0,
             is_autonomous: false,
+            predicted_footprint_pose: None,
             config,
             robot_config,
         }
@@ -204,6 +206,10 @@ impl NavigationManager {
                     let robot_global_pose = submap_global_pose * relative_pose;
 
                     for p in scan.scan_points {
+                        // Filter out points too close to the robot center (likely self-reflections)
+                        if (p.x * p.x + p.y * p.y).sqrt() < self.robot_config.min_mapping_dist {
+                            continue;
+                        }
                         let p_local = Point2::new(p.x, p.y);
                         let p_global = robot_global_pose * p_local;
 
@@ -327,6 +333,7 @@ impl NavigationManager {
         self.de_frame_counter = 0;
         self.viz_scan.clear();
         self.is_autonomous = false;
+        self.predicted_footprint_pose = None;
     }
 
     pub fn update(
@@ -496,7 +503,7 @@ impl NavigationManager {
                 // --- Footprint Prediction Check (Map-based) ---
                 if let Some((v, w)) = command {
                     // Predict future pose after dt seconds
-                    let dt = 1.0; // Lookahead time for collision check
+                    let dt = self.config.collision_check_predict_time; // Lookahead time for collision check
                     let current_yaw = self.current_robot_pose.rotation.angle();
                     
                     // Simple prediction (Constant Velocity Motion Model approximation)
@@ -509,15 +516,20 @@ impl NavigationManager {
                     
                     let pred_pose = Isometry2::new(nalgebra::Vector2::new(pred_x, pred_y), pred_yaw);
                     
+                    // Save for visualization
+                    self.predicted_footprint_pose = Some(pred_pose);
+
                     if self.check_footprint_collision(&pred_pose) {
                         println!("COLLISION PREDICTED (Map Footprint): Stopping.");
                         command = Some((0.0, 0.0));
                     }
+                } else {
+                    self.predicted_footprint_pose = None;
                 }
 
                 // --- Collision Avoidance Logic (LiDAR-based) ---
-                // User requirement: Check for points < 400mm within +/- 90 degrees (front 180 deg)
-                let avoid_dist_threshold = 0.4; // 400mm
+                // User requirement: Check for points < lidar_avoid_dist within +/- 90 degrees (front 180 deg)
+                let avoid_dist_threshold = self.config.lidar_avoid_dist;
                 let avoid_angle_threshold = 90.0_f32.to_radians();
 
                 let mut min_dist = f32::MAX;
@@ -580,6 +592,14 @@ impl NavigationManager {
         }
     }
 
+    fn is_point_inside_current_footprint(&self, p: &Point2<f32>) -> bool {
+        let local_p = self.current_robot_pose.inverse() * p;
+        let half_w = self.robot_config.width / 2.0;
+        let half_l = self.robot_config.length / 2.0;
+        // Use a small margin to handle resolution artifacts and blobs
+        local_p.x.abs() <= (half_l + 0.05) && local_p.y.abs() <= (half_w + 0.05)
+    }
+
     fn check_footprint_collision(&self, pose: &Isometry2<f32>) -> bool {
         if let (Some(grid), Some(map_info)) = (&self.occupancy_grid, &self.map_info) {
             let w = self.robot_config.width;
@@ -623,7 +643,18 @@ impl NavigationManager {
 
                     if gx >= 0 && gx < grid.width as isize && gy >= 0 && gy < grid.height as isize {
                         let idx = (gy as usize) * grid.width + (gx as usize);
-                        if grid.data[idx].log_odds > 0.0 {
+                        let log_odds = grid.data[idx].log_odds;
+                        if log_odds > 2.0 {
+                            // SELF-FILTER: Ignore points that are already inside our current footprint.
+                            // This prevents colliding with "phantom" points created by the robot itself.
+                            if self.is_point_inside_current_footprint(&p) {
+                                continue;
+                            }
+
+                            println!(
+                                "COLLISION DETECTED at Grid({}, {}), World({:.3}, {:.3}), LogOdds: {:.2}",
+                                gx, gy, p.x, p.y, log_odds
+                            );
                             return true; // Collision detected
                         }
                     }
