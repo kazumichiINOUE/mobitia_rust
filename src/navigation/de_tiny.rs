@@ -88,20 +88,33 @@ impl DeTinySolver {
         self.current_population_size = population_size;
         self.current_generations = generations;
 
+        // println!("DEBUG: DE Init. wxy={:.3}, wa={:.3}, pop={}, gen={}", wxy, wa, population_size, generations);
+
         let center_x = initial_pose.translation.x;
         let center_y = initial_pose.translation.y;
         let center_a = initial_pose.rotation.angle();
 
         self.population.clear();
         self.population.reserve(population_size);
+        
+        // 1. Always include the initial guess itself
         self.population.push(Vector3::new(center_x, center_y, center_a));
         
+        // 2. Fill the rest with random samples around the center
         for _ in 1..population_size {
             let x = self.rng.gen_range(-wxy..=wxy) + center_x;
             let y = self.rng.gen_range(-wxy..=wxy) + center_y;
             let a = self.rng.gen_range(-wa..=wa) + center_a;
             self.population.push(Vector3::new(x, y, a));
         }
+
+        /*
+        let min_x = self.population.iter().map(|v| v.x).fold(f32::INFINITY, f32::min);
+        let max_x = self.population.iter().map(|v| v.x).fold(f32::NEG_INFINITY, f32::max);
+        let min_y = self.population.iter().map(|v| v.y).fold(f32::INFINITY, f32::min);
+        let max_y = self.population.iter().map(|v| v.y).fold(f32::NEG_INFINITY, f32::max);
+        println!("DEBUG: Population Bounds X:[{:.3}, {:.3}] (W:{:.3}), Y:[{:.3}, {:.3}] (H:{:.3})", min_x, max_x, max_x - min_x, min_y, max_y, max_y - min_y);
+        */
 
         self.scores = vec![0.0; population_size];
         self.best_score = f64::NEG_INFINITY;

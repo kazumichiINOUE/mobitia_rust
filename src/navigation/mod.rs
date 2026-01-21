@@ -56,14 +56,12 @@ pub struct NavigationManager {
 }
 
 impl NavigationManager {
-    pub fn new(config: NavConfig) -> Self {
+    pub fn new(config: NavConfig, slam_config: SlamConfig) -> Self {
         let pose_config = config.initial_pose;
         let initial_pose = Isometry2::new(
             nalgebra::Vector2::new(pose_config[0], pose_config[1]),
             pose_config[2].to_radians(),
         );
-
-        let slam_config = SlamConfig::default();
 
         Self {
             nav_map_texture: None,
@@ -399,13 +397,15 @@ impl NavigationManager {
             if let (Some(scan), Some(grid), Some(info)) =
                 (&self.initial_scan, &self.occupancy_grid, &self.map_info)
             {
-                if self.de_frame_counter % self.config.initial_localization_interval_frames == 0 {
-                    self.de_solver
-                        .step(grid, scan, info.resolution, info.origin);
-                    self.current_robot_pose = self.de_solver.get_best_pose();
-
-                    if self.de_solver.is_converged {
-                        self.is_localizing = false;
+                                // Throttle DE updates to observe convergence
+                                if self.de_frame_counter % self.config.initial_localization_interval_frames == 0 {
+                                    self.de_solver
+                                        .step(grid, scan, info.resolution, info.origin);
+                                    //println!("DEBUG: Step executed. Gen: {}", self.de_solver.generation);
+                                    self.current_robot_pose = self.de_solver.get_best_pose();
+                
+                                    if self.de_solver.is_converged {
+                                        self.is_localizing = false;
                         self.de_frame_counter = 0; 
                         self.converged_message_timer = 180;
                     }
