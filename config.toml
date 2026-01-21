@@ -184,3 +184,7 @@ lookahead_distance = 1.0
 target_velocity = 0.3
 goal_tolerance = 0.2
 debug_show_corner_cells = true
+
+[robot]
+width = 1.0
+length = 1.2

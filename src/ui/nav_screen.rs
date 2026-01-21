@@ -246,6 +246,31 @@ impl NavScreen {
             }
         }
 
+        // Footprint
+        let w = navigation_manager.robot_config.width;
+        let l = navigation_manager.robot_config.length;
+        let half_w = w / 2.0;
+        let half_l = l / 2.0;
+        let corners_local = [
+            nalgebra::Point2::new(half_l, half_w),
+            nalgebra::Point2::new(half_l, -half_w),
+            nalgebra::Point2::new(-half_l, -half_w),
+            nalgebra::Point2::new(-half_l, half_w),
+        ];
+        let corners_screen: Vec<egui::Pos2> = corners_local
+            .iter()
+            .map(|p| {
+                let world_p = current_robot_pose * p;
+                to_screen.transform_pos(egui::pos2(world_p.x, world_p.y))
+            })
+            .collect();
+
+        painter.add(egui::Shape::convex_polygon(
+            corners_screen,
+            egui::Color32::from_rgba_unmultiplied(0, 255, 0, 30),
+            egui::Stroke::new(1.0, egui::Color32::GREEN),
+        ));
+
         // Robot
         let robot_pos_on_screen = to_screen.transform_pos(egui::pos2(
             current_robot_pose.translation.x,

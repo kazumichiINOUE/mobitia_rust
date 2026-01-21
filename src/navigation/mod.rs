@@ -2,10 +2,10 @@ pub mod de_tiny;
 pub mod localization;
 pub mod pure_pursuit;
 
-use crate::config::{NavConfig, SlamConfig};
+use crate::config::{NavConfig, RobotConfig, SlamConfig};
 use crate::lidar::features::compute_features;
 use crate::navigation::de_tiny::{DeTinySolver, NavScanPoint};
-use crate::slam::{CellData, OccupancyGrid, ScanData, Submap};
+use crate::slam::{world_to_map_coords, CellData, OccupancyGrid, ScanData, Submap};
 use eframe::egui;
 use image::imageops;
 use nalgebra::{Isometry2, Point2, Rotation2, Translation2, Vector2};
@@ -53,10 +53,11 @@ pub struct NavigationManager {
     pub is_autonomous: bool,
 
     pub config: NavConfig,
+    pub robot_config: RobotConfig,
 }
 
 impl NavigationManager {
-    pub fn new(config: NavConfig, slam_config: SlamConfig) -> Self {
+    pub fn new(config: NavConfig, slam_config: SlamConfig, robot_config: RobotConfig) -> Self {
         let pose_config = config.initial_pose;
         let initial_pose = Isometry2::new(
             nalgebra::Vector2::new(pose_config[0], pose_config[1]),
@@ -80,6 +81,7 @@ impl NavigationManager {
             converged_message_timer: 0,
             is_autonomous: false,
             config,
+            robot_config,
         }
     }
 
@@ -482,17 +484,152 @@ impl NavigationManager {
 
             if self.is_autonomous && !self.is_localizing {
                 use crate::navigation::pure_pursuit;
-                pure_pursuit::compute_command(
+                let mut command = pure_pursuit::compute_command(
                     &self.current_robot_pose,
                     &self.nav_trajectory_points,
                     &mut self.current_nav_target,
                     self.config.lookahead_distance,
                     self.config.target_velocity,
                     self.config.goal_tolerance,
-                )
+                );
+
+                // --- Footprint Prediction Check (Map-based) ---
+                if let Some((v, w)) = command {
+                    // Predict future pose after dt seconds
+                    let dt = 1.0; // Lookahead time for collision check
+                    let current_yaw = self.current_robot_pose.rotation.angle();
+                    
+                    // Simple prediction (Constant Velocity Motion Model approximation)
+                    // Note: for accurate curved path prediction, integration would be better,
+                    // but for collision check this linear/arc approximation is often sufficient.
+                    let pred_yaw = current_yaw + w * dt;
+                    let avg_yaw = (current_yaw + pred_yaw) / 2.0;
+                    let pred_x = self.current_robot_pose.translation.x + v * dt * avg_yaw.cos();
+                    let pred_y = self.current_robot_pose.translation.y + v * dt * avg_yaw.sin();
+                    
+                    let pred_pose = Isometry2::new(nalgebra::Vector2::new(pred_x, pred_y), pred_yaw);
+                    
+                    if self.check_footprint_collision(&pred_pose) {
+                        println!("COLLISION PREDICTED (Map Footprint): Stopping.");
+                        command = Some((0.0, 0.0));
+                    }
+                }
+
+                // --- Collision Avoidance Logic (LiDAR-based) ---
+                // User requirement: Check for points < 400mm within +/- 90 degrees (front 180 deg)
+                let avoid_dist_threshold = 0.4; // 400mm
+                let avoid_angle_threshold = 90.0_f32.to_radians();
+
+                let mut min_dist = f32::MAX;
+                let mut obstacle_angle = 0.0;
+                let mut detected = false;
+                
+                // Debug variables
+                let mut debug_min_dist_all = f32::MAX;
+                let mut debug_angle_at_min = 0.0;
+
+                for (x, y, _r, _theta, _feature, _nx, _ny, _corner) in latest_scan {
+                    // Assuming (x, y) are in robot-centric coordinates
+                    let dist = (x * x + y * y).sqrt();
+                    if dist < debug_min_dist_all {
+                        debug_min_dist_all = dist;
+                        debug_angle_at_min = y.atan2(*x);
+                    }
+
+                    if dist < avoid_dist_threshold {
+                        let angle = y.atan2(*x);
+                        if angle.abs() < avoid_angle_threshold {
+                            if dist < min_dist {
+                                min_dist = dist;
+                                obstacle_angle = angle;
+                                detected = true;
+                            }
+                        }
+                    }
+                }
+
+                // Debug print (Temporary)
+                if !latest_scan.is_empty() && debug_min_dist_all < 2.0 {
+                    println!("DEBUG: Nav Update. Auto: {}, Loc: {}, Scan Pts: {}, Min Dist: {:.3}m, Angle: {:.1}deg", 
+                       self.is_autonomous, self.is_localizing, latest_scan.len(), debug_min_dist_all, debug_angle_at_min.to_degrees());
+                }
+
+                if detected {
+                    // Obstacle detected! Override command to move away.
+                    // Strategy: Move backward slowly and rotate away from the obstacle.
+                    let escape_velocity = -0.1; // Move backward at 0.1 m/s
+                    let escape_omega = if obstacle_angle > 0.0 {
+                        -0.5 // Obstacle on left -> Rotate right
+                    } else {
+                        0.5 // Obstacle on right -> Rotate left
+                    };
+
+                    println!(
+                        "COLLISION AVOIDANCE: Dist {:.3}m, Angle {:.1}deg -> Backing up",
+                        min_dist,
+                        obstacle_angle.to_degrees()
+                    );
+                    command = Some((escape_velocity, escape_omega));
+                }
+                // ---------------------------------
+
+                command
             } else {
                 None
             }
         }
+    }
+
+    fn check_footprint_collision(&self, pose: &Isometry2<f32>) -> bool {
+        if let (Some(grid), Some(map_info)) = (&self.occupancy_grid, &self.map_info) {
+            let w = self.robot_config.width;
+            let l = self.robot_config.length;
+            let half_w = w / 2.0;
+            let half_l = l / 2.0;
+
+            // Robot local corners: FL, FR, BR, BL
+            let corners_local = [
+                Point2::new(half_l, half_w),
+                Point2::new(half_l, -half_w),
+                Point2::new(-half_l, -half_w),
+                Point2::new(-half_l, half_w),
+            ];
+
+            // Transform to world and check edges
+            let corners_world: Vec<Point2<f32>> = corners_local
+                .iter()
+                .map(|p| pose * p)
+                .collect();
+
+            // Check edges by sampling
+            let num_corners = corners_world.len();
+            for i in 0..num_corners {
+                let p1 = corners_world[i];
+                let p2 = corners_world[(i + 1) % num_corners];
+                
+                let dist = (p1 - p2).norm();
+                let steps = (dist / map_info.resolution).ceil() as usize;
+                
+                for s in 0..=steps {
+                    let t = s as f32 / steps as f32;
+                    let p = p1 + (p2 - p1) * t;
+                    
+                    let (gx, gy) = world_to_map_coords(p.x, p.y, &crate::config::SlamConfig {
+                        csize: map_info.resolution,
+                        map_width: grid.width,
+                        map_height: grid.height,
+                        ..Default::default()
+                    });
+
+                    if gx >= 0 && gx < grid.width as isize && gy >= 0 && gy < grid.height as isize {
+                        let idx = (gy as usize) * grid.width + (gx as usize);
+                        if grid.data[idx].log_odds > 0.0 {
+                            return true; // Collision detected
+                        }
+                    }
+                }
+            }
+        }
+        false
     }
 }

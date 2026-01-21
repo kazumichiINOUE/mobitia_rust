@@ -520,7 +520,7 @@ impl MyApp {
         }));
 
         // ナビゲーションマネージャーの初期化
-        let navigation_manager = NavigationManager::new(config.nav.clone(), config.slam.clone());
+        let navigation_manager = NavigationManager::new(config.nav.clone(), config.slam.clone(), config.robot.clone());
 
         let command_history = vec![
             ConsoleOutputEntry {

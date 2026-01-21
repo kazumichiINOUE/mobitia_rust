@@ -129,6 +129,22 @@ impl Default for MotorConfig {
     }
 }
 
+// --- Robot Configuration ---
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct RobotConfig {
+    pub width: f32,
+    pub length: f32,
+}
+
+impl Default for RobotConfig {
+    fn default() -> Self {
+        Self {
+            width: 0.4,
+            length: 0.5,
+        }
+    }
+}
+
 // --- Navigation Configuration ---
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct NavConfig {
@@ -228,6 +244,8 @@ pub struct Config {
     pub ui: UiConfig,
     #[serde(default)]
     pub motor: MotorConfig,
+    #[serde(default)]
+    pub robot: RobotConfig,
     #[serde(default = "default_lidars")]
     pub lidar: Vec<LidarTomlConfig>,
     #[serde(default)]
