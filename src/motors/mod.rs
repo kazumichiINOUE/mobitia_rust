@@ -6,6 +6,7 @@ use std::io::Write;
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
+use tracing::instrument;
 
 #[derive(Debug, Clone, Copy)]
 pub enum MotorCommand {
@@ -180,6 +181,7 @@ fn send_and_read(
     }
 }
 
+#[instrument(skip(config, command_receiver, message_sender))]
 pub fn start_modbus_motor_thread(
     config: MotorConfig,
     command_receiver: mpsc::Receiver<MotorCommand>,

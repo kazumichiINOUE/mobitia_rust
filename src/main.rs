@@ -20,8 +20,26 @@ mod xppen;
 
 use crate::config::Config;
 use app::MyApp; // 追加
+use tracing_subscriber::prelude::*;
 
 fn main() -> Result<(), eframe::Error> {
+    // --- Tracing Setup ---
+    // Create traces directory if it doesn't exist
+    if let Err(e) = std::fs::create_dir_all("./traces") {
+        eprintln!("Failed to create traces directory: {}", e);
+    }
+
+    // Create a new layer that writes a Chrome Trace file
+    let (chrome_layer, _guard) = tracing_chrome::ChromeLayerBuilder::new()
+        .file("./traces/trace.json") // Save to ./traces/trace.json (rotated)
+        .include_args(true)
+        .build();
+
+    tracing_subscriber::registry()
+        .with(chrome_layer)
+        .init();
+    // --- End of Tracing Setup ---
+
     // --- Config loading ---
     let config_path = Path::new("config.toml");
     let config: Config = if config_path.exists() {

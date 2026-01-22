@@ -15,6 +15,7 @@ use serde::Deserialize;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
+use tracing::{instrument, info};
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct MapInfo {
@@ -351,6 +352,7 @@ impl NavigationManager {
         self.predicted_footprint_pose = None;
     }
 
+    #[instrument(skip(self, latest_scan), fields(autonomous = self.is_autonomous, localizing = self.is_localizing))]
     pub fn update(
         &mut self,
         current_odom: (f32, f32, f32),
@@ -447,6 +449,7 @@ impl NavigationManager {
                     self.current_robot_pose = self.de_solver.get_best_pose();
 
                     if self.de_solver.is_converged {
+                        info!("Localization Converged");
                         self.is_localizing = false;
                         self.de_frame_counter = 0;
                         self.converged_message_timer = 180;
@@ -581,8 +584,10 @@ impl NavigationManager {
                     let dist_to_goal = (robot_pos - goal_pos).norm();
                     
                     if dist_to_goal < self.config.goal_tolerance {
-                        println!("GOAL REACHED! Total Travel Distance: {:.2}m, Accuracy: {:.3}m", 
-                            self.total_travel_distance, dist_to_goal);
+                        info!(
+                            "GOAL REACHED! Total Travel Distance: {:.2}m, Accuracy: {:.3}m", 
+                            self.total_travel_distance, dist_to_goal
+                        );
                         self.is_autonomous = false;
                         self.navigation_finished_timer = 180; // Show message for ~3 seconds
                         return Some((0.0, 0.0));
@@ -618,8 +623,8 @@ impl NavigationManager {
                     // Override with safety behavior
                     let escape_velocity = -0.1; 
                     let escape_omega = if obstacle_angle > 0.0 { -0.5 } else { 0.5 };
-                    println!(
-                        "COLLISION AVOIDANCE: Dist {:.3}m, Angle {:.1}deg -> Backing up",
+                    info!(
+                        "COLLISION AVOIDANCE triggered: Dist {:.3}m, Angle {:.1}deg -> Backing up",
                         min_dist,
                         obstacle_angle.to_degrees()
                     );

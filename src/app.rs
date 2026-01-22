@@ -31,6 +31,7 @@ use crate::xppen::{start_xppen_thread, XppenMessage};
 
 mod app_map_loading;
 use crate::ui::get_path_suggestions::get_path_suggestions;
+use tracing::instrument;
 
 // Camera一台分の状態を保持する構造体
 #[derive(Clone)]
@@ -80,7 +81,7 @@ pub struct LidarState {
 }
 
 // アプリケーション全体のの状態を管理する構造体
-#[derive(PartialEq)]
+#[derive(PartialEq, Debug)]
 pub enum AppMode {
     Lidar,
     Slam,
@@ -92,7 +93,7 @@ pub enum AppMode {
     Nav,
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Debug)]
 pub enum SlamMode {
     Manual,
     Continuous,
@@ -1098,6 +1099,7 @@ impl eframe::App for MyApp {
     }
 
     /// フレームごとに呼ばれ、UIを描画する
+    #[instrument(skip(self, ctx, _frame), fields(mode = ?self.app_mode))]
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // --- One-time motor initialization ---
         if !self.is_motor_initialized && self.motor_thread_active {

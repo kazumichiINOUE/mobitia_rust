@@ -1,6 +1,7 @@
 use crate::config::ElasticBandConfig;
 use eframe::egui;
 use nalgebra::Point2;
+use tracing::instrument;
 
 pub struct ElasticBand {
     config: ElasticBandConfig,
@@ -13,6 +14,7 @@ impl ElasticBand {
 
     /// Optimizes the trajectory using a stable spring-mass-damper like approach.
     /// Includes displacement limits to prevent divergence.
+    #[instrument(skip(self, trajectory, obstacles))]
     pub fn optimize(
         &self,
         trajectory: &mut Vec<egui::Pos2>,
