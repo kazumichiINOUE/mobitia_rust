@@ -1,4 +1,5 @@
 pub mod de_tiny;
+pub mod dwa;
 pub mod localization;
 pub mod pure_pursuit;
 
@@ -53,6 +54,9 @@ pub struct NavigationManager {
     pub is_autonomous: bool,
     pub predicted_footprint_pose: Option<Isometry2<f32>>,
 
+    // DWA Planner
+    pub dwa_planner: dwa::DwaPlanner,
+
     pub config: NavConfig,
     pub robot_config: RobotConfig,
 }
@@ -64,6 +68,8 @@ impl NavigationManager {
             nalgebra::Vector2::new(pose_config[0], pose_config[1]),
             pose_config[2].to_radians(),
         );
+
+        let dwa_planner = dwa::DwaPlanner::new(config.dwa.clone(), robot_config.clone(), slam_config.clone());
 
         Self {
             nav_map_texture: None,
@@ -82,6 +88,7 @@ impl NavigationManager {
             converged_message_timer: 0,
             is_autonomous: false,
             predicted_footprint_pose: None,
+            dwa_planner,
             config,
             robot_config,
         }
@@ -491,7 +498,8 @@ impl NavigationManager {
 
             if self.is_autonomous && !self.is_localizing {
                 use crate::navigation::pure_pursuit;
-                let mut command = pure_pursuit::compute_command(
+                // Update target using Pure Pursuit logic (to find the lookahead point)
+                let _ = pure_pursuit::compute_command(
                     &self.current_robot_pose,
                     &self.nav_trajectory_points,
                     &mut self.current_nav_target,
@@ -500,29 +508,45 @@ impl NavigationManager {
                     self.config.goal_tolerance,
                 );
 
-                // --- Footprint Prediction Check (Map-based) ---
-                if let Some((v, w)) = command {
-                    // Predict future pose after dt seconds
-                    let dt = self.config.collision_check_predict_time; // Lookahead time for collision check
+                let mut command = None;
+
+                if let Some(target_point) = self.current_nav_target {
+                    // DWA: Calculate optimal command
+                    // Current velocity estimation (Todo: use actual odometry diff or Kalman filter)
+                    // For now, we start with 0.0 or last command if we had state. 
+                    // Since we don't store last command velocity state here, we assume 0 for start or low speed.
+                    // Ideally NavigationManager should store `current_velocity`.
+                    let current_vel = (0.0, 0.0); 
+
+                    // Prepare LiDAR points for DWA (World frame)
+                    // latest_scan is already in World frame (see app.rs)
+                    let lidar_points_world: Vec<(f32, f32)> = latest_scan.iter()
+                        .map(|p| (p.0, p.1)).collect();
+
+                    let map_res = self.map_info.as_ref().map(|i| i.resolution).unwrap_or(0.05);
+
+                    let (dwa_v, dwa_w) = self.dwa_planner.compute_command(
+                        &self.current_robot_pose,
+                        current_vel,
+                        &nalgebra::Point2::new(target_point.x, target_point.y),
+                        self.occupancy_grid.as_ref(),
+                        map_res,
+                        &lidar_points_world,
+                    );
+
+                    command = Some((dwa_v, dwa_w));
+
+                    // --- Footprint Prediction Visualization ---
+                    // Predict future pose after 1.0s using DWA command
+                    let dt = 1.0; 
                     let current_yaw = self.current_robot_pose.rotation.angle();
-                    
-                    // Simple prediction (Constant Velocity Motion Model approximation)
-                    // Note: for accurate curved path prediction, integration would be better,
-                    // but for collision check this linear/arc approximation is often sufficient.
-                    let pred_yaw = current_yaw + w * dt;
+                    let pred_yaw = current_yaw + dwa_w * dt;
                     let avg_yaw = (current_yaw + pred_yaw) / 2.0;
-                    let pred_x = self.current_robot_pose.translation.x + v * dt * avg_yaw.cos();
-                    let pred_y = self.current_robot_pose.translation.y + v * dt * avg_yaw.sin();
-                    
+                    let pred_x = self.current_robot_pose.translation.x + dwa_v * dt * avg_yaw.cos();
+                    let pred_y = self.current_robot_pose.translation.y + dwa_v * dt * avg_yaw.sin();
                     let pred_pose = Isometry2::new(nalgebra::Vector2::new(pred_x, pred_y), pred_yaw);
                     
-                    // Save for visualization
                     self.predicted_footprint_pose = Some(pred_pose);
-
-                    if self.check_footprint_collision(&pred_pose) {
-                        println!("COLLISION PREDICTED (Map Footprint): Stopping.");
-                        command = Some((0.0, 0.0));
-                    }
                 } else {
                     self.predicted_footprint_pose = None;
                 }

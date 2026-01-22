@@ -147,6 +147,34 @@ impl Default for RobotConfig {
     }
 }
 
+// --- DWA Configuration ---
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct DwaConfig {
+    pub max_accel_v: f32, // m/s^2
+    pub max_accel_w: f32, // rad/s^2
+    pub max_speed_v: f32, // m/s
+    pub max_speed_w: f32, // rad/s
+    pub predict_time: f32, // s
+    pub dt: f32,          // s (simulation step)
+    pub v_samples: usize,
+    pub w_samples: usize,
+}
+
+impl Default for DwaConfig {
+    fn default() -> Self {
+        Self {
+            max_accel_v: 0.5,
+            max_accel_w: 1.0,
+            max_speed_v: 0.5,
+            max_speed_w: 1.0,
+            predict_time: 2.0,
+            dt: 0.1,
+            v_samples: 6,
+            w_samples: 11,
+        }
+    }
+}
+
 // --- Navigation Configuration ---
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct NavConfig {
@@ -178,6 +206,8 @@ pub struct NavConfig {
     pub lidar_avoid_dist: f32,
     #[serde(default = "default_collision_check_predict_time")]
     pub collision_check_predict_time: f32,
+    #[serde(default)]
+    pub dwa: DwaConfig,
 }
 
 fn default_initial_pose() -> [f32; 3] {
@@ -245,6 +275,7 @@ impl Default for NavConfig {
             debug_show_corner_cells: false,
             lidar_avoid_dist: default_lidar_avoid_dist(),
             collision_check_predict_time: default_collision_check_predict_time(),
+            dwa: DwaConfig::default(),
         }
     }
 }

@@ -187,6 +187,16 @@ debug_show_corner_cells = true
 lidar_avoid_dist = 0.5
 collision_check_predict_time = 1.0
 
+[nav.dwa]
+max_accel_v = 0.5   # 並進加速度上限 (m/s^2)
+max_accel_w = 1.0   # 回転加速度上限 (rad/s^2)
+max_speed_v = 0.5   # 最大並進速度 (m/s)
+max_speed_w = 0.5   # 最大回転速度 (rad/s)
+predict_time = 2.0  # 予測時間 (秒) - これを長くすると早めに回避しますが、狭い場所で動きにくくなる場合があります
+dt = 0.1            # シミュレーション刻み時間 (秒)
+v_samples = 6       # 速度のサンプル数
+w_samples = 11      # 角速度のサンプル数
+
 [robot]
 width = 0.6
 length = 0.6
