@@ -64,6 +64,7 @@ impl NavScreen {
         let nav_map_bounds = &navigation_manager.nav_map_bounds;
         let nav_map_texture = &navigation_manager.nav_map_texture;
         let nav_trajectory_points = &navigation_manager.nav_trajectory_points;
+        let local_path = &navigation_manager.local_path;
         let current_nav_target = &navigation_manager.current_nav_target;
 
         // --- Coordinate System Setup ---
@@ -154,7 +155,7 @@ impl NavScreen {
             egui::Stroke::new(1.0, egui::Color32::from_rgb(50, 100, 50)),
         );
 
-        // Trajectory
+        // Global Trajectory (Blue)
         if nav_trajectory_points.len() > 1 {
             let path_points: Vec<egui::Pos2> = nav_trajectory_points
                 .iter()
@@ -169,6 +170,25 @@ impl NavScreen {
                 let screen_pos = to_screen.transform_pos(*point);
                 if rect.contains(screen_pos) {
                     painter.circle_filled(screen_pos, 3.0, egui::Color32::from_rgb(100, 100, 200));
+                }
+            }
+        }
+
+        // Local Path / Elastic Band (Cyan/Green)
+        if local_path.len() > 1 {
+            let path_points: Vec<egui::Pos2> = local_path
+                .iter()
+                .map(|p| to_screen.transform_pos(*p))
+                .collect();
+            painter.add(egui::Shape::line(
+                path_points,
+                egui::Stroke::new(2.0, egui::Color32::from_rgb(0, 255, 128)),
+            ));
+        } else {
+            for point in local_path {
+                let screen_pos = to_screen.transform_pos(*point);
+                if rect.contains(screen_pos) {
+                    painter.circle_filled(screen_pos, 3.0, egui::Color32::from_rgb(0, 255, 128));
                 }
             }
         }

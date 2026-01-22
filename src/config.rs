@@ -175,6 +175,26 @@ impl Default for DwaConfig {
     }
 }
 
+// --- Elastic Band Configuration ---
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ElasticBandConfig {
+    pub internal_force_gain: f32,
+    pub external_force_gain: f32,
+    pub obstacle_safety_dist: f32,
+    pub num_iterations: usize,
+}
+
+impl Default for ElasticBandConfig {
+    fn default() -> Self {
+        Self {
+            internal_force_gain: 0.2,
+            external_force_gain: 0.1,
+            obstacle_safety_dist: 0.8,
+            num_iterations: 10,
+        }
+    }
+}
+
 // --- Navigation Configuration ---
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct NavConfig {
@@ -208,6 +228,8 @@ pub struct NavConfig {
     pub collision_check_predict_time: f32,
     #[serde(default)]
     pub dwa: DwaConfig,
+    #[serde(default)]
+    pub elastic_band: ElasticBandConfig,
 }
 
 fn default_initial_pose() -> [f32; 3] {
@@ -276,6 +298,7 @@ impl Default for NavConfig {
             lidar_avoid_dist: default_lidar_avoid_dist(),
             collision_check_predict_time: default_collision_check_predict_time(),
             dwa: DwaConfig::default(),
+            elastic_band: ElasticBandConfig::default(),
         }
     }
 }

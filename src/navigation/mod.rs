@@ -1,5 +1,6 @@
 pub mod de_tiny;
 pub mod dwa;
+pub mod elastic_band;
 pub mod localization;
 pub mod pure_pursuit;
 
@@ -29,7 +30,8 @@ pub struct NavigationManager {
     // 状態データ
     pub nav_map_texture: Option<egui::TextureHandle>,
     pub nav_map_bounds: Option<egui::Rect>,
-    pub nav_trajectory_points: Vec<egui::Pos2>,
+    pub nav_trajectory_points: Vec<egui::Pos2>, // Global Path (Initial)
+    pub local_path: Vec<egui::Pos2>,            // Local Path (Deformed by EB)
     pub current_nav_target: Option<egui::Pos2>,
     pub current_robot_pose: Isometry2<f32>,
 
@@ -54,8 +56,9 @@ pub struct NavigationManager {
     pub is_autonomous: bool,
     pub predicted_footprint_pose: Option<Isometry2<f32>>,
 
-    // DWA Planner
+    // Planners
     pub dwa_planner: dwa::DwaPlanner,
+    pub elastic_band: elastic_band::ElasticBand,
 
     pub config: NavConfig,
     pub robot_config: RobotConfig,
@@ -70,11 +73,13 @@ impl NavigationManager {
         );
 
         let dwa_planner = dwa::DwaPlanner::new(config.dwa.clone(), robot_config.clone(), slam_config.clone());
+        let elastic_band = elastic_band::ElasticBand::new(config.elastic_band.clone());
 
         Self {
             nav_map_texture: None,
             nav_map_bounds: None,
             nav_trajectory_points: Vec::new(),
+            local_path: Vec::new(),
             current_nav_target: None,
             current_robot_pose: initial_pose,
             occupancy_grid: None,
@@ -89,6 +94,7 @@ impl NavigationManager {
             is_autonomous: false,
             predicted_footprint_pose: None,
             dwa_planner,
+            elastic_band,
             config,
             robot_config,
         }
@@ -313,7 +319,9 @@ impl NavigationManager {
                     }
                 }
             }
-            self.nav_trajectory_points = points;
+            self.nav_trajectory_points = points.clone();
+            // Initialize local_path with the global path
+            self.local_path = points;
         } else {
             return Err(format!(
                 "ERROR: Failed to load trajectory file '{}'",
@@ -333,6 +341,7 @@ impl NavigationManager {
         self.occupancy_grid = None;
         self.map_info = None;
         self.nav_trajectory_points.clear();
+        self.local_path.clear();
         self.current_nav_target = None;
         self.last_odom = None;
         self.initial_scan = None;
@@ -498,61 +507,94 @@ impl NavigationManager {
 
             if self.is_autonomous && !self.is_localizing {
                 use crate::navigation::pure_pursuit;
-                // Update target using Pure Pursuit logic (to find the lookahead point)
-                let _ = pure_pursuit::compute_command(
+
+                // --- 1. Update Elastic Band (Local Path) ---
+                let robot_pos_egui = egui::pos2(
+                    self.current_robot_pose.translation.x,
+                    self.current_robot_pose.translation.y
+                );
+
+                // Prepare obstacles for Elastic Band (x, y, nx, ny)
+                // latest_scan is in World Frame if transformed in app.rs, BUT
+                // Wait, check where latest_scan comes from. In app.rs it is updated by `update_localization`.
+                // Looking at app.rs, `scan_points` passed to `nav_manager.update` are transformed to Global Frame?
+                // NO. In `src/app.rs`, `scan_points` are usually raw from lidar?
+                // Let's verify `app.rs`. If they are raw, we must transform them.
+                // Re-reading `NavigationManager::update` above: `if self.is_localizing ... self.de_solver.step(..., scan, ...)`
+                // The DE solver expects points in ROBOT LOCAL frame usually if it applies the pose itself?
+                // `de_tiny.rs` `step` takes `scan` and `grid`. Inside it transforms using `population` poses.
+                // SO `latest_scan` MUST BE LOCAL (Robot Frame).
+                
+                // HOWEVER, `pure_pursuit` and `elastic_band` work in GLOBAL frame (map frame).
+                // So we need to transform scan points to Global Frame for Elastic Band obstacles.
+                
+                let robot_tf = self.current_robot_pose;
+                let obstacles: Vec<(f32, f32, f32, f32)> = effective_scan.iter().map(|p| {
+                     // p is (x, y, r, theta, feature, nx, ny, corner) in LOCAL frame
+                     let p_local = Point2::new(p.0, p.1);
+                     let n_local = Vector2::new(p.5, p.6);
+                     
+                     let p_global = robot_tf * p_local;
+                     let n_global = robot_tf.rotation * n_local;
+                     
+                     (p_global.x, p_global.y, n_global.x, n_global.y)
+                }).collect();
+
+                // Run EB optimization
+                if !obstacles.is_empty() {
+                    // DEBUG: Check obstacle transformation
+                    let sample_obs = obstacles[0];
+                    let robot_x = self.current_robot_pose.translation.x;
+                    let robot_y = self.current_robot_pose.translation.y;
+                    // Print periodically
+                    if self.de_frame_counter % 60 == 0 {
+                        println!("DEBUG: Robot Global ({:.2}, {:.2})", robot_x, robot_y);
+                        println!("DEBUG: Sample Obstacle Global ({:.2}, {:.2}) - Dist to Robot: {:.2}", 
+                            sample_obs.0, sample_obs.1, 
+                            ((sample_obs.0 - robot_x).powi(2) + (sample_obs.1 - robot_y).powi(2)).sqrt()
+                        );
+                        println!("DEBUG: EB Config -> ExtForce: {:.2}, SafetyDist: {:.2}", 
+                            self.config.elastic_band.external_force_gain,
+                            self.config.elastic_band.obstacle_safety_dist
+                        );
+                    }
+                }
+
+                self.elastic_band.optimize(
+                    &mut self.local_path,
+                    robot_pos_egui,
+                    &obstacles
+                );
+
+                if self.local_path.is_empty() {
+                    println!("DEBUG: local_path is empty! EB cleared it?");
+                }
+
+                // --- 2. Pure Pursuit Control ---
+                // Compute command using the deformed local_path
+                let command = pure_pursuit::compute_command(
                     &self.current_robot_pose,
-                    &self.nav_trajectory_points,
+                    &self.local_path,
                     &mut self.current_nav_target,
                     self.config.lookahead_distance,
                     self.config.target_velocity,
                     self.config.goal_tolerance,
                 );
 
-                let mut command = None;
-
-                if let Some(target_point) = self.current_nav_target {
-                    // DWA: Calculate optimal command
-                    // Current velocity estimation (Todo: use actual odometry diff or Kalman filter)
-                    // For now, we start with 0.0 or last command if we had state. 
-                    // Since we don't store last command velocity state here, we assume 0 for start or low speed.
-                    // Ideally NavigationManager should store `current_velocity`.
-                    let current_vel = (0.0, 0.0); 
-
-                    // Prepare LiDAR points for DWA (World frame)
-                    // latest_scan is already in World frame (see app.rs)
-                    let lidar_points_world: Vec<(f32, f32)> = latest_scan.iter()
-                        .map(|p| (p.0, p.1)).collect();
-
-                    let map_res = self.map_info.as_ref().map(|i| i.resolution).unwrap_or(0.05);
-
-                    let (dwa_v, dwa_w) = self.dwa_planner.compute_command(
-                        &self.current_robot_pose,
-                        current_vel,
-                        &nalgebra::Point2::new(target_point.x, target_point.y),
-                        self.occupancy_grid.as_ref(),
-                        map_res,
-                        &lidar_points_world,
-                    );
-
-                    command = Some((dwa_v, dwa_w));
-
-                    // --- Footprint Prediction Visualization ---
-                    // Predict future pose after 1.0s using DWA command
-                    let dt = 1.0; 
-                    let current_yaw = self.current_robot_pose.rotation.angle();
-                    let pred_yaw = current_yaw + dwa_w * dt;
-                    let avg_yaw = (current_yaw + pred_yaw) / 2.0;
-                    let pred_x = self.current_robot_pose.translation.x + dwa_v * dt * avg_yaw.cos();
-                    let pred_y = self.current_robot_pose.translation.y + dwa_v * dt * avg_yaw.sin();
-                    let pred_pose = Isometry2::new(nalgebra::Vector2::new(pred_x, pred_y), pred_yaw);
-                    
-                    self.predicted_footprint_pose = Some(pred_pose);
+                if let Some((v, w)) = command {
+                    if self.de_frame_counter % 30 == 0 {
+                        println!("DEBUG: PP Command -> v: {:.2}, w: {:.2} (Target Set: {})", 
+                            v, w, self.current_nav_target.is_some());
+                    }
                 } else {
-                    self.predicted_footprint_pose = None;
+                    if self.de_frame_counter % 60 == 0 {
+                         println!("DEBUG: PP returned None. Trajectory empty or finished?");
+                    }
                 }
 
-                // --- Collision Avoidance Logic (LiDAR-based) ---
-                // User requirement: Check for points < lidar_avoid_dist within +/- 90 degrees (front 180 deg)
+                // --- 3. Collision Check (Safety Stop) ---
+                let mut final_command = command;
+                
                 let avoid_dist_threshold = self.config.lidar_avoid_dist;
                 let avoid_angle_threshold = 90.0_f32.to_radians();
 
@@ -560,18 +602,9 @@ impl NavigationManager {
                 let mut obstacle_angle = 0.0;
                 let mut detected = false;
                 
-                // Debug variables
-                let mut debug_min_dist_all = f32::MAX;
-                let mut debug_angle_at_min = 0.0;
-
-                for (x, y, _r, _theta, _feature, _nx, _ny, _corner) in latest_scan {
-                    // Assuming (x, y) are in robot-centric coordinates
+                for (x, y, _r, _theta, _feature, _nx, _ny, _corner) in effective_scan {
+                    // (x, y) are local
                     let dist = (x * x + y * y).sqrt();
-                    if dist < debug_min_dist_all {
-                        debug_min_dist_all = dist;
-                        debug_angle_at_min = y.atan2(*x);
-                    }
-
                     if dist < avoid_dist_threshold {
                         let angle = y.atan2(*x);
                         if angle.abs() < avoid_angle_threshold {
@@ -584,32 +617,32 @@ impl NavigationManager {
                     }
                 }
 
-                // Debug print (Temporary)
-                if !latest_scan.is_empty() && debug_min_dist_all < 2.0 {
-                    println!("DEBUG: Nav Update. Auto: {}, Loc: {}, Scan Pts: {}, Min Dist: {:.3}m, Angle: {:.1}deg", 
-                       self.is_autonomous, self.is_localizing, latest_scan.len(), debug_min_dist_all, debug_angle_at_min.to_degrees());
-                }
-
                 if detected {
-                    // Obstacle detected! Override command to move away.
-                    // Strategy: Move backward slowly and rotate away from the obstacle.
-                    let escape_velocity = -0.1; // Move backward at 0.1 m/s
-                    let escape_omega = if obstacle_angle > 0.0 {
-                        -0.5 // Obstacle on left -> Rotate right
-                    } else {
-                        0.5 // Obstacle on right -> Rotate left
-                    };
-
+                    // Override with safety behavior
+                    let escape_velocity = -0.1; 
+                    let escape_omega = if obstacle_angle > 0.0 { -0.5 } else { 0.5 };
                     println!(
                         "COLLISION AVOIDANCE: Dist {:.3}m, Angle {:.1}deg -> Backing up",
                         min_dist,
                         obstacle_angle.to_degrees()
                     );
-                    command = Some((escape_velocity, escape_omega));
+                    final_command = Some((escape_velocity, escape_omega));
                 }
-                // ---------------------------------
 
-                command
+                // Update predicted pose for visualization (using PP command)
+                if let Some((v, w)) = final_command {
+                    let dt = 1.0; 
+                    let current_yaw = self.current_robot_pose.rotation.angle();
+                    let pred_yaw = current_yaw + w * dt;
+                    let avg_yaw = (current_yaw + pred_yaw) / 2.0;
+                    let pred_x = self.current_robot_pose.translation.x + v * dt * avg_yaw.cos();
+                    let pred_y = self.current_robot_pose.translation.y + v * dt * avg_yaw.sin();
+                    self.predicted_footprint_pose = Some(Isometry2::new(nalgebra::Vector2::new(pred_x, pred_y), pred_yaw));
+                } else {
+                    self.predicted_footprint_pose = None;
+                }
+
+                final_command
             } else {
                 None
             }
