@@ -51,6 +51,7 @@ pub struct NavigationManager {
     // Visualization
     pub viz_scan: Vec<(f32, f32, f32, f32, f32, f32, f32, f32)>,
     pub converged_message_timer: usize,
+    pub navigation_finished_timer: usize,
 
     // Autonomous Navigation
     pub is_autonomous: bool,
@@ -91,6 +92,7 @@ impl NavigationManager {
             de_frame_counter: 0,
             viz_scan: Vec::new(),
             converged_message_timer: 0,
+            navigation_finished_timer: 0,
             is_autonomous: false,
             predicted_footprint_pose: None,
             dwa_planner,
@@ -360,6 +362,9 @@ impl NavigationManager {
         if self.converged_message_timer > 0 {
             self.converged_message_timer -= 1;
         }
+        if self.navigation_finished_timer > 0 {
+            self.navigation_finished_timer -= 1;
+        }
 
         // --- Temporary Dummy Scan Injection ---
         let mut dummy_scan_storage; // To keep the vec alive
@@ -515,19 +520,6 @@ impl NavigationManager {
                 );
 
                 // Prepare obstacles for Elastic Band (x, y, nx, ny)
-                // latest_scan is in World Frame if transformed in app.rs, BUT
-                // Wait, check where latest_scan comes from. In app.rs it is updated by `update_localization`.
-                // Looking at app.rs, `scan_points` passed to `nav_manager.update` are transformed to Global Frame?
-                // NO. In `src/app.rs`, `scan_points` are usually raw from lidar?
-                // Let's verify `app.rs`. If they are raw, we must transform them.
-                // Re-reading `NavigationManager::update` above: `if self.is_localizing ... self.de_solver.step(..., scan, ...)`
-                // The DE solver expects points in ROBOT LOCAL frame usually if it applies the pose itself?
-                // `de_tiny.rs` `step` takes `scan` and `grid`. Inside it transforms using `population` poses.
-                // SO `latest_scan` MUST BE LOCAL (Robot Frame).
-                
-                // HOWEVER, `pure_pursuit` and `elastic_band` work in GLOBAL frame (map frame).
-                // So we need to transform scan points to Global Frame for Elastic Band obstacles.
-                
                 let robot_tf = self.current_robot_pose;
                 let obstacles: Vec<(f32, f32, f32, f32)> = effective_scan.iter().map(|p| {
                      // p is (x, y, r, theta, feature, nx, ny, corner) in LOCAL frame
@@ -540,35 +532,34 @@ impl NavigationManager {
                      (p_global.x, p_global.y, n_global.x, n_global.y)
                 }).collect();
 
-                // Run EB optimization
-                if !obstacles.is_empty() {
-                    // DEBUG: Check obstacle transformation
-                    let sample_obs = obstacles[0];
-                    let robot_x = self.current_robot_pose.translation.x;
-                    let robot_y = self.current_robot_pose.translation.y;
-                    // Print periodically
-                    if self.de_frame_counter % 60 == 0 {
-                        println!("DEBUG: Robot Global ({:.2}, {:.2})", robot_x, robot_y);
-                        println!("DEBUG: Sample Obstacle Global ({:.2}, {:.2}) - Dist to Robot: {:.2}", 
-                            sample_obs.0, sample_obs.1, 
-                            ((sample_obs.0 - robot_x).powi(2) + (sample_obs.1 - robot_y).powi(2)).sqrt()
-                        );
-                        println!("DEBUG: EB Config -> ExtForce: {:.2}, SafetyDist: {:.2}", 
-                            self.config.elastic_band.external_force_gain,
-                            self.config.elastic_band.obstacle_safety_dist
-                        );
+                // Prune passed points from local_path
+                if !self.local_path.is_empty() {
+                    let mut closest_idx = 0;
+                    let mut min_dist_sq = f32::MAX;
+                    for (i, p) in self.local_path.iter().enumerate() {
+                        let dx = p.x - robot_pos_egui.x;
+                        let dy = p.y - robot_pos_egui.y;
+                        let d2 = dx * dx + dy * dy;
+                        if d2 < min_dist_sq {
+                            min_dist_sq = d2;
+                            closest_idx = i;
+                        }
+                    }
+                    
+                    // Keep a margin of points behind the robot (e.g., 5 points)
+                    let margin = 5;
+                    if closest_idx > margin {
+                        let remove_count = closest_idx - margin;
+                        self.local_path.drain(0..remove_count);
                     }
                 }
 
+                // Run EB optimization
                 self.elastic_band.optimize(
                     &mut self.local_path,
                     robot_pos_egui,
                     &obstacles
                 );
-
-                if self.local_path.is_empty() {
-                    println!("DEBUG: local_path is empty! EB cleared it?");
-                }
 
                 // --- 2. Pure Pursuit Control ---
                 // Compute command using the deformed local_path
@@ -581,14 +572,17 @@ impl NavigationManager {
                     self.config.goal_tolerance,
                 );
 
-                if let Some((v, w)) = command {
-                    if self.de_frame_counter % 30 == 0 {
-                        println!("DEBUG: PP Command -> v: {:.2}, w: {:.2} (Target Set: {})", 
-                            v, w, self.current_nav_target.is_some());
-                    }
-                } else {
-                    if self.de_frame_counter % 60 == 0 {
-                         println!("DEBUG: PP returned None. Trajectory empty or finished?");
+                // Check for goal reach explicitly to trigger message
+                if let Some(last_p) = self.local_path.last() {
+                    let robot_pos = self.current_robot_pose.translation.vector;
+                    let goal_pos = nalgebra::Vector2::new(last_p.x, last_p.y);
+                    let dist_to_goal = (robot_pos - goal_pos).norm();
+                    
+                    if dist_to_goal < self.config.goal_tolerance {
+                        println!("GOAL REACHED! Distance: {:.3}m", dist_to_goal);
+                        self.is_autonomous = false;
+                        self.navigation_finished_timer = 180; // Show message for ~3 seconds
+                        return Some((0.0, 0.0));
                     }
                 }
 

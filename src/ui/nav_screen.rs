@@ -18,6 +18,7 @@ impl NavScreen {
         navigation_manager: &NavigationManager,
         latest_scan_for_draw: &[(f32, f32, f32, f32, f32, f32, f32, f32)],
         motor_odometry: &(f32, f32, f32),
+        robot_trajectory: &[(egui::Pos2, f32)],
     ) {
         ui.heading("Navigation Mode");
 
@@ -155,7 +156,7 @@ impl NavScreen {
             egui::Stroke::new(1.0, egui::Color32::from_rgb(50, 100, 50)),
         );
 
-        // Global Trajectory (Blue)
+        // Global Trajectory (Faded Blue)
         if nav_trajectory_points.len() > 1 {
             let path_points: Vec<egui::Pos2> = nav_trajectory_points
                 .iter()
@@ -163,15 +164,33 @@ impl NavScreen {
                 .collect();
             painter.add(egui::Shape::line(
                 path_points,
-                egui::Stroke::new(1.0, egui::Color32::from_rgb(100, 100, 200)),
+                egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(100, 100, 255, 60)),
             ));
         } else {
             for point in nav_trajectory_points {
                 let screen_pos = to_screen.transform_pos(*point);
                 if rect.contains(screen_pos) {
-                    painter.circle_filled(screen_pos, 3.0, egui::Color32::from_rgb(100, 100, 200));
+                    painter.circle_filled(
+                        screen_pos, 
+                        2.0, 
+                        egui::Color32::from_rgba_unmultiplied(100, 100, 255, 60)
+                    );
                 }
             }
+        }
+
+        // Robot History Trajectory (Gray)
+        if robot_trajectory.len() > 1 {
+            let path_points: Vec<egui::Pos2> = robot_trajectory
+                .iter()
+                .map(|(pos, _)| {
+                    to_screen.transform_pos(*pos)
+                })
+                .collect();
+            painter.add(egui::Shape::line(
+                path_points,
+                egui::Stroke::new(1.0, egui::Color32::GRAY),
+            ));
         }
 
         // Local Path / Elastic Band (Cyan/Green)
@@ -343,6 +362,28 @@ impl NavScreen {
                 text,
                 font_id,
                 egui::Color32::GREEN,
+            );
+        }
+
+        // --- Navigation Finished Message ---
+        if navigation_manager.navigation_finished_timer > 0 {
+            let center = rect.center();
+            let text = "Goal Reached / Navigation Finished";
+            let font_id = egui::FontId::proportional(30.0);
+
+            painter.text(
+                center + egui::vec2(2.0, 2.0),
+                egui::Align2::CENTER_CENTER,
+                text,
+                font_id.clone(),
+                egui::Color32::BLACK,
+            );
+            painter.text(
+                center,
+                egui::Align2::CENTER_CENTER,
+                text,
+                font_id,
+                egui::Color32::GOLD, // Use a different color (Gold) for goal
             );
         }
 

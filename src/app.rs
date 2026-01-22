@@ -2517,12 +2517,30 @@ negate = 0
                 }
                 self.current_robot_pose = self.navigation_manager.current_robot_pose;
 
+                // Update trajectory history
+                let current_pos_egui = egui::pos2(
+                    self.current_robot_pose.translation.x,
+                    self.current_robot_pose.translation.y
+                );
+                let current_angle = self.current_robot_pose.rotation.angle();
+
+                if self.robot_trajectory.is_empty() {
+                    self.robot_trajectory.push((current_pos_egui, current_angle));
+                } else {
+                    let (last_pos, _) = self.robot_trajectory.last().unwrap();
+                    let dist = last_pos.distance(current_pos_egui);
+                    if dist > 0.1 { // Add point every 10cm
+                        self.robot_trajectory.push((current_pos_egui, current_angle));
+                    }
+                }
+
                 self.nav_screen.draw(
                     ui,
                     &mut self.lidar_draw_rect,
                     &self.navigation_manager,
                     &self.latest_scan_for_draw,
                     &self.motor_odometry,
+                    &self.robot_trajectory,
                 );
             }
         });
