@@ -1,6 +1,5 @@
 pub mod de_tiny;
 pub mod dwa;
-pub mod elastic_band;
 pub mod localization;
 pub mod pure_pursuit;
 
@@ -54,14 +53,9 @@ pub struct NavigationManager {
     // Autonomous Navigation
     pub is_autonomous: bool,
     pub predicted_footprint_pose: Option<Isometry2<f32>>,
-    pub last_command: Option<(f32, f32)>,
 
     // DWA Planner
     pub dwa_planner: dwa::DwaPlanner,
-    pub dwa_trajectories: Vec<dwa::DwaTrajectory>,
-
-    // Elastic Band
-    pub elastic_band: elastic_band::ElasticBand,
 
     pub config: NavConfig,
     pub robot_config: RobotConfig,
@@ -76,7 +70,6 @@ impl NavigationManager {
         );
 
         let dwa_planner = dwa::DwaPlanner::new(config.dwa.clone(), robot_config.clone(), slam_config.clone());
-        let elastic_band = elastic_band::ElasticBand::new(config.eb.clone());
 
         Self {
             nav_map_texture: None,
@@ -95,10 +88,7 @@ impl NavigationManager {
             converged_message_timer: 0,
             is_autonomous: false,
             predicted_footprint_pose: None,
-            last_command: None,
             dwa_planner,
-            dwa_trajectories: Vec::new(),
-            elastic_band,
             config,
             robot_config,
         }
@@ -351,8 +341,6 @@ impl NavigationManager {
         self.viz_scan.clear();
         self.is_autonomous = false;
         self.predicted_footprint_pose = None;
-        self.dwa_trajectories.clear();
-        self.last_command = None;
     }
 
     pub fn update(
@@ -509,21 +497,8 @@ impl NavigationManager {
             self.de_frame_counter += 1;
 
             if self.is_autonomous && !self.is_localizing {
-                // --- Elastic Band Optimization ---
-                let mut obstacles = Vec::new();
-                for p in latest_scan {
-                    obstacles.push((p.0, p.1));
-                }
-                // (Optional: add near-map obstacles here if needed)
-
-                self.elastic_band.optimize(
-                    &mut self.nav_trajectory_points,
-                    egui::pos2(self.current_robot_pose.translation.x, self.current_robot_pose.translation.y),
-                    &obstacles
-                );
-
                 use crate::navigation::pure_pursuit;
-                // Update target using Pure Pursuit logic (to find the lookahead point on the modified band)
+                // Update target using Pure Pursuit logic (to find the lookahead point)
                 let _ = pure_pursuit::compute_command(
                     &self.current_robot_pose,
                     &self.nav_trajectory_points,
@@ -550,7 +525,7 @@ impl NavigationManager {
 
                     let map_res = self.map_info.as_ref().map(|i| i.resolution).unwrap_or(0.05);
 
-                    let (dwa_v, dwa_w, all_trajs) = self.dwa_planner.compute_command(
+                    let (dwa_v, dwa_w) = self.dwa_planner.compute_command(
                         &self.current_robot_pose,
                         current_vel,
                         &nalgebra::Point2::new(target_point.x, target_point.y),
@@ -560,7 +535,6 @@ impl NavigationManager {
                     );
 
                     command = Some((dwa_v, dwa_w));
-                    self.dwa_trajectories = all_trajs;
 
                     // --- Footprint Prediction Visualization ---
                     // Predict future pose after 1.0s using DWA command
@@ -575,7 +549,6 @@ impl NavigationManager {
                     self.predicted_footprint_pose = Some(pred_pose);
                 } else {
                     self.predicted_footprint_pose = None;
-                    self.dwa_trajectories.clear();
                 }
 
                 // --- Collision Avoidance Logic (LiDAR-based) ---
@@ -636,7 +609,6 @@ impl NavigationManager {
                 }
                 // ---------------------------------
 
-                self.last_command = command;
                 command
             } else {
                 None
