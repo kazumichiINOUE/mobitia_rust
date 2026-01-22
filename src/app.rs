@@ -2502,17 +2502,17 @@ negate = 0
                 self.camera_screen.draw(ui, &self.cameras);
             }
             AppMode::Nav => {
-                if let Some((v, w)) = self
+                let nav_command = self
                     .navigation_manager
-                    .update(self.motor_odometry, &self.latest_scan_for_draw)
-                {
-                    if self.motor_thread_active {
-                        if let Err(e) = self
-                            .motor_command_sender
-                            .send(crate::motors::MotorCommand::SetVelocity(v, w))
-                        {
-                            eprintln!("ERROR: Failed to send navigation motor command: {}", e);
-                        }
+                    .update(self.motor_odometry, &self.latest_scan_for_draw);
+
+                if self.motor_thread_active {
+                    let motor_cmd = match nav_command {
+                        Some((v, w)) => crate::motors::MotorCommand::SetVelocity(v, w),
+                        None => crate::motors::MotorCommand::Stop,
+                    };
+                    if let Err(e) = self.motor_command_sender.send(motor_cmd) {
+                        eprintln!("ERROR: Failed to send navigation motor command: {}", e);
                     }
                 }
                 self.current_robot_pose = self.navigation_manager.current_robot_pose;
