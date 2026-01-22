@@ -48,10 +48,10 @@ pub struct NavigationManager {
     pub is_localizing: bool,
     pub de_frame_counter: usize,
 
-    // Visualization
     pub viz_scan: Vec<(f32, f32, f32, f32, f32, f32, f32, f32)>,
     pub converged_message_timer: usize,
     pub navigation_finished_timer: usize,
+    pub total_travel_distance: f32,
 
     // Autonomous Navigation
     pub is_autonomous: bool,
@@ -93,6 +93,7 @@ impl NavigationManager {
             viz_scan: Vec::new(),
             converged_message_timer: 0,
             navigation_finished_timer: 0,
+            total_travel_distance: 0.0,
             is_autonomous: false,
             predicted_footprint_pose: None,
             dwa_planner,
@@ -243,11 +244,6 @@ impl NavigationManager {
                             cell.edge_ness = (cell.edge_ness * 0.7) + (p.feature as f64 * 0.3);
                             cell.corner_ness = (cell.corner_ness * 0.7) + (p.corner as f64 * 0.3);
 
-                            // Debug print
-                            if p.feature > 0.5 {
-                                println!("DEBUG: Loaded high edge feature ({:.3}) at Grid({}, {}). Current cell edge_ness: {:.3}", p.feature, gx, gy, cell.edge_ness);
-                            }
-
                             cell.normal_x = (cell.normal_x * 0.7) + (normal_global.x as f64 * 0.3);
                             cell.normal_y = (cell.normal_y * 0.7) + (normal_global.y as f64 * 0.3);
 
@@ -350,6 +346,7 @@ impl NavigationManager {
         self.is_localizing = true;
         self.de_frame_counter = 0;
         self.viz_scan.clear();
+        self.total_travel_distance = 0.0;
         self.is_autonomous = false;
         self.predicted_footprint_pose = None;
     }
@@ -470,6 +467,11 @@ impl NavigationManager {
                 let sin_theta = last_theta.sin();
                 let delta_x_local = delta_x_global * cos_theta + delta_y_global * sin_theta;
                 let delta_y_local = -delta_x_global * sin_theta + delta_y_global * cos_theta;
+                
+                // Add to total travel distance
+                let step_dist = (delta_x_local.powi(2) + delta_y_local.powi(2)).sqrt();
+                self.total_travel_distance += step_dist;
+
                 let movement = Isometry2::new(
                     nalgebra::Vector2::new(delta_x_local, delta_y_local),
                     delta_theta,
@@ -579,7 +581,8 @@ impl NavigationManager {
                     let dist_to_goal = (robot_pos - goal_pos).norm();
                     
                     if dist_to_goal < self.config.goal_tolerance {
-                        println!("GOAL REACHED! Distance: {:.3}m", dist_to_goal);
+                        println!("GOAL REACHED! Total Travel Distance: {:.2}m, Accuracy: {:.3}m", 
+                            self.total_travel_distance, dist_to_goal);
                         self.is_autonomous = false;
                         self.navigation_finished_timer = 180; // Show message for ~3 seconds
                         return Some((0.0, 0.0));

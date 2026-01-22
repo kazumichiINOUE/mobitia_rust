@@ -204,6 +204,6 @@ obstacle_safety_dist = 0.5 # 影響を受ける距離を適切に制限する
 num_iterations = 5         # 1フレームあたりの計算回数を抑えて安定させる
 
 [robot]
-width = 0.4
+width = 0.7
 length = 0.6
 min_mapping_dist = 0.4

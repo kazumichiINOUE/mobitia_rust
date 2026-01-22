@@ -51,6 +51,12 @@ impl NavScreen {
                     .background_color(background_color),
                 );
                 ui.label(
+                    egui::RichText::new(format!("Travel Dist: {:>8.2} m", navigation_manager.total_travel_distance))
+                        .monospace()
+                        .color(egui::Color32::GOLD)
+                        .background_color(background_color),
+                );
+                ui.label(
                     egui::RichText::new(format!("Lidar Points: {}", latest_scan_for_draw.len()))
                         .monospace()
                         .background_color(background_color),
@@ -275,6 +281,36 @@ impl NavScreen {
         if let Some(target) = current_nav_target {
             let screen_pos = to_screen.transform_pos(*target);
             if rect.contains(screen_pos) {
+                // Find the index of the target in local_path
+                if let Some(idx) = local_path.iter().position(|p| p == target) {
+                    // Distance to Previous
+                    if idx > 0 {
+                        let prev = local_path[idx - 1];
+                        let dist = prev.distance(*target);
+                        // Scale radius to screen
+                        let radius_screen = dist * (rect.width() / map_view_rect.width());
+                        
+                        painter.circle_stroke(
+                            screen_pos, 
+                            radius_screen, 
+                            egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(255, 100, 100, 100)) // Reddish for Prev
+                        );
+                    }
+                    // Distance to Next
+                    if idx < local_path.len() - 1 {
+                        let next = local_path[idx + 1];
+                        let dist = next.distance(*target);
+                        // Scale radius to screen
+                        let radius_screen = dist * (rect.width() / map_view_rect.width());
+                        
+                        painter.circle_stroke(
+                            screen_pos, 
+                            radius_screen, 
+                            egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(100, 255, 100, 100)) // Greenish for Next
+                        );
+                    }
+                }
+
                 let stroke = egui::Stroke::new(2.0, egui::Color32::from_rgb(0, 255, 255));
                 painter.circle_stroke(screen_pos, 10.0, stroke);
                 painter.circle_filled(

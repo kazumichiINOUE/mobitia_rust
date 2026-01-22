@@ -125,6 +125,43 @@ impl ElasticBand {
 
             // --- 4. Refine (Add/Remove points) ---
             self.refine_trajectory(trajectory);
+            // --- 5. Simplify (Remove points on straight lines) ---
+            self.simplify_trajectory(trajectory);
+        }
+    }
+
+    fn simplify_trajectory(&self, trajectory: &mut Vec<egui::Pos2>) {
+        if trajectory.len() < 3 { return; }
+        
+        let mut i = 1;
+        // Check up to the second to last point
+        while i < trajectory.len() - 1 {
+            let prev = trajectory[i-1];
+            let curr = trajectory[i];
+            let next = trajectory[i+1];
+            
+            let v1 = curr - prev;
+            let v2 = next - curr;
+            
+            if v1.length_sq() < 1e-4 || v2.length_sq() < 1e-4 {
+                i += 1;
+                continue;
+            }
+            
+            let v1_n = v1.normalized();
+            let v2_n = v2.normalized();
+            
+            // Dot product > 0.999 means the angle is very small (straight line)
+            // Also ensure we don't create gaps larger than max_spacing (0.5)
+            let dist_new = prev.distance(next);
+            let max_spacing = 0.5;
+
+            if v1_n.dot(v2_n) > 0.999 && dist_new < max_spacing {
+                trajectory.remove(i);
+                // Do not increment i, so we check the new current point against the same prev
+            } else {
+                i += 1;
+            }
         }
     }
 
