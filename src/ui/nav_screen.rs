@@ -54,6 +54,16 @@ impl NavScreen {
                         .monospace()
                         .background_color(background_color),
                 );
+                if let Some((cmd_v, cmd_w)) = navigation_manager.last_command {
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "Command: v={:.2} m/s, w={:.2} rad/s",
+                            cmd_v, cmd_w
+                        ))
+                        .monospace()
+                        .background_color(background_color),
+                    );
+                }
             });
 
         let (response, painter) = ui.allocate_painter(ui.available_size(), egui::Sense::hover());
@@ -302,6 +312,42 @@ impl NavScreen {
             ],
             egui::Stroke::new(2.0, egui::Color32::GREEN),
         );
+
+        // --- Draw DWA Trajectories ---
+        let robot_center = egui::pos2(
+            current_robot_pose.translation.x,
+            current_robot_pose.translation.y,
+        );
+        let vis_scale = navigation_manager.config.dwa.visual_scale;
+
+        for traj in &navigation_manager.dwa_trajectories {
+            let color = if traj.is_safe {
+                egui::Color32::from_rgba_unmultiplied(100, 100, 255, 150)
+            } else {
+                egui::Color32::from_rgba_unmultiplied(255, 50, 50, 150)
+            };
+
+            let path_points: Vec<egui::Pos2> = traj
+                .points
+                .iter()
+                .map(|p| {
+                    let p_real = egui::pos2(p.x, p.y);
+                    let p_visual = robot_center + (p_real - robot_center) * vis_scale;
+                    to_screen.transform_pos(p_visual)
+                })
+                .collect();
+
+            if path_points.len() > 1 {
+                painter.add(egui::Shape::line(
+                    path_points.clone(),
+                    egui::Stroke::new(1.5, color),
+                ));
+                // Add a small dot at the end to make it visible even if short
+                if let Some(last) = path_points.last() {
+                    painter.circle_filled(*last, 1.5, color);
+                }
+            }
+        }
 
         // --- Converged Message ---
         if navigation_manager.converged_message_timer > 0 {
