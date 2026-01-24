@@ -24,6 +24,31 @@
 ### `nav stop`
 現在実行中のナビゲーションプロセスを停止します。このコマンドの実行後、アプリケーションの描画モードはデフォルトでLiDARモードに戻ります。
 
+## 制御アーキテクチャ (Control Architecture)
+本システムでは、以下の階層的なナビゲーションパイプラインを採用しています。
+
+1.  **Global Planner (初期経路生成)**
+    - 事前に記録された、または生成された `trajectory.txt` を読み込み、初期のグローバルパスとして使用します。
+    - これは大まかな通過点を示しており、動的な障害物は考慮されていません。
+
+2.  **Local Planner: Elastic Band (リアルタイム障害物回避)**
+    - **役割**: グローバルパスを「ゴムバンド」に見立て、障害物から反発力を受けて変形させることで、安全な局所経路（Local Path）をリアルタイムに生成します。
+    - **特徴**: 幾何学的に滑らかな経路を維持しつつ、動的な障害物を柔軟に回避します。
+    - **実装**: `src/navigation/elastic_band.rs`
+
+3.  **Controller: Pure Pursuit (経路追従)**
+    - **役割**: Elastic Band によって変形された安全な経路を追従するための速度指令 ($v, \omega$) を生成します。
+    - **特徴**: Lookahead Distance（先読み距離）に基づき、滑らかなステアリング制御を行います。Elastic Band が生成する経路自体が滑らかであるため、急激な挙動を抑制できます。
+    - **速度制御**: カーブの曲率に応じた減速などは、このステージまたはその前段で処理されます。
+    - **実装**: `src/navigation/pure_pursuit.rs`
+
+### 代替手段 / Legacy: Dynamic Window Approach (DWA)
+過去の開発フェーズで使用されていた、あるいは特定の状況下での代替手段として **DWA** も実装されています。
+
+- **概要**: ロボットの運動モデル（速度・加速度制約）に基づいて、短時間後の取りうる軌道を多数予測し、評価関数（ゴールへの近さ、障害物との距離、速度）が最大となる指令値を選択します。
+- **現状**: 現在のデフォルト構成では、計算負荷と挙動の滑らかさの観点から **Elastic Band + Pure Pursuit** の構成が推奨されており、DWAは無効化されています。
+- **実装**: `src/navigation/dwa.rs`
+
 ## 座標系と地図データの仕様
 本システムにおけるナビゲーションでは、ワールド座標系とグリッド座標系（地図画像）の間で正確な変換が求められます。以下の仕様に基づいて実装されています。
 
@@ -67,7 +92,9 @@ $$ v = \lfloor \frac{origin\_y - y}{resolution} \rfloor $$
 
 - **`src/navigation/mod.rs`**: `NavigationManager` 構造体とその実装が含まれます。これがナビゲーションサブシステムのメインエントリーポイントです。
 - **`src/navigation/localization.rs`**: 自己位置推定ロジック（現在、再実装中）。
-- **`src/navigation/pure_pursuit.rs`**: 経路追従ロジック（Pure Pursuitアルゴリズム）。
+- **`src/navigation/pure_pursuit.rs`**: 経路追従ロジック。
+- **`src/navigation/elastic_band.rs`**: 局所経路計画（障害物回避）。
+- **`src/navigation/dwa.rs`**: 局所経路計画（代替/Legacy）。
 
 ### 地図データの扱いと高精度化
 ナビゲーションの信頼性を高めるため、起動時の地図データ読み込みと内部表現を高度化します。
@@ -81,7 +108,7 @@ $$ v = \lfloor \frac{origin\_y - y}{resolution} \rfloor $$
 
 #### 管理する状態
 - **地図データ**: `nav_map_texture`, `nav_map_bounds`, `occupancy_grid`
-- **経路情報**: `nav_trajectory_points`
+- **経路情報**: `nav_trajectory_points` (Global Path), `local_path` (Elastic Band output)
 - **現在のターゲット**: `current_nav_target`
 - **ロボットの現在姿勢**: `current_robot_pose`
 - **オドメトリ履歴**: `last_odom`（前回フレームの値を保持し、差分計算に使用）

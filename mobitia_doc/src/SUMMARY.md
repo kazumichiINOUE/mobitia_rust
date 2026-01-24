@@ -14,5 +14,8 @@
   - [SLAM (`slam/mod.rs`)](subsystems/08_slam.md)
   - [SLAM Optimizer (`differential_evolution.rs`)](subsystems/09_de.md)
   - [Navigation (`navigation/`)](subsystems/11_navigation.md)
+  - [Elastic Band (`elastic_band.rs`)](subsystems/12_elastic_band.md)
 - [Command Interface](command_interface.md)
   - [CLI (`cli.rs`)](10_cli.md)
+- [Development & Debugging](development_debugging.md)
+  - [System Tracing (Perfetto)](trace_guide.md)
