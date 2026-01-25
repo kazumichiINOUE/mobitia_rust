@@ -182,6 +182,7 @@ pub struct ElasticBandConfig {
     pub external_force_gain: f32,
     pub obstacle_safety_dist: f32,
     pub num_iterations: usize,
+    pub global_path_gain: f32,
 }
 
 impl Default for ElasticBandConfig {
@@ -191,6 +192,7 @@ impl Default for ElasticBandConfig {
             external_force_gain: 0.1,
             obstacle_safety_dist: 0.8,
             num_iterations: 10,
+            global_path_gain: 0.05,
         }
     }
 }

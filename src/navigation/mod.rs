@@ -515,7 +515,8 @@ impl NavigationManager {
             }
             self.de_frame_counter += 1;
 
-            if self.is_autonomous && !self.is_localizing {
+            // --- Path Planning & Navigation (Runs when localized) ---
+            if !self.is_localizing {
                 use crate::navigation::pure_pursuit;
 
                 // --- 1. Update Elastic Band (Local Path) ---
@@ -559,92 +560,97 @@ impl NavigationManager {
                     }
                 }
 
-                // Run EB optimization
+                // Run EB optimization (Always run if localized to visualize potential path)
                 self.elastic_band.optimize(
                     &mut self.local_path,
                     robot_pos_egui,
-                    &obstacles
+                    &obstacles,
+                    &self.nav_trajectory_points,
                 );
 
-                // --- 2. Pure Pursuit Control ---
-                // Compute command using the deformed local_path
-                let command = pure_pursuit::compute_command(
-                    &self.current_robot_pose,
-                    &self.local_path,
-                    &mut self.current_nav_target,
-                    self.config.lookahead_distance,
-                    self.config.target_velocity,
-                    self.config.goal_tolerance,
-                );
+                // --- 2. Generate Command (Only if Autonomous) ---
+                if self.is_autonomous {
+                    // Compute command using the deformed local_path
+                    let command = pure_pursuit::compute_command(
+                        &self.current_robot_pose,
+                        &self.local_path,
+                        &mut self.current_nav_target,
+                        self.config.lookahead_distance,
+                        self.config.target_velocity,
+                        self.config.goal_tolerance,
+                    );
 
-                // Check for goal reach explicitly to trigger message
-                if let Some(last_p) = self.local_path.last() {
-                    let robot_pos = self.current_robot_pose.translation.vector;
-                    let goal_pos = nalgebra::Vector2::new(last_p.x, last_p.y);
-                    let dist_to_goal = (robot_pos - goal_pos).norm();
-                    
-                    if dist_to_goal < self.config.goal_tolerance {
-                        info!(
-                            "GOAL REACHED! Total Travel Distance: {:.2}m, Accuracy: {:.3}m", 
-                            self.total_travel_distance, dist_to_goal
-                        );
-                        self.is_autonomous = false;
-                        self.navigation_finished_timer = 180; // Show message for ~3 seconds
-                        return Some((0.0, 0.0));
+                    // Check for goal reach explicitly to trigger message
+                    if let Some(last_p) = self.local_path.last() {
+                        let robot_pos = self.current_robot_pose.translation.vector;
+                        let goal_pos = nalgebra::Vector2::new(last_p.x, last_p.y);
+                        let dist_to_goal = (robot_pos - goal_pos).norm();
+                        
+                        if dist_to_goal < self.config.goal_tolerance {
+                            info!(
+                                "GOAL REACHED! Total Travel Distance: {:.2}m, Accuracy: {:.3}m", 
+                                self.total_travel_distance, dist_to_goal
+                            );
+                            self.is_autonomous = false;
+                            self.navigation_finished_timer = 180; // Show message for ~3 seconds
+                            return Some((0.0, 0.0));
+                        }
                     }
-                }
 
-                // --- 3. Collision Check (Safety Stop) ---
-                let mut final_command = command;
-                
-                let avoid_dist_threshold = self.config.lidar_avoid_dist;
-                let avoid_angle_threshold = 90.0_f32.to_radians();
+                    // --- 3. Collision Check (Safety Stop) ---
+                    let mut final_command = command;
+                    
+                    let avoid_dist_threshold = self.config.lidar_avoid_dist;
+                    let avoid_angle_threshold = 90.0_f32.to_radians();
 
-                let mut min_dist = f32::MAX;
-                let mut obstacle_angle = 0.0;
-                let mut detected = false;
-                
-                for (x, y, _r, _theta, _feature, _nx, _ny, _corner) in effective_scan {
-                    // (x, y) are local
-                    let dist = (x * x + y * y).sqrt();
-                    if dist < avoid_dist_threshold {
-                        let angle = y.atan2(*x);
-                        if angle.abs() < avoid_angle_threshold {
-                            if dist < min_dist {
-                                min_dist = dist;
-                                obstacle_angle = angle;
-                                detected = true;
+                    let mut min_dist = f32::MAX;
+                    let mut obstacle_angle = 0.0;
+                    let mut detected = false;
+                    
+                    for (x, y, _r, _theta, _feature, _nx, _ny, _corner) in effective_scan {
+                        // (x, y) are local
+                        let dist = (x * x + y * y).sqrt();
+                        if dist < avoid_dist_threshold {
+                            let angle = y.atan2(*x);
+                            if angle.abs() < avoid_angle_threshold {
+                                if dist < min_dist {
+                                    min_dist = dist;
+                                    obstacle_angle = angle;
+                                    detected = true;
+                                }
                             }
                         }
                     }
-                }
 
-                if detected {
-                    // Override with safety behavior
-                    let escape_velocity = -0.1; 
-                    let escape_omega = if obstacle_angle > 0.0 { -0.5 } else { 0.5 };
-                    info!(
-                        "COLLISION AVOIDANCE triggered: Dist {:.3}m, Angle {:.1}deg -> Backing up",
-                        min_dist,
-                        obstacle_angle.to_degrees()
-                    );
-                    final_command = Some((escape_velocity, escape_omega));
-                }
+                    if detected {
+                        // Override with safety behavior
+                        let escape_velocity = -0.1; 
+                        let escape_omega = if obstacle_angle > 0.0 { -0.5 } else { 0.5 };
+                        info!(
+                            "COLLISION AVOIDANCE triggered: Dist {:.3}m, Angle {:.1}deg -> Backing up",
+                            min_dist,
+                            obstacle_angle.to_degrees()
+                        );
+                        final_command = Some((escape_velocity, escape_omega));
+                    }
 
-                // Update predicted pose for visualization (using PP command)
-                if let Some((v, w)) = final_command {
-                    let dt = 1.0; 
-                    let current_yaw = self.current_robot_pose.rotation.angle();
-                    let pred_yaw = current_yaw + w * dt;
-                    let avg_yaw = (current_yaw + pred_yaw) / 2.0;
-                    let pred_x = self.current_robot_pose.translation.x + v * dt * avg_yaw.cos();
-                    let pred_y = self.current_robot_pose.translation.y + v * dt * avg_yaw.sin();
-                    self.predicted_footprint_pose = Some(Isometry2::new(nalgebra::Vector2::new(pred_x, pred_y), pred_yaw));
+                    // Update predicted pose for visualization (using PP command)
+                    if let Some((v, w)) = final_command {
+                        let dt = 1.0; 
+                        let current_yaw = self.current_robot_pose.rotation.angle();
+                        let pred_yaw = current_yaw + w * dt;
+                        let avg_yaw = (current_yaw + pred_yaw) / 2.0;
+                        let pred_x = self.current_robot_pose.translation.x + v * dt * avg_yaw.cos();
+                        let pred_y = self.current_robot_pose.translation.y + v * dt * avg_yaw.sin();
+                        self.predicted_footprint_pose = Some(Isometry2::new(nalgebra::Vector2::new(pred_x, pred_y), pred_yaw));
+                    } else {
+                        self.predicted_footprint_pose = None;
+                    }
+
+                    final_command
                 } else {
-                    self.predicted_footprint_pose = None;
+                    None
                 }
-
-                final_command
             } else {
                 None
             }

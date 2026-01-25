@@ -202,8 +202,9 @@ internal_force_gain = 0.5  # バネの力を強めて経路の形状を維持す
 external_force_gain = 0.4 # 障害物からの反発を弱めて過敏な反応を抑える
 obstacle_safety_dist = 0.5 # 影響を受ける距離を適切に制限する
 num_iterations = 5         # 1フレームあたりの計算回数を抑えて安定させる
+global_path_gain = 0.1
 
 [robot]
 width = 0.7
 length = 0.6
-min_mapping_dist = 0.4
+min_mapping_dist = 1.0

@@ -101,6 +101,37 @@ impl MyApp {
             &self.config.slam,
         );
 
+        // Force free space around the robot within min_mapping_dist
+        let min_dist = self.config.robot.min_mapping_dist;
+        if min_dist > 0.0 {
+            let radius_cells = (min_dist / self.config.slam.csize).ceil() as isize;
+            let min_dist_cells_sq = (min_dist / self.config.slam.csize).powi(2);
+
+            for dy in -radius_cells..=radius_cells {
+                for dx in -radius_cells..=radius_cells {
+                    // Check if cell is within the circle
+                    if (dx as f32).powi(2) + (dy as f32).powi(2) <= min_dist_cells_sq {
+                        let mx = robot_pos_map.0 as isize + dx;
+                        let my = robot_pos_map.1 as isize + dy;
+
+                        if mx >= 0
+                            && mx < grid.width as isize
+                            && my >= 0
+                            && my < grid.height as isize
+                        {
+                            let idx = (my as usize) * grid.width + (mx as usize);
+                            grid.data[idx].log_odds = (grid.data[idx].log_odds
+                                + progress.log_odds_free)
+                                .clamp(
+                                    self.config.slam.log_odds_clamp_min,
+                                    self.config.slam.log_odds_clamp_max,
+                                );
+                        }
+                    }
+                }
+            }
+        }
+
         for scan_point in &scan_data.scan_points {
             let endpoint_local = Point2::new(scan_point.x, scan_point.y);
             let endpoint_world = scan_pose_world * endpoint_local;

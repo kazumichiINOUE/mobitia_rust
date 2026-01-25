@@ -14,12 +14,13 @@ impl ElasticBand {
 
     /// Optimizes the trajectory using a stable spring-mass-damper like approach.
     /// Includes displacement limits to prevent divergence.
-    #[instrument(skip(self, trajectory, obstacles))]
+    #[instrument(skip(self, trajectory, obstacles, global_path))]
     pub fn optimize(
         &self,
         trajectory: &mut Vec<egui::Pos2>,
         robot_pos: egui::Pos2,
         obstacles: &[(f32, f32, f32, f32)], // x, y, nx, ny
+        global_path: &[egui::Pos2],
     ) {
         if trajectory.len() < 3 {
             return;
@@ -27,7 +28,7 @@ impl ElasticBand {
 
         let iterations = self.config.num_iterations.max(5); 
         let sigma = self.config.obstacle_safety_dist * 0.5; // Gaussian sigma
-        let sigma_sq_2 = 2.0 * sigma * sigma;
+        let _sigma_sq_2 = 2.0 * sigma * sigma;
 
         for _ in 0..iterations {
             if trajectory.len() < 3 { break; }
@@ -108,20 +109,51 @@ impl ElasticBand {
                     }
                 }
 
-                displacements[i] = internal_f + external_f;
+                // --- 3. Global Path Attraction (Tether) ---
+                let mut attraction_f = egui::Vec2::ZERO;
+                if self.config.global_path_gain > 0.0 && !global_path.is_empty() {
+                    let mut min_gp_dist_sq = f32::MAX;
+                    let mut closest_gp = global_path[0];
+
+                    // Find closest point on global path
+                    // Optimization: We could search only a window, but for safety we search all for now.
+                    // Assuming global_path is the reference trajectory.
+                    for gp in global_path {
+                        let dx = p.x - gp.x;
+                        let dy = p.y - gp.y;
+                        let d_sq = dx * dx + dy * dy;
+                        if d_sq < min_gp_dist_sq {
+                            min_gp_dist_sq = d_sq;
+                            closest_gp = *gp;
+                        }
+                    }
+
+                    // Only apply attraction if we are somewhat close to the track (e.g., within 2m)
+                    // This prevents snapping to a completely different section of a looping track.
+                    if min_gp_dist_sq < 4.0 {
+                        attraction_f = (closest_gp - p) * self.config.global_path_gain;
+                    }
+                }
+
+                displacements[i] = internal_f + external_f + attraction_f;
             }
 
-            // --- 3. Apply with Limiter ---
+            // --- 3. Apply with Limiter & Damping ---
             for i in start_idx..end_idx {
                 let disp = displacements[i];
                 let disp_len = disp.length();
-                // Limit displacement per iteration to prevent jitter/messy shapes
-                let max_disp = 0.05; 
-                let final_disp = if disp_len > max_disp {
+                // Limit displacement per iteration to prevent jitter
+                let max_disp = 0.02; 
+                let mut final_disp = if disp_len > max_disp {
                     disp * (max_disp / disp_len)
                 } else {
                     disp
                 };
+
+                // Damping factor: Apply only a fraction of the force per iteration
+                // to prevent overshooting and oscillations.
+                final_disp *= 0.3;
+
                 trajectory[i] += final_disp;
             }
 
