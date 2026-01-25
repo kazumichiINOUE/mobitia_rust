@@ -1,4 +1,6 @@
 # 4.1 システムトレーシング (Perfetto)
+<!-- TODO: Add English translation here -->
+
 Mobitiaでは、`tracing` クレートを使用して、ミリ秒単位のイベントや関数の実行時間を記録しています。これにより、「なぜか止まらない」「挙動が不安定になる」といった再現性の低い問題の原因究明が容易になります。
 
 ## ログファイル
@@ -7,6 +9,8 @@ Mobitiaでは、`tracing` クレートを使用して、ミリ秒単位のイベ
 - **形式**: Chrome Trace Event Format (JSON)
 
 ## 可視化ツール: Perfetto
+<!-- TODO: Add English translation here -->
+
 生成された JSON ファイルは、そのままでは人間が読むのは困難です。Google が提供する **[Perfetto UI](https://ui.perfetto.dev/)** を使用して可視化します。
 
 ### 使用手順
@@ -15,6 +19,7 @@ Mobitiaでは、`tracing` クレートを使用して、ミリ秒単位のイベ
 3. タイムラインが表示されます。
 
 ## 解析のポイント
+<!-- TODO: Add English translation here -->
 
 ### 1. スレッドごとの動き
 - `main` (UIスレッド): `update` 関数の実行時間やフレームレートが確認できます。
@@ -32,6 +37,8 @@ Mobitiaでは、`tracing` クレートを使用して、ミリ秒単位のイベ
 各バー（スパン）をクリックすると、下部の詳細パネルにその関数の実行時間 (Duration) が表示されます。`ElasticBand::optimize` など、負荷の高い処理がフレームタイムを圧迫していないか確認できます。
 
 ## コードへの計装方法
+<!-- TODO: Add English translation here -->
+
 新しい処理を追跡対象にしたい場合は、関数に `#[tracing::instrument]` アノテーションを付けるか、重要なタイミングで `tracing::info!("メッセージ")` を記述します。
 
 ```rust
