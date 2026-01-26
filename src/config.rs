@@ -99,6 +99,12 @@ pub struct UiConfig {
     pub show_xppen_panel: bool,
     pub show_camera_panel: bool,
     pub show_osmo_panel: bool,
+    #[serde(default = "default_nav_zoom_view_size")]
+    pub nav_zoom_view_size: f32,
+}
+
+fn default_nav_zoom_view_size() -> f32 {
+    4.0
 }
 
 // --- Motor Configuration ---
@@ -393,6 +399,7 @@ impl Default for UiConfig {
             show_xppen_panel: true,
             show_camera_panel: true,
             show_osmo_panel: true,
+            nav_zoom_view_size: default_nav_zoom_view_size(),
         }
     }
 }

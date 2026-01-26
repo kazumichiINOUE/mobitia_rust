@@ -15,6 +15,7 @@ impl NavScreen {
         &mut self,
         ui: &mut egui::Ui,
         lidar_draw_rect: &mut Option<egui::Rect>,
+        ui_config: &crate::config::UiConfig,
         navigation_manager: &NavigationManager,
         latest_scan_for_draw: &[(f32, f32, f32, f32, f32, f32, f32, f32)],
         motor_odometry: &(f32, f32, f32),
@@ -66,15 +67,12 @@ impl NavScreen {
         let (response, painter) = ui.allocate_painter(ui.available_size(), egui::Sense::hover());
         let rect = response.rect;
         *lidar_draw_rect = Some(rect);
+        
+        // Fill background
         painter.rect_filled(rect, 0.0, egui::Color32::from_rgb(20, 20, 20));
 
+        // --- 1. Main View Setup ---
         let nav_map_bounds = &navigation_manager.nav_map_bounds;
-        let nav_map_texture = &navigation_manager.nav_map_texture;
-        let nav_trajectory_points = &navigation_manager.nav_trajectory_points;
-        let local_path = &navigation_manager.local_path;
-        let current_nav_target = &navigation_manager.current_nav_target;
-
-        // --- Coordinate System Setup ---
         let map_view_rect = if let Some(bounds) = nav_map_bounds {
             let screen_aspect = rect.width() / rect.height();
             let bounds_aspect = bounds.width() / bounds.height();
@@ -96,17 +94,174 @@ impl NavScreen {
         let mut inverted_map_view_rect = map_view_rect;
         inverted_map_view_rect.min.y = map_view_rect.max.y;
         inverted_map_view_rect.max.y = map_view_rect.min.y;
-        let to_screen = egui::emath::RectTransform::from_to(inverted_map_view_rect, rect);
+        let to_screen_main = egui::emath::RectTransform::from_to(inverted_map_view_rect, rect);
 
-        // --- Static Drawing ---
-        if let (Some(texture), Some(bounds)) = (nav_map_texture, nav_map_bounds) {
-            let screen_rect = to_screen.transform_rect(*bounds);
-            painter.image(
-                texture.id(),
-                screen_rect,
-                egui::Rect::from_min_max(egui::pos2(0.0, 1.0), egui::pos2(1.0, 0.0)),
+        // --- 2. Draw Main View ---
+        Self::draw_nav_content(
+            &painter,
+            rect,
+            &to_screen_main,
+            navigation_manager,
+            latest_scan_for_draw,
+            robot_trajectory,
+            true, // Draw background map
+        );
+
+        // --- 3. Sub View (PIP) Setup ---
+        // Fixed size 300x300 at bottom right
+        let sub_size = egui::vec2(300.0, 300.0);
+        let sub_rect = egui::Rect::from_min_size(
+            rect.max - sub_size - egui::vec2(20.0, 20.0),
+            sub_size
+        );
+
+        // Only draw PIP if there is space
+        if rect.contains(sub_rect.min) {
+            let sub_painter = painter.with_clip_rect(sub_rect);
+            
+            // Background and Border
+            sub_painter.rect_filled(sub_rect, 0.0, egui::Color32::from_rgb(10, 10, 10));
+            sub_painter.rect_stroke(sub_rect, 0.0, egui::Stroke::new(2.0, egui::Color32::WHITE));
+
+            // Viewport: Robot center +/- zoom_view_size/2
+            let zoom_size = ui_config.nav_zoom_view_size;
+            let robot_pos = egui::pos2(current_robot_pose.translation.x, current_robot_pose.translation.y);
+            let sub_view_rect = egui::Rect::from_center_size(robot_pos, egui::vec2(zoom_size, zoom_size));
+            
+            let mut inverted_sub_view_rect = sub_view_rect;
+            inverted_sub_view_rect.min.y = sub_view_rect.max.y;
+            inverted_sub_view_rect.max.y = sub_view_rect.min.y;
+            let to_screen_sub = egui::emath::RectTransform::from_to(inverted_sub_view_rect, sub_rect);
+
+            // --- 4. Draw Sub View ---
+            Self::draw_nav_content(
+                &sub_painter,
+                sub_rect,
+                &to_screen_sub,
+                navigation_manager,
+                latest_scan_for_draw,
+                robot_trajectory,
+                true,
+            );
+            
+            // Label for PIP
+            sub_painter.text(
+                sub_rect.min + egui::vec2(5.0, 5.0),
+                egui::Align2::LEFT_TOP,
+                format!("Zoom ({:.1}m x {:.1}m)", zoom_size, zoom_size),
+                egui::FontId::monospace(14.0),
                 egui::Color32::WHITE,
             );
+        }
+
+        // --- Converged & Finished Messages (Overlay on whole screen) ---
+        if navigation_manager.converged_message_timer > 0 {
+            let center = rect.center();
+            let text = "Localization Converged";
+            let font_id = egui::FontId::proportional(30.0);
+            painter.text(center + egui::vec2(2.0, 2.0), egui::Align2::CENTER_CENTER, text, font_id.clone(), egui::Color32::BLACK);
+            painter.text(center, egui::Align2::CENTER_CENTER, text, font_id, egui::Color32::GREEN);
+        }
+        if navigation_manager.navigation_finished_timer > 0 {
+            let center = rect.center();
+            let text = "Goal Reached / Navigation Finished";
+            let font_id = egui::FontId::proportional(30.0);
+            painter.text(center + egui::vec2(2.0, 2.0), egui::Align2::CENTER_CENTER, text, font_id.clone(), egui::Color32::BLACK);
+            painter.text(center, egui::Align2::CENTER_CENTER, text, font_id, egui::Color32::GOLD);
+        }
+
+        // --- Debug Info on Hover (Main View Only) ---
+        if let Some(mouse_pos) = ui.input(|i| i.pointer.hover_pos()) {
+            if rect.contains(mouse_pos) {
+                // If hovering over PIP, use sub transform?
+                // For simplicity, let's just support tooltips on the main map for now, 
+                // or check if mouse is inside sub_rect.
+                let transform = if rect.contains(sub_rect.min) && sub_rect.contains(mouse_pos) {
+                    // Hovering PIP
+                    let robot_pos = egui::pos2(current_robot_pose.translation.x, current_robot_pose.translation.y);
+                    let sub_view_rect = egui::Rect::from_center_size(robot_pos, egui::vec2(4.0, 4.0));
+                    let mut inverted_sub_view_rect = sub_view_rect;
+                    inverted_sub_view_rect.min.y = sub_view_rect.max.y;
+                    inverted_sub_view_rect.max.y = sub_view_rect.min.y;
+                    egui::emath::RectTransform::from_to(inverted_sub_view_rect, sub_rect)
+                } else {
+                    // Hovering Main
+                    to_screen_main
+                };
+
+                let world_pos = transform.inverse().transform_pos(mouse_pos);
+                let mut debug_text = format!("World: ({:.3}, {:.3})", world_pos.x, world_pos.y);
+
+                if let (Some(grid), Some(info)) = (
+                    &navigation_manager.occupancy_grid,
+                    &navigation_manager.map_info,
+                ) {
+                    let resolution = info.resolution;
+                    let origin_x = info.origin[0];
+                    let origin_y = info.origin[1];
+                    let width = grid.width;
+                    let height = grid.height;
+
+                    let gx = ((world_pos.x - origin_x) / resolution).floor() as i32;
+                    let gy = ((origin_y - world_pos.y) / resolution).floor() as i32;
+
+                    debug_text += &format!("\nGrid(TL): ({}, {})", gx, gy);
+
+                    if gx >= 0 && gx < width as i32 && gy >= 0 && gy < height as i32 {
+                        let idx = (gy as usize) * width + (gx as usize);
+                        if let Some(cell) = grid.data.get(idx) {
+                            debug_text += &format!("\nLogOdds: {:.2}", cell.log_odds);
+                            if cell.log_odds > 0.0 {
+                                debug_text += "\n[OCCUPIED]";
+                            } else if cell.log_odds < 0.0 {
+                                debug_text += "\n[FREE]";
+                            } else {
+                                debug_text += "\n[UNKNOWN]";
+                            }
+                        }
+                    } else {
+                        debug_text += "\n[OUT OF BOUNDS]";
+                    }
+                }
+
+                egui::show_tooltip(ui.ctx(), egui::Id::new("nav_debug_tooltip"), |ui| {
+                    ui.label(debug_text);
+                });
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn draw_nav_content(
+        painter: &egui::Painter,
+        rect: egui::Rect,
+        to_screen: &egui::emath::RectTransform,
+        navigation_manager: &NavigationManager,
+        latest_scan_for_draw: &[(f32, f32, f32, f32, f32, f32, f32, f32)],
+        robot_trajectory: &[(egui::Pos2, f32)],
+        draw_background: bool,
+    ) {
+        let current_robot_pose = &navigation_manager.current_robot_pose;
+        let nav_map_bounds = &navigation_manager.nav_map_bounds;
+        let nav_map_texture = &navigation_manager.nav_map_texture;
+        let nav_trajectory_points = &navigation_manager.nav_trajectory_points;
+        let local_path = &navigation_manager.local_path;
+        let current_nav_target = &navigation_manager.current_nav_target;
+
+        // --- Static Drawing (Map Image) ---
+        if draw_background {
+            if let (Some(texture), Some(bounds)) = (nav_map_texture, nav_map_bounds) {
+                // Optimize: Only draw if bounds intersect view
+                let screen_rect = to_screen.transform_rect(*bounds);
+                if rect.intersects(screen_rect) {
+                    painter.image(
+                        texture.id(),
+                        screen_rect,
+                        egui::Rect::from_min_max(egui::pos2(0.0, 1.0), egui::pos2(1.0, 0.0)),
+                        egui::Color32::WHITE,
+                    );
+                }
+            }
         }
 
         // --- Debug: Show Corner Cells ---
@@ -121,18 +276,19 @@ impl NavScreen {
                 let width = grid.width;
                 let height = grid.height;
 
-                for y in 0..height {
-                    for x in 0..width {
+                // Optimization: Iterate only visible cells?
+                // For now, simple iteration but check rect containment early
+                for y in (0..height).step_by(5) { // Skip some for perf
+                    for x in (0..width).step_by(5) {
                         let idx = y * width + x;
                         if grid.data[idx].edge_ness > 0.5 {
-                            // Grid to World (Top-Left Origin)
                             let wx = origin_x + (x as f32 + 0.5) * resolution;
                             let wy = origin_y - (y as f32 + 0.5) * resolution;
-
                             let screen_pos = to_screen.transform_pos(egui::pos2(wx, wy));
+                            
                             if rect.contains(screen_pos) {
                                 painter.rect_filled(
-                                    egui::Rect::from_center_size(screen_pos, egui::vec2(5.0, 5.0)),
+                                    egui::Rect::from_center_size(screen_pos, egui::vec2(3.0, 3.0)),
                                     0.0,
                                     egui::Color32::BLUE,
                                 );
@@ -148,17 +304,11 @@ impl NavScreen {
         let origin_screen = to_screen.transform_pos(origin_world);
         let axis_length_world = 1.0;
         painter.line_segment(
-            [
-                origin_screen,
-                to_screen.transform_pos(egui::pos2(axis_length_world, 0.0)),
-            ],
+            [origin_screen, to_screen.transform_pos(egui::pos2(axis_length_world, 0.0))],
             egui::Stroke::new(1.0, egui::Color32::from_rgb(100, 50, 50)),
         );
         painter.line_segment(
-            [
-                origin_screen,
-                to_screen.transform_pos(egui::pos2(0.0, axis_length_world)),
-            ],
+            [origin_screen, to_screen.transform_pos(egui::pos2(0.0, axis_length_world))],
             egui::Stroke::new(1.0, egui::Color32::from_rgb(50, 100, 50)),
         );
 
@@ -168,30 +318,18 @@ impl NavScreen {
                 .iter()
                 .map(|p| to_screen.transform_pos(*p))
                 .collect();
+            // Basic optimization: don't draw lines far outside
             painter.add(egui::Shape::line(
                 path_points,
                 egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(100, 100, 255, 60)),
             ));
-        } else {
-            for point in nav_trajectory_points {
-                let screen_pos = to_screen.transform_pos(*point);
-                if rect.contains(screen_pos) {
-                    painter.circle_filled(
-                        screen_pos, 
-                        2.0, 
-                        egui::Color32::from_rgba_unmultiplied(100, 100, 255, 60)
-                    );
-                }
-            }
         }
 
         // Robot History Trajectory (Gray)
         if robot_trajectory.len() > 1 {
             let path_points: Vec<egui::Pos2> = robot_trajectory
                 .iter()
-                .map(|(pos, _)| {
-                    to_screen.transform_pos(*pos)
-                })
+                .map(|(pos, _)| to_screen.transform_pos(*pos))
                 .collect();
             painter.add(egui::Shape::line(
                 path_points,
@@ -209,21 +347,11 @@ impl NavScreen {
                 path_points,
                 egui::Stroke::new(2.0, egui::Color32::from_rgb(0, 255, 128)),
             ));
-        } else {
-            for point in local_path {
-                let screen_pos = to_screen.transform_pos(*point);
-                if rect.contains(screen_pos) {
-                    painter.circle_filled(screen_pos, 3.0, egui::Color32::from_rgb(0, 255, 128));
-                }
-            }
         }
 
         // --- Draw DE Particles ---
         if navigation_manager.is_localizing {
-            let particles = &navigation_manager.de_solver.population;
-            for particle in particles {
-                // particle is Vector3 (x, y, theta)
-                // World coordinates
+            for particle in &navigation_manager.de_solver.population {
                 let screen_pos = to_screen.transform_pos(egui::pos2(particle.x, particle.y));
                 if rect.contains(screen_pos) {
                     painter.circle_filled(
@@ -231,93 +359,37 @@ impl NavScreen {
                         2.0,
                         egui::Color32::from_rgba_unmultiplied(255, 0, 0, 150),
                     );
-
-                    // Optional: Draw orientation
-                    let arrow_len = 5.0;
-                    let end_pos =
-                        screen_pos + egui::vec2(particle.z.cos(), -particle.z.sin()) * arrow_len;
-                    painter.line_segment(
-                        [screen_pos, end_pos],
-                        egui::Stroke::new(
-                            1.0,
-                            egui::Color32::from_rgba_unmultiplied(255, 0, 0, 100),
-                        ),
-                    );
                 }
             }
         }
 
-        // --- Real-time Drawing ---
+        // --- Real-time Drawing (Scan) ---
         let scan_to_draw = if !navigation_manager.viz_scan.is_empty() {
             &navigation_manager.viz_scan
         } else {
             latest_scan_for_draw
         };
 
-        // Pass 1: Draw non-feature points in YELLOW
         for point in scan_to_draw {
-            if point.4 <= 0.5 {
-                let local_point = nalgebra::Point2::new(point.0, point.1);
-                let world_point = current_robot_pose * local_point;
-                let screen_pos = to_screen.transform_pos(egui::pos2(world_point.x, world_point.y));
-                if rect.contains(screen_pos) {
-                    painter.circle_filled(screen_pos, 1.5, egui::Color32::YELLOW);
-                }
-            }
-        }
-
-        // Pass 2: Draw feature points in MAGENTA on top
-        for point in scan_to_draw {
-            if point.4 > 0.5 {
-                let local_point = nalgebra::Point2::new(point.0, point.1);
-                let world_point = current_robot_pose * local_point;
-                let screen_pos = to_screen.transform_pos(egui::pos2(world_point.x, world_point.y));
-                if rect.contains(screen_pos) {
-                    painter.circle_filled(screen_pos, 2.0, egui::Color32::from_rgb(255, 0, 255));
-                }
+            let local_point = nalgebra::Point2::new(point.0, point.1);
+            let world_point = current_robot_pose * local_point;
+            let screen_pos = to_screen.transform_pos(egui::pos2(world_point.x, world_point.y));
+            if rect.contains(screen_pos) {
+                let color = if point.4 > 0.5 {
+                    egui::Color32::from_rgb(255, 0, 255)
+                } else {
+                    egui::Color32::YELLOW
+                };
+                let radius = if point.4 > 0.5 { 2.0 } else { 1.5 };
+                painter.circle_filled(screen_pos, radius, color);
             }
         }
 
         if let Some(target) = current_nav_target {
             let screen_pos = to_screen.transform_pos(*target);
             if rect.contains(screen_pos) {
-                // Find the index of the target in local_path
-                if let Some(idx) = local_path.iter().position(|p| p == target) {
-                    // Distance to Previous
-                    if idx > 0 {
-                        let prev = local_path[idx - 1];
-                        let dist = prev.distance(*target);
-                        // Scale radius to screen
-                        let radius_screen = dist * (rect.width() / map_view_rect.width());
-                        
-                        painter.circle_stroke(
-                            screen_pos, 
-                            radius_screen, 
-                            egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(255, 100, 100, 100)) // Reddish for Prev
-                        );
-                    }
-                    // Distance to Next
-                    if idx < local_path.len() - 1 {
-                        let next = local_path[idx + 1];
-                        let dist = next.distance(*target);
-                        // Scale radius to screen
-                        let radius_screen = dist * (rect.width() / map_view_rect.width());
-                        
-                        painter.circle_stroke(
-                            screen_pos, 
-                            radius_screen, 
-                            egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(100, 255, 100, 100)) // Greenish for Next
-                        );
-                    }
-                }
-
                 let stroke = egui::Stroke::new(2.0, egui::Color32::from_rgb(0, 255, 255));
                 painter.circle_stroke(screen_pos, 10.0, stroke);
-                painter.circle_filled(
-                    screen_pos,
-                    8.0,
-                    egui::Color32::from_rgba_unmultiplied(0, 255, 255, 30),
-                );
             }
         }
 
@@ -363,7 +435,7 @@ impl NavScreen {
             ));
         }
 
-        // Robot
+        // Robot Center
         let robot_pos_on_screen = to_screen.transform_pos(egui::pos2(
             current_robot_pose.translation.x,
             current_robot_pose.translation.y,
@@ -377,96 +449,5 @@ impl NavScreen {
             ],
             egui::Stroke::new(2.0, egui::Color32::GREEN),
         );
-
-        // --- Converged Message ---
-        if navigation_manager.converged_message_timer > 0 {
-            let center = rect.center();
-            let text = "Localization Converged";
-            let font_id = egui::FontId::proportional(30.0);
-
-            // Draw text with a simple shadow/outline for visibility
-            painter.text(
-                center + egui::vec2(2.0, 2.0),
-                egui::Align2::CENTER_CENTER,
-                text,
-                font_id.clone(),
-                egui::Color32::BLACK,
-            );
-            painter.text(
-                center,
-                egui::Align2::CENTER_CENTER,
-                text,
-                font_id,
-                egui::Color32::GREEN,
-            );
-        }
-
-        // --- Navigation Finished Message ---
-        if navigation_manager.navigation_finished_timer > 0 {
-            let center = rect.center();
-            let text = "Goal Reached / Navigation Finished";
-            let font_id = egui::FontId::proportional(30.0);
-
-            painter.text(
-                center + egui::vec2(2.0, 2.0),
-                egui::Align2::CENTER_CENTER,
-                text,
-                font_id.clone(),
-                egui::Color32::BLACK,
-            );
-            painter.text(
-                center,
-                egui::Align2::CENTER_CENTER,
-                text,
-                font_id,
-                egui::Color32::GOLD, // Use a different color (Gold) for goal
-            );
-        }
-
-        // --- Debug Info on Hover ---
-        if let Some(mouse_pos) = ui.input(|i| i.pointer.hover_pos()) {
-            if rect.contains(mouse_pos) {
-                let world_pos = to_screen.inverse().transform_pos(mouse_pos);
-                let mut debug_text = format!("World: ({:.3}, {:.3})", world_pos.x, world_pos.y);
-
-                if let (Some(grid), Some(info)) = (
-                    &navigation_manager.occupancy_grid,
-                    &navigation_manager.map_info,
-                ) {
-                    let resolution = info.resolution;
-                    let origin_x = info.origin[0];
-                    let origin_y = info.origin[1];
-                    let width = grid.width;
-                    let height = grid.height;
-
-                    // Assuming Origin = Top-Left (confirmed by user)
-                    let gx = ((world_pos.x - origin_x) / resolution).floor() as i32;
-                    let gy = ((origin_y - world_pos.y) / resolution).floor() as i32;
-
-                    debug_text += &format!("\nGrid(TL): ({}, {})", gx, gy);
-
-                    if gx >= 0 && gx < width as i32 && gy >= 0 && gy < height as i32 {
-                        // For display, gy is the index from top (0) to bottom (height-1)
-                        let idx = (gy as usize) * width + (gx as usize);
-                        if let Some(cell) = grid.data.get(idx) {
-                            debug_text += &format!("\nLogOdds: {:.2}", cell.log_odds);
-                            if cell.log_odds > 0.0 {
-                                debug_text += "\n[OCCUPIED]";
-                            } else if cell.log_odds < 0.0 {
-                                debug_text += "\n[FREE]";
-                            } else {
-                                debug_text += "\n[UNKNOWN]";
-                            }
-                        }
-                    } else {
-                        debug_text += "\n[OUT OF BOUNDS]";
-                    }
-                }
-
-                egui::show_tooltip(ui.ctx(), egui::Id::new("nav_debug_tooltip"), |ui| {
-                    ui.label(debug_text);
-                });
-            }
-        }
     }
 }

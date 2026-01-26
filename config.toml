@@ -8,6 +8,7 @@
 show_xppen_panel = false
 show_camera_panel = false
 show_osmo_panel = false
+nav_zoom_view_size = 2.0
 
 [slam]
 # --- Map Representation ---
@@ -212,3 +213,4 @@ global_path_gain = 0.1
 width = 0.7
 length = 0.6
 min_mapping_dist = 1.0
+

@@ -12,6 +12,7 @@ pub struct RecoveryManager {
     state: RecoveryState,
     pub is_active: bool,
     log_counter: usize,
+    trigger_persistence_counter: usize,
 }
 
 impl RecoveryManager {
@@ -20,6 +21,7 @@ impl RecoveryManager {
             state: RecoveryState::Idle,
             is_active: false,
             log_counter: 0,
+            trigger_persistence_counter: 0,
         }
     }
 
@@ -27,6 +29,7 @@ impl RecoveryManager {
         self.state = RecoveryState::Idle;
         self.is_active = false;
         self.log_counter = 0;
+        self.trigger_persistence_counter = 0;
     }
 
     pub fn update(
@@ -67,50 +70,57 @@ impl RecoveryManager {
                 }
 
                 if danger_point_count >= 3 {
-                    info!(
-                        "RECOVERY TRIGGERED: {} points < {:.3}m (Min: {:.3}m at x={:.3}, y={:.3}). Switching to Reverse Path Tracking.",
-                        danger_point_count, config.recovery_trigger_dist, min_dist, trigger_obs.0, trigger_obs.1
-                    );
+                    self.trigger_persistence_counter += 1;
+                    // Require continuous detection for 5 frames (approx 0.5s at 10Hz, or less if faster)
+                    if self.trigger_persistence_counter >= 5 {
+                        info!(
+                            "RECOVERY TRIGGERED: {} points < {:.3}m (Min: {:.3}m at x={:.3}, y={:.3}). Persistence: {} frames. Switching to Reverse Path Tracking.",
+                            danger_point_count, config.recovery_trigger_dist, min_dist, trigger_obs.0, trigger_obs.1, self.trigger_persistence_counter
+                        );
 
-                    // 1. Find closest point on global path
-                    let current_pos_vec = Vector2::new(current_pose.translation.x, current_pose.translation.y);
-                    let mut closest_idx = 0;
-                    let mut min_path_dist_sq = f32::MAX;
+                        // 1. Find closest point on global path
+                        let current_pos_vec = Vector2::new(current_pose.translation.x, current_pose.translation.y);
+                        let mut closest_idx = 0;
+                        let mut min_path_dist_sq = f32::MAX;
 
-                    for (i, p) in global_path.iter().enumerate() {
-                        let d_sq = (p.x - current_pos_vec.x).powi(2) + (p.y - current_pos_vec.y).powi(2);
-                        if d_sq < min_path_dist_sq {
-                            min_path_dist_sq = d_sq;
-                            closest_idx = i;
+                        for (i, p) in global_path.iter().enumerate() {
+                            let d_sq = (p.x - current_pos_vec.x).powi(2) + (p.y - current_pos_vec.y).powi(2);
+                            if d_sq < min_path_dist_sq {
+                                min_path_dist_sq = d_sq;
+                                closest_idx = i;
+                            }
                         }
-                    }
 
-                    // 2. Look backwards along the path to find target
-                    // We want a point 'recovery_target_dist' meters BEHIND current position
-                    let mut target_idx = closest_idx;
-                    let mut dist_accum = 0.0;
+                        // 2. Look backwards along the path to find target
+                        // We want a point 'recovery_target_dist' meters BEHIND current position
+                        let mut target_idx = closest_idx;
+                        let mut dist_accum = 0.0;
 
-                    while target_idx > 0 {
-                        let curr = global_path[target_idx];
-                        let prev = global_path[target_idx - 1];
-                        dist_accum += curr.distance(prev);
+                        while target_idx > 0 {
+                            let curr = global_path[target_idx];
+                            let prev = global_path[target_idx - 1];
+                            dist_accum += curr.distance(prev);
 
-                        target_idx -= 1;
-                        if dist_accum >= config.recovery_target_dist {
-                            break;
+                            target_idx -= 1;
+                            if dist_accum >= config.recovery_target_dist {
+                                break;
+                            }
                         }
-                    }
 
-                    info!(
-                        "Recovery Target Index: {} (Current Closest: {}), Back Dist: {:.2}m",
-                        target_idx, closest_idx, dist_accum
-                    );
-                    
-                    self.state = RecoveryState::Backing { target_idx };
-                    self.is_active = true;
-                    
-                    // Stop momentarily
-                    return Some((0.0, 0.0));
+                        info!(
+                            "Recovery Target Index: {} (Current Closest: {}), Back Dist: {:.2}m",
+                            target_idx, closest_idx, dist_accum
+                        );
+                        
+                        self.state = RecoveryState::Backing { target_idx };
+                        self.is_active = true;
+                        self.trigger_persistence_counter = 0; // Reset
+                        
+                        // Stop momentarily
+                        return Some((0.0, 0.0));
+                    }
+                } else {
+                    self.trigger_persistence_counter = 0;
                 }
                 None
             }

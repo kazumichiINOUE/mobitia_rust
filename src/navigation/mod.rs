@@ -527,11 +527,16 @@ impl NavigationManager {
                 // --- 0. Recovery Manager Update (Reverse Path Tracking) ---
                 if self.is_autonomous {
                     // Filter scan to remove self-reflections (points inside the robot body)
-                    // Use length/2 minus a small margin (5cm) as the ignore radius.
-                    let self_filter_radius = (self.robot_config.length / 2.0 - 0.05).max(0.1);
+                    // Use a rectangular mask based on robot dimensions with a small inner margin (2cm).
+                    let half_l = self.robot_config.length / 2.0 - 0.02;
+                    let half_w = self.robot_config.width / 2.0 - 0.02;
+                    
                     let filtered_scan: Vec<_> = effective_scan
                         .iter()
-                        .filter(|(x, y, ..)| (x * x + y * y).sqrt() > self_filter_radius)
+                        .filter(|(x, y, ..)| {
+                            // Keep point only if it is OUTSIDE the robot's rectangular footprint
+                            x.abs() > half_l || y.abs() > half_w
+                        })
                         .cloned()
                         .collect();
 

@@ -2539,6 +2539,7 @@ negate = 0
                 self.nav_screen.draw(
                     ui,
                     &mut self.lidar_draw_rect,
+                    &self.config.ui,
                     &self.navigation_manager,
                     &self.latest_scan_for_draw,
                     &self.motor_odometry,
