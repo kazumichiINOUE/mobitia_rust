@@ -529,25 +529,35 @@ impl NavigationManager {
             if !self.is_localizing {
                 use crate::navigation::pure_pursuit;
 
-                // --- 0. Recovery Manager Update (Reverse Path Tracking) ---
-                if self.is_autonomous {
-                    // Filter scan to remove self-reflections (points inside the robot body)
-                    // Use a rectangular mask based on robot dimensions with a small inner margin (2cm).
-                    let half_l = self.robot_config.length / 2.0 - 0.02;
-                    let half_w = self.robot_config.width / 2.0 - 0.02;
-                    
-                    let filtered_scan: Vec<_> = effective_scan
-                        .iter()
-                        .filter(|(x, y, ..)| {
-                            // Keep point only if it is OUTSIDE the robot's rectangular footprint
-                            x.abs() > half_l || y.abs() > half_w
-                        })
-                        .cloned()
-                        .collect();
+                // --- 1. Filter Self-Reflection & Update Persistence Grid ---
+                // We do this first so ALL subsystems use clean, time-filtered data.
+                let mut filtered_raw_scan = Vec::new(); // For Persistence Grid input
+                let df = self.robot_config.dimension_front;
+                let dr = self.robot_config.dimension_rear;
+                let half_w = self.robot_config.width / 2.0;
 
+                for point in effective_scan {
+                    // Filter out points that are inside the robot's footprint (self-reflection)
+                    if point.0 > -dr - 0.05 && point.0 < df + 0.05 && point.1.abs() < half_w + 0.05 {
+                        continue;
+                    }
+                    if point.2 < self.robot_config.min_mapping_dist {
+                        continue;
+                    }
+                    filtered_raw_scan.push(*point);
+                }
+
+                // Update Persistence Grid with filtered raw points
+                let stable_local_obstacles = self.persistence_grid.update(&filtered_raw_scan, &self.current_robot_pose);
+                
+                // Prepare obstacles for Elastic Band & other checks (convert to Vec<(f32,f32,f32,f32)>)
+                // stable_local_obstacles is already Vec<(f32, f32, f32, f32)> (x, y, nx, ny)
+
+                // --- 2. Recovery Manager Update (Reverse Path Tracking) ---
+                if self.is_autonomous {
                     if let Some(recovery_cmd) = self.recovery_manager.update(
                         &self.current_robot_pose,
-                        &filtered_scan,
+                        &stable_local_obstacles,
                         &self.nav_trajectory_points,
                         &self.config,
                         self.robot_config.width,
@@ -557,17 +567,15 @@ impl NavigationManager {
                     }
                 }
 
-                // --- 1. Update Elastic Band (Local Path) ---
+                // --- 3. Update Elastic Band (Local Path) ---
                 let robot_pos_egui = egui::pos2(
                     self.current_robot_pose.translation.x,
                     self.current_robot_pose.translation.y
                 );
 
-                // Prepare obstacles for Elastic Band (Filtered by Persistence Grid)
-                let stable_local_obstacles = self.persistence_grid.update(effective_scan, &self.current_robot_pose);
-                
                 let robot_tf = self.current_robot_pose;
-                let obstacles: Vec<(f32, f32, f32, f32)> = stable_local_obstacles.iter().map(|(lx, ly, nx, ny)| {
+                // Convert obstacles to global frame for Elastic Band optimization
+                let global_obstacles: Vec<(f32, f32, f32, f32)> = stable_local_obstacles.iter().map(|(lx, ly, nx, ny)| {
                      let p_local = Point2::new(*lx, *ly);
                      let n_local = Vector2::new(*nx, *ny);
                      
@@ -599,15 +607,15 @@ impl NavigationManager {
                     }
                 }
 
-                // Run EB optimization (Always run if localized to visualize potential path)
+                // Run EB optimization
                 self.elastic_band.optimize(
                     &mut self.local_path,
                     robot_pos_egui,
-                    &obstacles,
+                    &global_obstacles,
                     &self.nav_trajectory_points,
                 );
 
-                // --- 2. Generate Command (Only if Autonomous) ---
+                // --- 4. Generate Command (Only if Autonomous) ---
                 if self.is_autonomous {
                     // Compute command using the deformed local_path
                     let command = pure_pursuit::compute_command(
@@ -636,39 +644,36 @@ impl NavigationManager {
                         }
                     }
 
-                    // --- 3. Collision Check (Safety Stop) ---
+                    // --- 5. Collision Check (Safety Stop) ---
                     let mut final_command = command;
                     
-                    let avoid_dist_threshold = self.config.lidar_avoid_dist;
-                    let avoid_angle_threshold = 90.0_f32.to_radians();
+                    let margin = self.config.lidar_avoid_dist;
+                    let df = self.robot_config.dimension_front;
+                    let dr = self.robot_config.dimension_rear;
+                    let half_w = self.robot_config.width / 2.0;
 
-                    let mut min_dist = f32::MAX;
-                    let mut obstacle_angle = 0.0;
+                    let mut min_dist_x = f32::MAX; // Just for logging
                     let mut detected = false;
                     
-                    for (x, y, _r, _theta, _feature, _nx, _ny, _corner) in effective_scan {
-                        // (x, y) are local
-                        let dist = (x * x + y * y).sqrt();
-                        if dist < avoid_dist_threshold {
-                            let angle = y.atan2(*x);
-                            if angle.abs() < avoid_angle_threshold {
-                                if dist < min_dist {
-                                    min_dist = dist;
-                                    obstacle_angle = angle;
-                                    detected = true;
-                                }
-                            }
+                    // Use stable_local_obstacles (Time-filtered)
+                    for (x, y, _nx, _ny) in &stable_local_obstacles {
+                        // Rectangular check: Robot Footprint + Margin
+                        if *x >= (-dr - margin) && *x <= (df + margin) && y.abs() <= (half_w + margin) {
+                             if x.abs() < min_dist_x {
+                                 min_dist_x = x.abs();
+                             }
+                             detected = true;
+                             break;
                         }
                     }
 
                     if detected {
                         // Override with safety behavior
-                        let escape_velocity = -0.1; 
-                        let escape_omega = if obstacle_angle > 0.0 { -0.5 } else { 0.5 };
+                        let escape_velocity = 0.0; // Just STOP
+                        let escape_omega = 0.0;
                         info!(
-                            "COLLISION AVOIDANCE triggered: Dist {:.3}m, Angle {:.1}deg -> Backing up",
-                            min_dist,
-                            obstacle_angle.to_degrees()
+                            "COLLISION AVOIDANCE triggered: Obstacle within safety margin ({:.3}m). Stopping.",
+                            margin
                         );
                         final_command = Some((escape_velocity, escape_omega));
                     }
@@ -699,24 +704,25 @@ impl NavigationManager {
     fn is_point_inside_current_footprint(&self, p: &Point2<f32>) -> bool {
         let local_p = self.current_robot_pose.inverse() * p;
         let half_w = self.robot_config.width / 2.0;
-        let half_l = self.robot_config.length / 2.0;
+        let df = self.robot_config.dimension_front;
+        let dr = self.robot_config.dimension_rear;
         // Use a small margin to handle resolution artifacts and blobs
-        local_p.x.abs() <= (half_l + 0.05) && local_p.y.abs() <= (half_w + 0.05)
+        local_p.x >= (-dr - 0.05) && local_p.x <= (df + 0.05) && local_p.y.abs() <= (half_w + 0.05)
     }
 
     fn check_footprint_collision(&self, pose: &Isometry2<f32>) -> bool {
         if let (Some(grid), Some(map_info)) = (&self.occupancy_grid, &self.map_info) {
             let w = self.robot_config.width;
-            let l = self.robot_config.length;
+            let df = self.robot_config.dimension_front;
+            let dr = self.robot_config.dimension_rear;
             let half_w = w / 2.0;
-            let half_l = l / 2.0;
 
             // Robot local corners: FL, FR, BR, BL
             let corners_local = [
-                Point2::new(half_l, half_w),
-                Point2::new(half_l, -half_w),
-                Point2::new(-half_l, -half_w),
-                Point2::new(-half_l, half_w),
+                Point2::new(df, half_w),
+                Point2::new(df, -half_w),
+                Point2::new(-dr, -half_w),
+                Point2::new(-dr, half_w),
             ];
 
             // Transform to world and check edges

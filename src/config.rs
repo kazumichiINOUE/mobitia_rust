@@ -139,15 +139,23 @@ impl Default for MotorConfig {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct RobotConfig {
     pub width: f32,
-    pub length: f32,
+    pub dimension_front: f32, // Distance from rotation center to front bumper
+    pub dimension_rear: f32,  // Distance from rotation center to rear bumper
     pub min_mapping_dist: f32,
+}
+
+impl RobotConfig {
+    pub fn length(&self) -> f32 {
+        self.dimension_front + self.dimension_rear
+    }
 }
 
 impl Default for RobotConfig {
     fn default() -> Self {
         Self {
             width: 0.4,
-            length: 0.5,
+            dimension_front: 0.2,
+            dimension_rear: 0.3,
             min_mapping_dist: 0.3,
         }
     }

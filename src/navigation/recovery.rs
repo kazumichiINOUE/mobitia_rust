@@ -35,7 +35,7 @@ impl RecoveryManager {
     pub fn update(
         &mut self,
         current_pose: &Isometry2<f32>,
-        scan: &[(f32, f32, f32, f32, f32, f32, f32, f32)], // x, y, r, theta...
+        scan: &[(f32, f32, f32, f32)], // x, y, nx, ny (from Persistence Grid)
         global_path: &[eframe::egui::Pos2],
         config: &NavConfig,
         robot_width: f32,

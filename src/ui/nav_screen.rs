@@ -1,6 +1,5 @@
 use crate::navigation::NavigationManager;
 use eframe::egui;
-use nalgebra::Isometry2;
 
 #[derive(Default)]
 pub struct NavScreen {}
@@ -264,6 +263,102 @@ impl NavScreen {
             }
         }
 
+        // --- Visualization of Config Parameters (Safety Zones) ---
+        {
+            let robot_width = navigation_manager.robot_config.width;
+            let nav_config = &navigation_manager.config;
+            let robot_screen_pos = to_screen.transform_pos(egui::pos2(
+                current_robot_pose.translation.x,
+                current_robot_pose.translation.y,
+            ));
+
+            // 1. Elastic Band Safety Distance (Cyan, weak stroke)
+            // This is where the path starts to bend away from obstacles.
+            {
+                let radius = nav_config.elastic_band.obstacle_safety_dist;
+                let p1 = to_screen.transform_pos(egui::pos2(0.0, 0.0));
+                let p2 = to_screen.transform_pos(egui::pos2(radius, 0.0));
+                let radius_screen = p1.distance(p2);
+
+                if rect.contains(robot_screen_pos) {
+                    painter.circle_stroke(
+                        robot_screen_pos,
+                        radius_screen,
+                        egui::Stroke::new(
+                            1.0,
+                            egui::Color32::from_rgba_unmultiplied(0, 255, 255, 60),
+                        ), // Transparent Cyan
+                    );
+                }
+            }
+
+            // 2. Recovery Trigger Corridor (Purple, filled rect)
+            // Rect: x=[0, trigger_dist], y=[-width/2, +width/2] (Local Frame)
+            {
+                let trigger_dist = nav_config.recovery_trigger_dist;
+                let safety_half_width = robot_width / 2.0 + 0.01;
+
+                // Define 4 corners in Local Frame
+                let corners_local = [
+                    nalgebra::Point2::new(0.0, safety_half_width),
+                    nalgebra::Point2::new(trigger_dist, safety_half_width),
+                    nalgebra::Point2::new(trigger_dist, -safety_half_width),
+                    nalgebra::Point2::new(0.0, -safety_half_width),
+                ];
+
+                let corners_screen: Vec<egui::Pos2> = corners_local
+                    .iter()
+                    .map(|p| {
+                        let world_p = current_robot_pose * p;
+                        to_screen.transform_pos(egui::pos2(world_p.x, world_p.y))
+                    })
+                    .collect();
+
+                painter.add(egui::Shape::convex_polygon(
+                    corners_screen,
+                    egui::Color32::from_rgba_unmultiplied(150, 0, 255, 40), // Transparent Purple fill
+                    egui::Stroke::new(
+                        1.0,
+                        egui::Color32::from_rgba_unmultiplied(150, 0, 255, 100),
+                    ), // Purple outline
+                ));
+            }
+
+            // 3. Lidar Avoidance/Stop Boundary (Red, rectangular stroke)
+            // Rectangle = Footprint + lidar_avoid_dist margin
+            {
+                let margin = nav_config.lidar_avoid_dist;
+                let df = navigation_manager.robot_config.dimension_front;
+                let dr = navigation_manager.robot_config.dimension_rear;
+                let half_w = navigation_manager.robot_config.width / 2.0;
+
+                // Define 4 corners in Local Frame expanded by margin
+                let corners_local = [
+                    nalgebra::Point2::new(df + margin, half_w + margin),
+                    nalgebra::Point2::new(df + margin, -half_w - margin),
+                    nalgebra::Point2::new(-dr - margin, -half_w - margin),
+                    nalgebra::Point2::new(-dr - margin, half_w + margin),
+                ];
+
+                let corners_screen: Vec<egui::Pos2> = corners_local
+                    .iter()
+                    .map(|p| {
+                        let world_p = current_robot_pose * p;
+                        to_screen.transform_pos(egui::pos2(world_p.x, world_p.y))
+                    })
+                    .collect();
+
+                painter.add(egui::Shape::convex_polygon(
+                    corners_screen,
+                    egui::Color32::TRANSPARENT, 
+                    egui::Stroke::new(
+                        1.5,
+                        egui::Color32::from_rgba_unmultiplied(255, 50, 50, 150),
+                    ), // Red stroke
+                ));
+            }
+        }
+
         // --- Debug: Show Corner Cells ---
         if navigation_manager.config.debug_show_corner_cells {
             if let (Some(grid), Some(info)) = (
@@ -395,14 +490,14 @@ impl NavScreen {
 
         // Footprint
         let w = navigation_manager.robot_config.width;
-        let l = navigation_manager.robot_config.length;
+        let df = navigation_manager.robot_config.dimension_front;
+        let dr = navigation_manager.robot_config.dimension_rear;
         let half_w = w / 2.0;
-        let half_l = l / 2.0;
         let corners_local = [
-            nalgebra::Point2::new(half_l, half_w),
-            nalgebra::Point2::new(half_l, -half_w),
-            nalgebra::Point2::new(-half_l, -half_w),
-            nalgebra::Point2::new(-half_l, half_w),
+            nalgebra::Point2::new(df, half_w),
+            nalgebra::Point2::new(df, -half_w),
+            nalgebra::Point2::new(-dr, -half_w),
+            nalgebra::Point2::new(-dr, half_w),
         ];
         let corners_screen: Vec<egui::Pos2> = corners_local
             .iter()

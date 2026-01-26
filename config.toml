@@ -185,7 +185,7 @@ lookahead_distance = 0.8
 target_velocity = 0.3
 goal_tolerance = 0.5
 debug_show_corner_cells = true
-lidar_avoid_dist = 0.2
+lidar_avoid_dist = 0.1
 collision_check_predict_time = 1.0
 recovery_enabled = true
 recovery_trigger_dist = 0.3 # リカバリーに入る距離（前方45度）
@@ -210,7 +210,8 @@ num_iterations = 5         # 1フレームあたりの計算回数を抑えて�
 global_path_gain = 0.1
 
 [robot]
-width = 0.6
-length = 0.7
-min_mapping_dist = 1.0
+width = 0.4
+dimension_front = 0.2
+dimension_rear = 0.55
+min_mapping_dist = 0.3
 

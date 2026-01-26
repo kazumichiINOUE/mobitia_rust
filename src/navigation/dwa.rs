@@ -35,9 +35,9 @@ impl DwaPlanner {
         current_pose: &Isometry2<f32>,
         current_vel: (f32, f32),
         target_point: &Point2<f32>,
-        map: Option<&OccupancyGrid>,
+        grid: Option<&OccupancyGrid>,
         map_origin: [f32; 3],
-        map_info_res: f32,
+        res: f32,
         lidar_points: &[(f32, f32)],
     ) -> (f32, f32, Vec<DwaTrajectory>) {
         let (vc, wc) = current_vel;
@@ -60,7 +60,7 @@ impl DwaPlanner {
             for j in 0..=self.config.w_samples {
                 let w = min_w + j as f32 * w_step;
 
-                let (points, is_safe) = self.predict_trajectory(current_pose, v, w, map, map_origin, map_info_res, lidar_points);
+                let (points, is_safe) = self.predict_trajectory(current_pose, v, w, grid, map_origin, res, lidar_points);
                 let traj = DwaTrajectory { points: points.clone(), is_safe };
                 
                 if is_safe {
@@ -142,7 +142,7 @@ impl DwaPlanner {
         current_pose: &Isometry2<f32>,
         v: f32,
         w: f32,
-        map: Option<&OccupancyGrid>,
+        grid: Option<&OccupancyGrid>,
         map_origin: [f32; 3],
         res: f32,
         lidar_points: &[(f32, f32)],
@@ -164,7 +164,7 @@ impl DwaPlanner {
 
             points.push(Point2::new(next_x, next_y));
 
-            if is_safe && self.check_footprint_collision(&pose, map, map_origin, res, lidar_points) {
+            if is_safe && self.check_footprint_collision(&pose, grid, map_origin, res, lidar_points) {
                 is_safe = false;
             }
         }
@@ -174,27 +174,27 @@ impl DwaPlanner {
     fn check_footprint_collision(
         &self,
         pose: &Isometry2<f32>,
-        map: Option<&OccupancyGrid>,
+        grid: Option<&OccupancyGrid>,
         map_origin: [f32; 3],
         res: f32,
         lidar_points: &[(f32, f32)],
     ) -> bool {
-        let half_w = self.robot_config.width / 2.0;
-        let half_l = self.robot_config.length / 2.0;
-        let margin = 0.05; 
-        let hw = half_w + margin;
-        let hl = half_l + margin;
+        let df = self.robot_config.dimension_front;
+        let dr = self.robot_config.dimension_rear;
+        let w = self.robot_config.width;
+        let half_w = w / 2.0;
 
+        // Check 4 corners
         let corners_local = [
-            Point2::new(hl, hw),
-            Point2::new(hl, -hw),
-            Point2::new(-hl, -hw),
-            Point2::new(-hl, hw),
+            Point2::new(df, half_w),
+            Point2::new(df, -half_w),
+            Point2::new(-dr, -half_w),
+            Point2::new(-dr, half_w),
         ];
 
         let corners_world: Vec<Point2<f32>> = corners_local.iter().map(|p| pose * p).collect();
 
-        if let Some(grid) = map {
+        if let Some(grid) = grid {
             let num_corners = corners_world.len();
             for i in 0..num_corners {
                 let p1 = corners_world[i];
@@ -221,16 +221,19 @@ impl DwaPlanner {
         }
 
         let inv_pose = pose.inverse();
+        let max_dim = df.max(dr).max(half_w);
+        let safe_radius_sq = (max_dim * max_dim) * 2.0;
+
         for lp_world in lidar_points {
             let lp_world_pt = Point2::new(lp_world.0, lp_world.1);
             let dist_sq = (pose.translation.vector - lp_world_pt.coords).norm_squared();
-            let radius = (hl*hl + hw*hw).sqrt();
-            if dist_sq > radius * radius {
+            
+            if dist_sq > safe_radius_sq {
                 continue;
             }
 
             let lp_local = inv_pose * lp_world_pt;
-            if lp_local.x.abs() <= hl && lp_local.y.abs() <= hw {
+            if lp_local.x >= -dr && lp_local.x <= df && lp_local.y.abs() <= half_w {
                 return true;
             }
         }
