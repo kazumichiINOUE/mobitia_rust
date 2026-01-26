@@ -100,11 +100,17 @@ pub struct UiConfig {
     pub show_camera_panel: bool,
     pub show_osmo_panel: bool,
     #[serde(default = "default_nav_zoom_view_size")]
-    pub nav_zoom_view_size: f32,
+    pub nav_zoom_view_size: f32, // メートル単位の表示範囲
+    #[serde(default = "default_nav_zoom_window_size")]
+    pub nav_zoom_window_size: f32, // ピクセル単位のウィンドウサイズ
 }
 
 fn default_nav_zoom_view_size() -> f32 {
     4.0
+}
+
+fn default_nav_zoom_window_size() -> f32 {
+    300.0
 }
 
 // --- Motor Configuration ---
@@ -408,6 +414,7 @@ impl Default for UiConfig {
             show_camera_panel: true,
             show_osmo_panel: true,
             nav_zoom_view_size: default_nav_zoom_view_size(),
+            nav_zoom_window_size: default_nav_zoom_window_size(),
         }
     }
 }

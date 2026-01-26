@@ -8,7 +8,8 @@
 show_xppen_panel = false
 show_camera_panel = false
 show_osmo_panel = false
-nav_zoom_view_size = 4.0
+nav_zoom_view_size = 5.0
+nav_zoom_window_size = 400.0
 
 [slam]
 # --- Map Representation ---

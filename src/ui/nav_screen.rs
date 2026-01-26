@@ -107,8 +107,9 @@ impl NavScreen {
         );
 
         // --- 3. Sub View (PIP) Setup ---
-        // Fixed size 300x300 at bottom right
-        let sub_size = egui::vec2(300.0, 300.0);
+        // Configurable size at bottom right
+        let size = ui_config.nav_zoom_window_size;
+        let sub_size = egui::vec2(size, size);
         let sub_rect = egui::Rect::from_min_size(
             rect.max - sub_size - egui::vec2(20.0, 20.0),
             sub_size
