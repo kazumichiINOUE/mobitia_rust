@@ -14,6 +14,14 @@ Elastic Bandは、経路を構成する一連の点（ノード）に対して�
 
 各フレームにおいて、すべてのノードに対してこれらの力の合力を計算し、位置を更新します。これを数回反復することで、障害物を避けつつ滑らかな経路が生成されます。
 
+## 入力データの安定化 (Noise Filtering)
+<!-- TODO: Add English translation here -->
+
+Elastic Band は障害物からの反発力に敏感に反応するため、LiDARのスパイクノイズや一時的な誤検知が入力されると、経路が激しく振動してしまいます。
+これを防ぐため、Mobitiaでは生のLiDAR点群を直接EBに入力するのではなく、**[Local Persistence Grid](./14_persistence_grid.md)** と呼ばれるフィルタを通して、「時間的に安定して存在する障害物」のみを抽出して使用しています。
+
+これにより、一瞬だけのノイズは無視され、壁や柱などの実在する障害物に対してのみ滑らかに回避行動をとることができます。
+
 ## 実装詳細 (`src/navigation/elastic_band.rs`)
 <!-- TODO: Add English translation here -->
 
