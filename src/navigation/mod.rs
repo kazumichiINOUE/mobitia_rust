@@ -4,6 +4,7 @@ pub mod elastic_band;
 pub mod localization;
 pub mod pure_pursuit;
 pub mod recovery;
+pub mod persistence_grid;
 
 use crate::config::{NavConfig, RobotConfig, SlamConfig};
 use crate::lidar::features::compute_features;
@@ -63,6 +64,7 @@ pub struct NavigationManager {
     pub dwa_planner: dwa::DwaPlanner,
     pub elastic_band: elastic_band::ElasticBand,
     pub recovery_manager: recovery::RecoveryManager,
+    pub persistence_grid: persistence_grid::LocalPersistenceGrid,
 
     pub config: NavConfig,
     pub robot_config: RobotConfig,
@@ -79,6 +81,7 @@ impl NavigationManager {
         let dwa_planner = dwa::DwaPlanner::new(config.dwa.clone(), robot_config.clone(), slam_config.clone());
         let elastic_band = elastic_band::ElasticBand::new(config.elastic_band.clone());
         let recovery_manager = recovery::RecoveryManager::new();
+        let persistence_grid = persistence_grid::LocalPersistenceGrid::new(0.1); // 10cm grid
 
         Self {
             nav_map_texture: None,
@@ -103,6 +106,7 @@ impl NavigationManager {
             dwa_planner,
             elastic_band,
             recovery_manager,
+            persistence_grid,
             config,
             robot_config,
         }
@@ -355,6 +359,7 @@ impl NavigationManager {
         self.is_autonomous = false;
         self.predicted_footprint_pose = None;
         self.recovery_manager.reset();
+        self.persistence_grid.reset();
     }
 
     #[instrument(skip(self, latest_scan), fields(autonomous = self.is_autonomous, localizing = self.is_localizing))]
@@ -558,12 +563,13 @@ impl NavigationManager {
                     self.current_robot_pose.translation.y
                 );
 
-                // Prepare obstacles for Elastic Band (x, y, nx, ny)
+                // Prepare obstacles for Elastic Band (Filtered by Persistence Grid)
+                let stable_local_obstacles = self.persistence_grid.update(effective_scan, &self.current_robot_pose);
+                
                 let robot_tf = self.current_robot_pose;
-                let obstacles: Vec<(f32, f32, f32, f32)> = effective_scan.iter().map(|p| {
-                     // p is (x, y, r, theta, feature, nx, ny, corner) in LOCAL frame
-                     let p_local = Point2::new(p.0, p.1);
-                     let n_local = Vector2::new(p.5, p.6);
+                let obstacles: Vec<(f32, f32, f32, f32)> = stable_local_obstacles.iter().map(|(lx, ly, nx, ny)| {
+                     let p_local = Point2::new(*lx, *ly);
+                     let n_local = Vector2::new(*nx, *ny);
                      
                      let p_global = robot_tf * p_local;
                      let n_global = robot_tf.rotation * n_local;
