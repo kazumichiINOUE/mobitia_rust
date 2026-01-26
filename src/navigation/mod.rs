@@ -3,6 +3,7 @@ pub mod dwa;
 pub mod elastic_band;
 pub mod localization;
 pub mod pure_pursuit;
+pub mod recovery;
 
 use crate::config::{NavConfig, RobotConfig, SlamConfig};
 use crate::lidar::features::compute_features;
@@ -61,6 +62,7 @@ pub struct NavigationManager {
     // Planners
     pub dwa_planner: dwa::DwaPlanner,
     pub elastic_band: elastic_band::ElasticBand,
+    pub recovery_manager: recovery::RecoveryManager,
 
     pub config: NavConfig,
     pub robot_config: RobotConfig,
@@ -76,6 +78,7 @@ impl NavigationManager {
 
         let dwa_planner = dwa::DwaPlanner::new(config.dwa.clone(), robot_config.clone(), slam_config.clone());
         let elastic_band = elastic_band::ElasticBand::new(config.elastic_band.clone());
+        let recovery_manager = recovery::RecoveryManager::new();
 
         Self {
             nav_map_texture: None,
@@ -99,6 +102,7 @@ impl NavigationManager {
             predicted_footprint_pose: None,
             dwa_planner,
             elastic_band,
+            recovery_manager,
             config,
             robot_config,
         }
@@ -350,6 +354,7 @@ impl NavigationManager {
         self.total_travel_distance = 0.0;
         self.is_autonomous = false;
         self.predicted_footprint_pose = None;
+        self.recovery_manager.reset();
     }
 
     #[instrument(skip(self, latest_scan), fields(autonomous = self.is_autonomous, localizing = self.is_localizing))]
@@ -518,6 +523,29 @@ impl NavigationManager {
             // --- Path Planning & Navigation (Runs when localized) ---
             if !self.is_localizing {
                 use crate::navigation::pure_pursuit;
+
+                // --- 0. Recovery Manager Update (Reverse Path Tracking) ---
+                if self.is_autonomous {
+                    // Filter scan to remove self-reflections (points inside the robot body)
+                    // Use length/2 minus a small margin (5cm) as the ignore radius.
+                    let self_filter_radius = (self.robot_config.length / 2.0 - 0.05).max(0.1);
+                    let filtered_scan: Vec<_> = effective_scan
+                        .iter()
+                        .filter(|(x, y, ..)| (x * x + y * y).sqrt() > self_filter_radius)
+                        .cloned()
+                        .collect();
+
+                    if let Some(recovery_cmd) = self.recovery_manager.update(
+                        &self.current_robot_pose,
+                        &filtered_scan,
+                        &self.nav_trajectory_points,
+                        &self.config,
+                        self.robot_config.width,
+                    ) {
+                        // Recovery active: Override normal navigation
+                        return Some(recovery_cmd);
+                    }
+                }
 
                 // --- 1. Update Elastic Band (Local Path) ---
                 let robot_pos_egui = egui::pos2(

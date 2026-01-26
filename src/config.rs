@@ -232,6 +232,14 @@ pub struct NavConfig {
     pub dwa: DwaConfig,
     #[serde(default)]
     pub elastic_band: ElasticBandConfig,
+    #[serde(default = "default_recovery_enabled")]
+    pub recovery_enabled: bool,
+    #[serde(default = "default_recovery_trigger_dist")]
+    pub recovery_trigger_dist: f32,
+    #[serde(default = "default_recovery_target_dist")]
+    pub recovery_target_dist: f32,
+    #[serde(default = "default_recovery_speed")]
+    pub recovery_speed: f32,
 }
 
 fn default_initial_pose() -> [f32; 3] {
@@ -282,6 +290,22 @@ fn default_collision_check_predict_time() -> f32 {
     1.0
 }
 
+fn default_recovery_enabled() -> bool {
+    true
+}
+
+fn default_recovery_trigger_dist() -> f32 {
+    0.2
+}
+
+fn default_recovery_target_dist() -> f32 {
+    0.8
+}
+
+fn default_recovery_speed() -> f32 {
+    0.15
+}
+
 impl Default for NavConfig {
     fn default() -> Self {
         Self {
@@ -301,6 +325,10 @@ impl Default for NavConfig {
             collision_check_predict_time: default_collision_check_predict_time(),
             dwa: DwaConfig::default(),
             elastic_band: ElasticBandConfig::default(),
+            recovery_enabled: default_recovery_enabled(),
+            recovery_trigger_dist: default_recovery_trigger_dist(),
+            recovery_target_dist: default_recovery_target_dist(),
+            recovery_speed: default_recovery_speed(),
         }
     }
 }

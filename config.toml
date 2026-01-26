@@ -186,6 +186,10 @@ goal_tolerance = 0.5
 debug_show_corner_cells = true
 lidar_avoid_dist = 0.2
 collision_check_predict_time = 1.0
+recovery_enabled = true
+recovery_trigger_dist = 0.3 # リカバリーに入る距離（前方45度）
+recovery_target_dist = 0.3  # 戻る距離
+recovery_speed = 0.15       # リカバリー動作速度
 
 [nav.dwa]
 max_accel_v = 0.5   # 並進加速度上限 (m/s^2)
