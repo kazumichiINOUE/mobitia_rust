@@ -493,6 +493,8 @@ impl NavigationManager {
                     if self.de_solver.is_converged {
                         info!("Localization Converged");
                         self.is_localizing = false;
+                        // Restore autonomous intent (if any) so the robot starts moving immediately
+                        self.is_autonomous = self.autonomy_intent;
                         self.de_frame_counter = 0;
                         self.converged_message_timer = 180;
 

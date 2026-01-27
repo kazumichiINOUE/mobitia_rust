@@ -2552,12 +2552,17 @@ negate = 0
                     &self.motor_odometry,
                     &self.robot_trajectory,
                 );
+                ctx.request_repaint();
             }
         });
 
         // --- Motor control via keyboard for testing ---
         // コンソールにフォーカスがない場合にのみ、矢印キーによるモーター制御を有効にする
-        if !ctx.wants_keyboard_input() && self.motor_thread_active {
+        // ただし、自律走行中 (is_autonomous) は手動介入による停止を防ぐため無効にする
+        let is_autonomous_nav =
+            self.app_mode == AppMode::Nav && self.navigation_manager.is_autonomous;
+
+        if !ctx.wants_keyboard_input() && self.motor_thread_active && !is_autonomous_nav {
             // Add check for motor_thread_active
             let input = ctx.input(|i| i.clone());
             let mut v = 0.0;
