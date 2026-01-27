@@ -51,21 +51,21 @@ impl RecoveryManager {
                 let mut min_dist = f32::MAX;
                 let mut trigger_obs = (0.0, 0.0);
                 let mut danger_point_count = 0;
-                
+
                 // Trigger: Check obstacles in the "corridor" defined by robot width
                 // This protects the front corners which are outside a simple 45-degree cone.
                 let safety_half_width = robot_width / 2.0 + 0.01; // 1cm margin (tighter for narrow spaces)
 
                 for (x, y, ..) in scan {
                     if *x > 0.0 && y.abs() < safety_half_width {
-                         let d = (x * x + y * y).sqrt();
-                         if d < config.recovery_trigger_dist {
-                             if d < min_dist {
-                                 min_dist = d;
-                                 trigger_obs = (*x, *y);
-                             }
-                             danger_point_count += 1;
-                         }
+                        let d = (x * x + y * y).sqrt();
+                        if d < config.recovery_trigger_dist {
+                            if d < min_dist {
+                                min_dist = d;
+                                trigger_obs = (*x, *y);
+                            }
+                            danger_point_count += 1;
+                        }
                     }
                 }
 
@@ -79,12 +79,14 @@ impl RecoveryManager {
                         );
 
                         // 1. Find closest point on global path
-                        let current_pos_vec = Vector2::new(current_pose.translation.x, current_pose.translation.y);
+                        let current_pos_vec =
+                            Vector2::new(current_pose.translation.x, current_pose.translation.y);
                         let mut closest_idx = 0;
                         let mut min_path_dist_sq = f32::MAX;
 
                         for (i, p) in global_path.iter().enumerate() {
-                            let d_sq = (p.x - current_pos_vec.x).powi(2) + (p.y - current_pos_vec.y).powi(2);
+                            let d_sq = (p.x - current_pos_vec.x).powi(2)
+                                + (p.y - current_pos_vec.y).powi(2);
                             if d_sq < min_path_dist_sq {
                                 min_path_dist_sq = d_sq;
                                 closest_idx = i;
@@ -111,11 +113,11 @@ impl RecoveryManager {
                             "Recovery Target Index: {} (Current Closest: {}), Back Dist: {:.2}m",
                             target_idx, closest_idx, dist_accum
                         );
-                        
+
                         self.state = RecoveryState::Backing { target_idx };
                         self.is_active = true;
                         self.trigger_persistence_counter = 0; // Reset
-                        
+
                         // Stop momentarily
                         return Some((0.0, 0.0));
                     }
@@ -141,10 +143,10 @@ impl RecoveryManager {
                         return Some((0.0, 0.0));
                     }
                 } else {
-                     // Invalid index fallback
-                     self.state = RecoveryState::Idle;
-                     self.is_active = false;
-                     return None;
+                    // Invalid index fallback
+                    self.state = RecoveryState::Idle;
+                    self.is_active = false;
+                    return None;
                 }
 
                 // --- Control Logic: Reverse Path Tracking ---
@@ -157,8 +159,8 @@ impl RecoveryManager {
                 // To move BACKWARDS towards a point (x<0), we use y (lateral error) to steer.
                 // If target is Left-Back (y>0), we need to Turn Right (Omega < 0) to swing tail to left.
                 // If target is Right-Back (y<0), we need to Turn Left (Omega > 0) to swing tail to right.
-                
-                let kp = 2.0; 
+
+                let kp = 2.0;
                 let omega_cmd = -kp * target_local.y;
                 let max_w = 0.5;
                 let final_omega = omega_cmd.clamp(-max_w, max_w);
@@ -168,7 +170,7 @@ impl RecoveryManager {
                 // Safety Check: Side and Rear Collision Avoidance
                 let side_margin = 0.05; // 5cm margin
                 let safety_half_width = robot_width / 2.0 + side_margin;
-                
+
                 let mut danger_detected = false;
                 let mut danger_min_dist = f32::MAX;
                 let mut danger_obs = (0.0, 0.0);
@@ -178,20 +180,20 @@ impl RecoveryManager {
                     // We care about side collisions (y) and rear collisions (x)
                     if *x < 0.2 {
                         if y.abs() < safety_half_width {
-                             // Check distance to be sure it's close enough to constitute a hazard
-                             // We are moving backwards, so anything close in X or Y is dangerous
-                             let dist = (x * x + y * y).sqrt();
-                             // Stop if anything enters the 'safety box' and is within 30cm
-                             if dist < 0.3 {
-                                 danger_detected = true;
-                                 danger_min_dist = dist;
-                                 danger_obs = (*x, *y);
-                                 break;
-                             }
+                            // Check distance to be sure it's close enough to constitute a hazard
+                            // We are moving backwards, so anything close in X or Y is dangerous
+                            let dist = (x * x + y * y).sqrt();
+                            // Stop if anything enters the 'safety box' and is within 30cm
+                            if dist < 0.3 {
+                                danger_detected = true;
+                                danger_min_dist = dist;
+                                danger_obs = (*x, *y);
+                                break;
+                            }
                         }
                     }
                 }
-                
+
                 if danger_detected {
                     info!("Recovery Blocked: Obstacle detected at (x={:.3}, y={:.3}, dist={:.3}m). Stopping.", danger_obs.0, danger_obs.1, danger_min_dist);
                     // Stuck! Stop to prevent collision.

@@ -52,10 +52,13 @@ impl NavScreen {
                     .background_color(background_color),
                 );
                 ui.label(
-                    egui::RichText::new(format!("Travel Dist: {:>8.2} m", navigation_manager.total_travel_distance))
-                        .monospace()
-                        .color(egui::Color32::GOLD)
-                        .background_color(background_color),
+                    egui::RichText::new(format!(
+                        "Travel Dist: {:>8.2} m",
+                        navigation_manager.total_travel_distance
+                    ))
+                    .monospace()
+                    .color(egui::Color32::GOLD)
+                    .background_color(background_color),
                 );
                 ui.label(
                     egui::RichText::new(format!("Lidar Points: {}", latest_scan_for_draw.len()))
@@ -65,10 +68,11 @@ impl NavScreen {
             });
 
         // Sense click for pose adjustment
-        let (response, painter) = ui.allocate_painter(ui.available_size(), egui::Sense::click_and_drag());
+        let (response, painter) =
+            ui.allocate_painter(ui.available_size(), egui::Sense::click_and_drag());
         let rect = response.rect;
         *lidar_draw_rect = Some(rect);
-        
+
         // Fill background
         painter.rect_filled(rect, 0.0, egui::Color32::from_rgb(20, 20, 20));
 
@@ -100,46 +104,58 @@ impl NavScreen {
         // --- Mouse Interaction for Pose Adjustment ---
         if navigation_manager.nav_state == NavState::AdjustingPose {
             // Cancel on Right Click or Escape
-            if response.clicked_by(egui::PointerButton::Secondary) || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            if response.clicked_by(egui::PointerButton::Secondary)
+                || ui.input(|i| i.key_pressed(egui::Key::Escape))
+            {
                 navigation_manager.nav_state = NavState::Standby;
                 navigation_manager.pose_adjustment_start = None;
             }
 
             // Handle Clicks
-            // Use rect.contains() instead of response.hovered() for more robust detection against overlays
             let pointer_pos = ui.input(|i| i.pointer.interact_pos());
             if let Some(mouse_pos) = pointer_pos {
+                // In AdjustingPose mode, we prioritize map clicks over UI "wants_pointer" check
+                // so the 2nd click works reliably even with floating windows.
                 if rect.contains(mouse_pos) && ui.input(|i| i.pointer.primary_clicked()) {
-                     println!("DEBUG: Map Clicked at {:?}", mouse_pos);
-                     let world_pos = to_screen_main.inverse().transform_pos(mouse_pos);
-                     
-                     if navigation_manager.pose_adjustment_start.is_none() {
-                         // First Click: Set Position
-                         println!("DEBUG: Pose Adjust Start: ({:.3}, {:.3})", world_pos.x, world_pos.y);
-                         navigation_manager.pose_adjustment_start = Some(world_pos);
-                     } else {
-                         // Second Click: Confirm Orientation
-                         if let Some(start_pos) = navigation_manager.pose_adjustment_start {
-                             let dx = world_pos.x - start_pos.x;
-                             let dy = world_pos.y - start_pos.y;
-                             let angle = dy.atan2(dx);
-                             println!("DEBUG: Pose Adjust End: Angle {:.1} deg", angle.to_degrees());
+                    println!("DEBUG: Map Clicked at {:?}", mouse_pos);
+                    let world_pos = to_screen_main.inverse().transform_pos(mouse_pos);
 
-                             // Update Robot Pose
-                             let new_translation = Translation2::new(start_pos.x, start_pos.y);
-                             let new_rotation = Rotation2::new(angle);
-                             navigation_manager.current_robot_pose = Isometry2::from_parts(new_translation, new_rotation.into());
-                             
-                             // Reset Navigation / Localization
-                             navigation_manager.nav_state = NavState::Standby;
-                             navigation_manager.pose_adjustment_start = None;
-                             
-                             // Reset DE Solver around new pose
-                             navigation_manager.de_solver.init(navigation_manager.current_robot_pose, None);
-                             navigation_manager.initial_scan = None; // Force re-capture of initial scan
-                             navigation_manager.is_localizing = true;
-                         }
-                     }
+                    if navigation_manager.pose_adjustment_start.is_none() {
+                        // First Click: Set Position
+                        println!(
+                            "DEBUG: Pose Adjust Start: ({:.3}, {:.3})",
+                            world_pos.x, world_pos.y
+                        );
+                        navigation_manager.pose_adjustment_start = Some(world_pos);
+                    } else {
+                        // Second Click: Confirm Orientation
+                        if let Some(start_pos) = navigation_manager.pose_adjustment_start {
+                            let dx = world_pos.x - start_pos.x;
+                            let dy = world_pos.y - start_pos.y;
+                            let angle = dy.atan2(dx);
+                            println!(
+                                "DEBUG: Pose Adjust End: Angle {:.1} deg",
+                                angle.to_degrees()
+                            );
+
+                            // Update Robot Pose
+                            let new_translation = Translation2::new(start_pos.x, start_pos.y);
+                            let new_rotation = Rotation2::new(angle);
+                            navigation_manager.current_robot_pose =
+                                Isometry2::from_parts(new_translation, new_rotation.into());
+
+                            // Reset Navigation / Localization
+                            navigation_manager.nav_state = NavState::Standby;
+                            navigation_manager.pose_adjustment_start = None;
+
+                            // Reset DE Solver around new pose
+                            navigation_manager
+                                .de_solver
+                                .init(navigation_manager.current_robot_pose, None);
+                            navigation_manager.initial_scan = None; // Force re-capture of initial scan
+                            navigation_manager.is_localizing = true;
+                        }
+                    }
                 }
             }
         }
@@ -169,19 +185,14 @@ impl NavScreen {
                         painter.circle_stroke(
                             start_screen,
                             radius,
-                            egui::Stroke::new(1.0, cyan.gamma_multiply(0.4)), 
+                            egui::Stroke::new(1.0, cyan.gamma_multiply(0.4)),
                         );
 
                         // 2. Direction Arrow
-                        painter.arrow(
-                            start_screen, 
-                            vec, 
-                            egui::Stroke::new(2.5, cyan)
-                        );
-                        
+                        painter.arrow(start_screen, vec, egui::Stroke::new(2.5, cyan));
+
                         // 3. Center Mark
                         painter.circle_filled(start_screen, 4.0, egui::Color32::WHITE);
-
                     } else {
                         // Show cursor indicator before first click
                         painter.circle_filled(mouse_pos, 4.0, cyan);
@@ -196,28 +207,31 @@ impl NavScreen {
         // Configurable size at bottom right
         let size = ui_config.nav_zoom_window_size;
         let sub_size = egui::vec2(size, size);
-        let sub_rect = egui::Rect::from_min_size(
-            rect.max - sub_size - egui::vec2(20.0, 20.0),
-            sub_size
-        );
+        let sub_rect =
+            egui::Rect::from_min_size(rect.max - sub_size - egui::vec2(20.0, 20.0), sub_size);
 
         // Only draw PIP if there is space
         if rect.contains(sub_rect.min) {
             let sub_painter = painter.with_clip_rect(sub_rect);
-            
+
             // Background and Border
             sub_painter.rect_filled(sub_rect, 0.0, egui::Color32::from_rgb(10, 10, 10));
             sub_painter.rect_stroke(sub_rect, 0.0, egui::Stroke::new(2.0, egui::Color32::WHITE));
 
             // Viewport: Robot center +/- zoom_view_size/2
             let zoom_size = ui_config.nav_zoom_view_size;
-            let robot_pos = egui::pos2(current_robot_pose.translation.x, current_robot_pose.translation.y);
-            let sub_view_rect = egui::Rect::from_center_size(robot_pos, egui::vec2(zoom_size, zoom_size));
-            
+            let robot_pos = egui::pos2(
+                current_robot_pose.translation.x,
+                current_robot_pose.translation.y,
+            );
+            let sub_view_rect =
+                egui::Rect::from_center_size(robot_pos, egui::vec2(zoom_size, zoom_size));
+
             let mut inverted_sub_view_rect = sub_view_rect;
             inverted_sub_view_rect.min.y = sub_view_rect.max.y;
             inverted_sub_view_rect.max.y = sub_view_rect.min.y;
-            let to_screen_sub = egui::emath::RectTransform::from_to(inverted_sub_view_rect, sub_rect);
+            let to_screen_sub =
+                egui::emath::RectTransform::from_to(inverted_sub_view_rect, sub_rect);
 
             // --- 4. Draw Sub View ---
             Self::draw_nav_content(
@@ -229,7 +243,7 @@ impl NavScreen {
                 robot_trajectory,
                 true,
             );
-            
+
             // Label for PIP
             sub_painter.text(
                 sub_rect.min + egui::vec2(5.0, 5.0),
@@ -239,143 +253,62 @@ impl NavScreen {
                 egui::Color32::WHITE,
             );
         }
-            
-        // --- Button Overlay & State Control ---
-        if navigation_manager.nav_state != NavState::Running {
-            if navigation_manager.nav_state == NavState::Standby {
-                // Center Overlay for Standby
-                let overlay_rect = egui::Rect::from_center_size(
-                    rect.center() - egui::vec2(0.0, rect.height() * 0.3),
-                    egui::vec2(400.0, 100.0)
-                );
-                painter.rect_filled(overlay_rect, 5.0, egui::Color32::from_rgba_unmultiplied(0, 0, 0, 180));
-                
-                let mut overlay_ui = ui.child_ui(overlay_rect, egui::Layout::top_down(egui::Align::Center));
-                overlay_ui.vertical_centered(|ui| {
-                    ui.add_space(10.0);
-                    ui.label(egui::RichText::new("READY TO START").heading().color(egui::Color32::WHITE));
-                    ui.add_space(10.0);
-                    
-                    ui.horizontal(|ui| {
-                        if ui.add(egui::Button::new(egui::RichText::new(" ▶ Start ").size(20.0)).fill(egui::Color32::DARK_GREEN)).clicked() {
-                            navigation_manager.nav_state = NavState::Running;
-                        }
-                        ui.add_space(20.0);
-                        if ui.add(egui::Button::new(egui::RichText::new(" 📍 Adjust Pose ").size(20.0)).fill(egui::Color32::DARK_BLUE)).clicked() {
-                            navigation_manager.nav_state = NavState::AdjustingPose;
-                        }
-                    });
-                    ui.label(egui::RichText::new("Shortcuts: [Space] Start, [P] Adjust").size(12.0).color(egui::Color32::GRAY));
 
-                    if ui.input(|i| i.key_pressed(egui::Key::Space)) {
-                         navigation_manager.nav_state = NavState::Running;
-                    }
-                    if ui.input(|i| i.key_pressed(egui::Key::P)) {
-                         navigation_manager.nav_state = NavState::AdjustingPose;
-                    }
-                });
-
-            } else if navigation_manager.nav_state == NavState::AdjustingPose {
-                // Top Overlay for AdjustingPose (Non-intrusive)
-                let overlay_rect = egui::Rect::from_center_size(
-                    rect.center_top() + egui::vec2(0.0, 40.0), // 40px from top
-                    egui::vec2(500.0, 60.0)
-                );
-                painter.rect_filled(overlay_rect, 5.0, egui::Color32::from_rgba_unmultiplied(0, 0, 0, 150));
-
-                let mut overlay_ui = ui.child_ui(overlay_rect, egui::Layout::top_down(egui::Align::Center));
-                overlay_ui.vertical_centered(|ui| {
-                    ui.add_space(5.0);
-                    ui.label(egui::RichText::new("ADJUSTING POSE: Click to Set Position -> Move -> Click to Confirm").color(egui::Color32::YELLOW));
-                    if ui.add(egui::Button::new(egui::RichText::new(" Cancel (Esc) ").size(14.0)).fill(egui::Color32::DARK_RED)).clicked() {
-                        navigation_manager.nav_state = NavState::Standby;
-                        navigation_manager.pose_adjustment_start = None;
-                    }
-                });
-            }
-        }
-
-        // --- Button Overlay & State Control ---
-        if navigation_manager.nav_state != NavState::Running {
-            if navigation_manager.nav_state == NavState::Standby {
-                // Center Overlay for Standby
-                let overlay_rect = egui::Rect::from_center_size(
-                    rect.center() - egui::vec2(0.0, rect.height() * 0.3),
-                    egui::vec2(400.0, 100.0)
-                );
-                painter.rect_filled(overlay_rect, 5.0, egui::Color32::from_rgba_unmultiplied(0, 0, 0, 180));
-                
-                let mut overlay_ui = ui.child_ui(overlay_rect, egui::Layout::top_down(egui::Align::Center));
-                overlay_ui.vertical_centered(|ui| {
-                    ui.add_space(10.0);
-                    ui.label(egui::RichText::new("READY TO START").heading().color(egui::Color32::WHITE));
-                    ui.add_space(10.0);
-                    
-                    ui.horizontal(|ui| {
-                        if ui.add(egui::Button::new(egui::RichText::new(" ▶ Start ").size(20.0)).fill(egui::Color32::DARK_GREEN)).clicked() {
-                            navigation_manager.nav_state = NavState::Running;
-                        }
-                        ui.add_space(20.0);
-                        if ui.add(egui::Button::new(egui::RichText::new(" 📍 Adjust Pose ").size(20.0)).fill(egui::Color32::DARK_BLUE)).clicked() {
-                            navigation_manager.nav_state = NavState::AdjustingPose;
-                        }
-                    });
-                    ui.label(egui::RichText::new("Shortcuts: [Space] Start, [P] Adjust").size(12.0).color(egui::Color32::GRAY));
-
-                    if ui.input(|i| i.key_pressed(egui::Key::Space)) {
-                         navigation_manager.nav_state = NavState::Running;
-                    }
-                    if ui.input(|i| i.key_pressed(egui::Key::P)) {
-                         navigation_manager.nav_state = NavState::AdjustingPose;
-                    }
-                });
-
-            } else if navigation_manager.nav_state == NavState::AdjustingPose {
-                // Top Overlay for AdjustingPose (Non-intrusive)
-                let overlay_rect = egui::Rect::from_center_size(
-                    rect.center_top() + egui::vec2(0.0, 40.0), // 40px from top
-                    egui::vec2(500.0, 60.0)
-                );
-                painter.rect_filled(overlay_rect, 5.0, egui::Color32::from_rgba_unmultiplied(0, 0, 0, 150));
-
-                let mut overlay_ui = ui.child_ui(overlay_rect, egui::Layout::top_down(egui::Align::Center));
-                overlay_ui.vertical_centered(|ui| {
-                    ui.add_space(5.0);
-                    ui.label(egui::RichText::new("ADJUSTING POSE: Click to Set Position -> Move -> Click to Confirm").color(egui::Color32::YELLOW));
-                    if ui.add(egui::Button::new(egui::RichText::new(" Cancel (Esc) ").size(14.0)).fill(egui::Color32::DARK_RED)).clicked() {
-                        navigation_manager.nav_state = NavState::Standby;
-                        navigation_manager.pose_adjustment_start = None;
-                    }
-                });
-            }
-        }
 
         // --- Converged & Finished Messages (Overlay on whole screen) ---
         if navigation_manager.converged_message_timer > 0 {
             let center = rect.center();
             let text = "Localization Converged";
             let font_id = egui::FontId::proportional(30.0);
-            painter.text(center + egui::vec2(2.0, 2.0), egui::Align2::CENTER_CENTER, text, font_id.clone(), egui::Color32::BLACK);
-            painter.text(center, egui::Align2::CENTER_CENTER, text, font_id, egui::Color32::GREEN);
+            painter.text(
+                center + egui::vec2(2.0, 2.0),
+                egui::Align2::CENTER_CENTER,
+                text,
+                font_id.clone(),
+                egui::Color32::BLACK,
+            );
+            painter.text(
+                center,
+                egui::Align2::CENTER_CENTER,
+                text,
+                font_id,
+                egui::Color32::GREEN,
+            );
         }
         if navigation_manager.navigation_finished_timer > 0 {
             let center = rect.center();
             let text = "Goal Reached / Navigation Finished";
             let font_id = egui::FontId::proportional(30.0);
-            painter.text(center + egui::vec2(2.0, 2.0), egui::Align2::CENTER_CENTER, text, font_id.clone(), egui::Color32::BLACK);
-            painter.text(center, egui::Align2::CENTER_CENTER, text, font_id, egui::Color32::GOLD);
+            painter.text(
+                center + egui::vec2(2.0, 2.0),
+                egui::Align2::CENTER_CENTER,
+                text,
+                font_id.clone(),
+                egui::Color32::BLACK,
+            );
+            painter.text(
+                center,
+                egui::Align2::CENTER_CENTER,
+                text,
+                font_id,
+                egui::Color32::GOLD,
+            );
         }
 
         // --- Debug Info on Hover (Main View Only) ---
         if let Some(mouse_pos) = ui.input(|i| i.pointer.hover_pos()) {
             if rect.contains(mouse_pos) {
                 // If hovering over PIP, use sub transform?
-                // For simplicity, let's just support tooltips on the main map for now, 
+                // For simplicity, let's just support tooltips on the main map for now,
                 // or check if mouse is inside sub_rect.
                 let transform = if rect.contains(sub_rect.min) && sub_rect.contains(mouse_pos) {
                     // Hovering PIP
-                    let robot_pos = egui::pos2(current_robot_pose.translation.x, current_robot_pose.translation.y);
-                    let sub_view_rect = egui::Rect::from_center_size(robot_pos, egui::vec2(4.0, 4.0));
+                    let robot_pos = egui::pos2(
+                        current_robot_pose.translation.x,
+                        current_robot_pose.translation.y,
+                    );
+                    let sub_view_rect =
+                        egui::Rect::from_center_size(robot_pos, egui::vec2(4.0, 4.0));
                     let mut inverted_sub_view_rect = sub_view_rect;
                     inverted_sub_view_rect.min.y = sub_view_rect.max.y;
                     inverted_sub_view_rect.max.y = sub_view_rect.min.y;
@@ -423,6 +356,94 @@ impl NavScreen {
                 egui::show_tooltip(ui.ctx(), egui::Id::new("nav_debug_tooltip"), |ui| {
                     ui.label(debug_text);
                 });
+            }
+        }
+
+        // --- Button Overlay & State Control (Draggable Windows) ---
+        if navigation_manager.nav_state != NavState::Running {
+            if navigation_manager.nav_state == NavState::Standby {
+                egui::Window::new("NavStandbyOverlay") // Stable ID
+                    .title_bar(true)
+                    .collapsible(false)
+                    .resizable(false)
+                    .movable(true)
+                    .default_pos(egui::pos2(rect.center().x - 200.0, rect.center().y - 150.0))
+                    .show(ui.ctx(), |ui| {
+                        ui.set_min_width(300.0);
+                        ui.vertical_centered(|ui| {
+                            ui.label(egui::RichText::new("READY TO START").heading());
+                            ui.add_space(5.0);
+                            ui.horizontal(|ui| {
+                                if ui
+                                    .add(
+                                        egui::Button::new(
+                                            egui::RichText::new(" ▶ Start ").size(20.0),
+                                        )
+                                        .fill(egui::Color32::DARK_GREEN),
+                                    )
+                                    .clicked()
+                                {
+                                    navigation_manager.nav_state = NavState::Running;
+                                }
+                                ui.add_space(20.0);
+                                if ui
+                                    .add(
+                                        egui::Button::new(
+                                            egui::RichText::new(" 📍 Adjust Pose ").size(20.0),
+                                        )
+                                        .fill(egui::Color32::DARK_BLUE),
+                                    )
+                                    .clicked()
+                                {
+                                    navigation_manager.nav_state = NavState::AdjustingPose;
+                                }
+                            });
+                            ui.label(
+                                egui::RichText::new("Shortcuts: [Space] Start, [P] Adjust")
+                                    .size(12.0)
+                                    .color(egui::Color32::GRAY),
+                            );
+                            ui.add_space(5.0);
+                        });
+
+                        if ui.input(|i| i.key_pressed(egui::Key::Space)) {
+                            navigation_manager.nav_state = NavState::Running;
+                        }
+                        if ui.input(|i| i.key_pressed(egui::Key::P)) {
+                            navigation_manager.nav_state = NavState::AdjustingPose;
+                        }
+                    });
+            } else if navigation_manager.nav_state == NavState::AdjustingPose {
+                egui::Window::new("NavAdjustOverlay") // Stable ID
+                    .title_bar(true)
+                    .collapsible(false)
+                    .resizable(false)
+                    .movable(true)
+                    .default_pos(egui::pos2(rect.center().x - 150.0, 40.0))
+                    .show(ui.ctx(), |ui| {
+                        ui.set_min_width(300.0);
+                        ui.vertical_centered(|ui| {
+                            ui.add_space(5.0);
+                            ui.label(egui::RichText::new("ADJUSTING POSE").color(egui::Color32::YELLOW));
+                            ui.label("1. Click map to set Position");
+                            ui.label("2. Move mouse to set Orientation");
+                            ui.label("3. Click again to Confirm");
+                            ui.add_space(5.0);
+                            if ui
+                                .add(
+                                    egui::Button::new(
+                                        egui::RichText::new(" Cancel (Esc) ").size(14.0),
+                                    )
+                                    .fill(egui::Color32::DARK_RED),
+                                )
+                                .clicked()
+                            {
+                                navigation_manager.nav_state = NavState::Standby;
+                                navigation_manager.pose_adjustment_start = None;
+                            }
+                            ui.add_space(5.0);
+                        });
+                    });
             }
         }
     }
@@ -514,10 +535,7 @@ impl NavScreen {
                 painter.add(egui::Shape::convex_polygon(
                     corners_screen,
                     egui::Color32::from_rgba_unmultiplied(150, 0, 255, 40), // Transparent Purple fill
-                    egui::Stroke::new(
-                        1.0,
-                        egui::Color32::from_rgba_unmultiplied(150, 0, 255, 100),
-                    ), // Purple outline
+                    egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(150, 0, 255, 100)), // Purple outline
                 ));
             }
 
@@ -547,11 +565,8 @@ impl NavScreen {
 
                 painter.add(egui::Shape::convex_polygon(
                     corners_screen,
-                    egui::Color32::TRANSPARENT, 
-                    egui::Stroke::new(
-                        1.5,
-                        egui::Color32::from_rgba_unmultiplied(255, 50, 50, 150),
-                    ), // Red stroke
+                    egui::Color32::TRANSPARENT,
+                    egui::Stroke::new(1.5, egui::Color32::from_rgba_unmultiplied(255, 50, 50, 150)), // Red stroke
                 ));
             }
         }
@@ -570,14 +585,15 @@ impl NavScreen {
 
                 // Optimization: Iterate only visible cells?
                 // For now, simple iteration but check rect containment early
-                for y in (0..height).step_by(5) { // Skip some for perf
+                for y in (0..height).step_by(5) {
+                    // Skip some for perf
                     for x in (0..width).step_by(5) {
                         let idx = y * width + x;
                         if grid.data[idx].edge_ness > 0.5 {
                             let wx = origin_x + (x as f32 + 0.5) * resolution;
                             let wy = origin_y - (y as f32 + 0.5) * resolution;
                             let screen_pos = to_screen.transform_pos(egui::pos2(wx, wy));
-                            
+
                             if rect.contains(screen_pos) {
                                 painter.rect_filled(
                                     egui::Rect::from_center_size(screen_pos, egui::vec2(3.0, 3.0)),
@@ -596,11 +612,17 @@ impl NavScreen {
         let origin_screen = to_screen.transform_pos(origin_world);
         let axis_length_world = 1.0;
         painter.line_segment(
-            [origin_screen, to_screen.transform_pos(egui::pos2(axis_length_world, 0.0))],
+            [
+                origin_screen,
+                to_screen.transform_pos(egui::pos2(axis_length_world, 0.0)),
+            ],
             egui::Stroke::new(1.0, egui::Color32::from_rgb(100, 50, 50)),
         );
         painter.line_segment(
-            [origin_screen, to_screen.transform_pos(egui::pos2(0.0, axis_length_world))],
+            [
+                origin_screen,
+                to_screen.transform_pos(egui::pos2(0.0, axis_length_world)),
+            ],
             egui::Stroke::new(1.0, egui::Color32::from_rgb(50, 100, 50)),
         );
 
@@ -613,7 +635,10 @@ impl NavScreen {
             // Basic optimization: don't draw lines far outside
             painter.add(egui::Shape::line(
                 path_points,
-                egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(100, 100, 255, 60)),
+                egui::Stroke::new(
+                    1.0,
+                    egui::Color32::from_rgba_unmultiplied(100, 100, 255, 60),
+                ),
             ));
         }
 

@@ -1,5 +1,5 @@
 use crate::config::{DwaConfig, RobotConfig, SlamConfig};
-use crate::slam::{OccupancyGrid};
+use crate::slam::OccupancyGrid;
 use nalgebra::{Isometry2, Point2, Vector2};
 
 pub struct DwaTrajectory {
@@ -45,12 +45,20 @@ impl DwaPlanner {
 
         let min_v = (vc - self.config.max_accel_v * dt).max(0.0);
         let max_v = (vc + self.config.max_accel_v * dt).min(self.config.max_speed_v);
-        
+
         let min_w = (wc - self.config.max_accel_w * dt).max(-self.config.max_speed_w);
         let max_w = (wc + self.config.max_accel_w * dt).min(self.config.max_speed_w);
 
-        let v_step = if self.config.v_samples > 0 { (max_v - min_v) / self.config.v_samples as f32 } else { 0.0 };
-        let w_step = if self.config.w_samples > 0 { (max_w - min_w) / self.config.w_samples as f32 } else { 0.0 };
+        let v_step = if self.config.v_samples > 0 {
+            (max_v - min_v) / self.config.v_samples as f32
+        } else {
+            0.0
+        };
+        let w_step = if self.config.w_samples > 0 {
+            (max_w - min_w) / self.config.w_samples as f32
+        } else {
+            0.0
+        };
 
         let mut candidates = Vec::new();
         let mut all_trajectories = Vec::new();
@@ -60,9 +68,20 @@ impl DwaPlanner {
             for j in 0..=self.config.w_samples {
                 let w = min_w + j as f32 * w_step;
 
-                let (points, is_safe) = self.predict_trajectory(current_pose, v, w, grid, map_origin, res, lidar_points);
-                let traj = DwaTrajectory { points: points.clone(), is_safe };
-                
+                let (points, is_safe) = self.predict_trajectory(
+                    current_pose,
+                    v,
+                    w,
+                    grid,
+                    map_origin,
+                    res,
+                    lidar_points,
+                );
+                let traj = DwaTrajectory {
+                    points: points.clone(),
+                    is_safe,
+                };
+
                 if is_safe {
                     // Calculate raw metrics
                     let dt_pred = self.config.predict_time;
@@ -71,7 +90,7 @@ impl DwaPlanner {
                     let avg_yaw = (yaw + next_yaw) / 2.0;
                     let next_x = current_pose.translation.x + v * dt_pred * avg_yaw.cos();
                     let next_y = current_pose.translation.y + v * dt_pred * avg_yaw.sin();
-                    
+
                     let dx = target_point.x - next_x;
                     let dy = target_point.y - next_y;
                     let target_heading = dy.atan2(dx);
@@ -90,7 +109,7 @@ impl DwaPlanner {
         }
 
         if candidates.is_empty() {
-             // If no safe trajectory, try to stop or slow down
+            // If no safe trajectory, try to stop or slow down
             return (0.0, 0.0, all_trajectories);
         }
 
@@ -101,10 +120,18 @@ impl DwaPlanner {
         let mut max_vel = -f32::MAX;
 
         for c in &candidates {
-            if c.heading_metric < min_heading { min_heading = c.heading_metric; }
-            if c.heading_metric > max_heading { max_heading = c.heading_metric; }
-            if c.velocity_metric < min_vel { min_vel = c.velocity_metric; }
-            if c.velocity_metric > max_vel { max_vel = c.velocity_metric; }
+            if c.heading_metric < min_heading {
+                min_heading = c.heading_metric;
+            }
+            if c.heading_metric > max_heading {
+                max_heading = c.heading_metric;
+            }
+            if c.velocity_metric < min_vel {
+                min_vel = c.velocity_metric;
+            }
+            if c.velocity_metric > max_vel {
+                max_vel = c.velocity_metric;
+            }
         }
 
         // 2. Evaluate and find best
@@ -164,7 +191,8 @@ impl DwaPlanner {
 
             points.push(Point2::new(next_x, next_y));
 
-            if is_safe && self.check_footprint_collision(&pose, grid, map_origin, res, lidar_points) {
+            if is_safe && self.check_footprint_collision(&pose, grid, map_origin, res, lidar_points)
+            {
                 is_safe = false;
             }
         }
@@ -201,15 +229,15 @@ impl DwaPlanner {
                 let p2 = corners_world[(i + 1) % num_corners];
                 let dist = (p1 - p2).norm();
                 let steps = (dist / res).ceil() as usize;
-                
+
                 for s in 0..=steps {
                     let t = s as f32 / steps as f32;
                     let p = p1 + (p2 - p1) * t;
-                    
+
                     // Correct conversion using map origin (Top-Left)
                     let gx = ((p.x - map_origin[0]) / res).floor() as isize;
                     let gy = ((map_origin[1] - p.y) / res).floor() as isize;
-                    
+
                     if gx >= 0 && gx < grid.width as isize && gy >= 0 && gy < grid.height as isize {
                         let idx = (gy as usize) * grid.width + (gx as usize);
                         if grid.data[idx].log_odds > 2.0 {
@@ -227,7 +255,7 @@ impl DwaPlanner {
         for lp_world in lidar_points {
             let lp_world_pt = Point2::new(lp_world.0, lp_world.1);
             let dist_sq = (pose.translation.vector - lp_world_pt.coords).norm_squared();
-            
+
             if dist_sq > safe_radius_sq {
                 continue;
             }

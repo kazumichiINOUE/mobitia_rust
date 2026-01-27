@@ -170,12 +170,12 @@ impl Default for RobotConfig {
 // --- DWA Configuration ---
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct DwaConfig {
-    pub max_accel_v: f32, // m/s^2
-    pub max_accel_w: f32, // rad/s^2
-    pub max_speed_v: f32, // m/s
-    pub max_speed_w: f32, // rad/s
+    pub max_accel_v: f32,  // m/s^2
+    pub max_accel_w: f32,  // rad/s^2
+    pub max_speed_v: f32,  // m/s
+    pub max_speed_w: f32,  // rad/s
     pub predict_time: f32, // s
-    pub dt: f32,          // s (simulation step)
+    pub dt: f32,           // s (simulation step)
     pub v_samples: usize,
     pub w_samples: usize,
 }

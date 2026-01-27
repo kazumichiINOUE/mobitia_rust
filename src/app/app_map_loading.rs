@@ -120,9 +120,8 @@ impl MyApp {
                             && my < grid.height as isize
                         {
                             let idx = (my as usize) * grid.width + (mx as usize);
-                            grid.data[idx].log_odds = (grid.data[idx].log_odds
-                                + progress.log_odds_free)
-                                .clamp(
+                            grid.data[idx].log_odds =
+                                (grid.data[idx].log_odds + progress.log_odds_free).clamp(
                                     self.config.slam.log_odds_clamp_min,
                                     self.config.slam.log_odds_clamp_max,
                                 );

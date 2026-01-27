@@ -521,7 +521,11 @@ impl MyApp {
         }));
 
         // ナビゲーションマネージャーの初期化
-        let navigation_manager = NavigationManager::new(config.nav.clone(), config.slam.clone(), config.robot.clone());
+        let navigation_manager = NavigationManager::new(
+            config.nav.clone(),
+            config.slam.clone(),
+            config.robot.clone(),
+        );
 
         let command_history = vec![
             ConsoleOutputEntry {
@@ -2522,17 +2526,20 @@ negate = 0
                 // Update trajectory history
                 let current_pos_egui = egui::pos2(
                     self.current_robot_pose.translation.x,
-                    self.current_robot_pose.translation.y
+                    self.current_robot_pose.translation.y,
                 );
                 let current_angle = self.current_robot_pose.rotation.angle();
 
                 if self.robot_trajectory.is_empty() {
-                    self.robot_trajectory.push((current_pos_egui, current_angle));
+                    self.robot_trajectory
+                        .push((current_pos_egui, current_angle));
                 } else {
                     let (last_pos, _) = self.robot_trajectory.last().unwrap();
                     let dist = last_pos.distance(current_pos_egui);
-                    if dist > 0.1 { // Add point every 10cm
-                        self.robot_trajectory.push((current_pos_egui, current_angle));
+                    if dist > 0.1 {
+                        // Add point every 10cm
+                        self.robot_trajectory
+                            .push((current_pos_egui, current_angle));
                     }
                 }
 

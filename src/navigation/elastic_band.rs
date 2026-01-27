@@ -26,12 +26,14 @@ impl ElasticBand {
             return;
         }
 
-        let iterations = self.config.num_iterations.max(5); 
+        let iterations = self.config.num_iterations.max(5);
         let sigma = self.config.obstacle_safety_dist * 0.5; // Gaussian sigma
         let _sigma_sq_2 = 2.0 * sigma * sigma;
 
         for _ in 0..iterations {
-            if trajectory.len() < 3 { break; }
+            if trajectory.len() < 3 {
+                break;
+            }
 
             // Recalculate active window every iteration because refine_trajectory changes length
             let mut closest_idx = 0;
@@ -48,12 +50,14 @@ impl ElasticBand {
 
             let start_idx = closest_idx.max(1);
             let end_idx = (closest_idx + 40).min(trajectory.len() - 1);
-            
-            if start_idx >= end_idx { break; }
+
+            if start_idx >= end_idx {
+                break;
+            }
 
             let mut total_len = 0.0;
             for i in start_idx..end_idx {
-                let dist = trajectory[i].distance(trajectory[i-1]);
+                let dist = trajectory[i].distance(trajectory[i - 1]);
                 total_len += dist;
             }
             let count = (end_idx - start_idx) as f32;
@@ -70,14 +74,22 @@ impl ElasticBand {
                 let vec_prev = prev - p;
                 let dist_prev = vec_prev.length();
                 let force_prev = if dist_prev > 0.001 {
-                    vec_prev.normalized() * (dist_prev - rest_length) * self.config.internal_force_gain
-                } else { egui::Vec2::ZERO };
+                    vec_prev.normalized()
+                        * (dist_prev - rest_length)
+                        * self.config.internal_force_gain
+                } else {
+                    egui::Vec2::ZERO
+                };
 
                 let vec_next = next - p;
                 let dist_next = vec_next.length();
                 let force_next = if dist_next > 0.001 {
-                    vec_next.normalized() * (dist_next - rest_length) * self.config.internal_force_gain
-                } else { egui::Vec2::ZERO };
+                    vec_next.normalized()
+                        * (dist_next - rest_length)
+                        * self.config.internal_force_gain
+                } else {
+                    egui::Vec2::ZERO
+                };
 
                 let midpoint = prev + (next - prev) * 0.5;
                 let force_smooth = (midpoint - p) * self.config.internal_force_gain;
@@ -90,12 +102,12 @@ impl ElasticBand {
 
                 for obs in obstacles {
                     let obs_pos = egui::pos2(obs.0, obs.1);
-                    let vec_diff = p - obs_pos; 
+                    let vec_diff = p - obs_pos;
                     let dist_sq = vec_diff.length_sq();
 
                     if dist_sq < safety_sq && dist_sq > 0.0001 {
                         let dist = dist_sq.sqrt();
-                        
+
                         // Force direction: Always push AWAY from the obstacle point.
                         // Using vec_diff directly is more stable than relying on normals
                         // which might have inconsistent orientations.
@@ -104,7 +116,7 @@ impl ElasticBand {
                         // Quadratic or Exponential decay for the force
                         // We use a combination that is strong near the obstacle but fades smoothly.
                         let weight = (1.0 - dist / self.config.obstacle_safety_dist).powi(2);
-                        
+
                         external_f += force_dir * weight * self.config.external_force_gain;
                     }
                 }
@@ -143,7 +155,7 @@ impl ElasticBand {
                 let disp = displacements[i];
                 let disp_len = disp.length();
                 // Limit displacement per iteration to prevent jitter
-                let max_disp = 0.02; 
+                let max_disp = 0.02;
                 let mut final_disp = if disp_len > max_disp {
                     disp * (max_disp / disp_len)
                 } else {
@@ -165,26 +177,28 @@ impl ElasticBand {
     }
 
     fn simplify_trajectory(&self, trajectory: &mut Vec<egui::Pos2>) {
-        if trajectory.len() < 3 { return; }
-        
+        if trajectory.len() < 3 {
+            return;
+        }
+
         let mut i = 1;
         // Check up to the second to last point
         while i < trajectory.len() - 1 {
-            let prev = trajectory[i-1];
+            let prev = trajectory[i - 1];
             let curr = trajectory[i];
-            let next = trajectory[i+1];
-            
+            let next = trajectory[i + 1];
+
             let v1 = curr - prev;
             let v2 = next - curr;
-            
+
             if v1.length_sq() < 1e-4 || v2.length_sq() < 1e-4 {
                 i += 1;
                 continue;
             }
-            
+
             let v1_n = v1.normalized();
             let v2_n = v2.normalized();
-            
+
             // Dot product > 0.999 means the angle is very small (straight line)
             // Also ensure we don't create gaps larger than max_spacing (0.5)
             let dist_new = prev.distance(next);
@@ -202,17 +216,19 @@ impl ElasticBand {
     fn refine_trajectory(&self, trajectory: &mut Vec<egui::Pos2>) {
         let min_spacing = 0.1;
         let max_spacing = 0.5;
-        
+
         let mut new_traj = Vec::with_capacity(trajectory.len());
-        if trajectory.is_empty() { return; }
+        if trajectory.is_empty() {
+            return;
+        }
         new_traj.push(trajectory[0]);
-        
+
         let mut last_p = trajectory[0];
-        
+
         for i in 1..trajectory.len() {
             let p = trajectory[i];
             let dist = last_p.distance(p);
-            
+
             if dist < min_spacing {
                 // Skip (remove), UNLESS it is the very last point (goal)
                 if i == trajectory.len() - 1 {
@@ -234,7 +250,7 @@ impl ElasticBand {
                 last_p = p;
             }
         }
-        
+
         *trajectory = new_traj;
     }
 }

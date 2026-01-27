@@ -35,9 +35,7 @@ fn main() -> Result<(), eframe::Error> {
         .include_args(true)
         .build();
 
-    tracing_subscriber::registry()
-        .with(chrome_layer)
-        .init();
+    tracing_subscriber::registry().with(chrome_layer).init();
     // --- End of Tracing Setup ---
 
     // --- Config loading ---

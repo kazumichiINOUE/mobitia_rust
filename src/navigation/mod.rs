@@ -2,9 +2,9 @@ pub mod de_tiny;
 pub mod dwa;
 pub mod elastic_band;
 pub mod localization;
+pub mod persistence_grid;
 pub mod pure_pursuit;
 pub mod recovery;
-pub mod persistence_grid;
 
 use crate::config::{NavConfig, RobotConfig, SlamConfig};
 use crate::lidar::features::compute_features;
@@ -17,7 +17,7 @@ use serde::Deserialize;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
-use tracing::{instrument, info};
+use tracing::{info, instrument};
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct MapInfo {
@@ -40,7 +40,7 @@ pub struct NavigationManager {
     // 状態データ
     pub nav_state: NavState,
     pub pose_adjustment_start: Option<egui::Pos2>, // For UI interaction
-    
+
     pub nav_map_texture: Option<egui::TextureHandle>,
     pub nav_map_bounds: Option<egui::Rect>,
     pub nav_trajectory_points: Vec<egui::Pos2>, // Global Path (Initial)
@@ -88,7 +88,11 @@ impl NavigationManager {
             pose_config[2].to_radians(),
         );
 
-        let dwa_planner = dwa::DwaPlanner::new(config.dwa.clone(), robot_config.clone(), slam_config.clone());
+        let dwa_planner = dwa::DwaPlanner::new(
+            config.dwa.clone(),
+            robot_config.clone(),
+            slam_config.clone(),
+        );
         let elastic_band = elastic_band::ElasticBand::new(config.elastic_band.clone());
         let recovery_manager = recovery::RecoveryManager::new();
         let persistence_grid = persistence_grid::LocalPersistenceGrid::new(0.1); // 10cm grid
@@ -505,7 +509,7 @@ impl NavigationManager {
                 let sin_theta = last_theta.sin();
                 let delta_x_local = delta_x_global * cos_theta + delta_y_global * sin_theta;
                 let delta_y_local = -delta_x_global * sin_theta + delta_y_global * cos_theta;
-                
+
                 // Add to total travel distance
                 let step_dist = (delta_x_local.powi(2) + delta_y_local.powi(2)).sqrt();
                 self.total_travel_distance += step_dist;
@@ -563,7 +567,8 @@ impl NavigationManager {
 
                 for point in effective_scan {
                     // Filter out points that are inside the robot's footprint (self-reflection)
-                    if point.0 > -dr - 0.05 && point.0 < df + 0.05 && point.1.abs() < half_w + 0.05 {
+                    if point.0 > -dr - 0.05 && point.0 < df + 0.05 && point.1.abs() < half_w + 0.05
+                    {
                         continue;
                     }
                     if point.2 < self.robot_config.min_mapping_dist {
@@ -573,8 +578,10 @@ impl NavigationManager {
                 }
 
                 // Update Persistence Grid with filtered raw points
-                let stable_local_obstacles = self.persistence_grid.update(&filtered_raw_scan, &self.current_robot_pose);
-                
+                let stable_local_obstacles = self
+                    .persistence_grid
+                    .update(&filtered_raw_scan, &self.current_robot_pose);
+
                 // Prepare obstacles for Elastic Band & other checks (convert to Vec<(f32,f32,f32,f32)>)
                 // stable_local_obstacles is already Vec<(f32, f32, f32, f32)> (x, y, nx, ny)
 
@@ -595,20 +602,23 @@ impl NavigationManager {
                 // --- 3. Update Elastic Band (Local Path) ---
                 let robot_pos_egui = egui::pos2(
                     self.current_robot_pose.translation.x,
-                    self.current_robot_pose.translation.y
+                    self.current_robot_pose.translation.y,
                 );
 
                 let robot_tf = self.current_robot_pose;
                 // Convert obstacles to global frame for Elastic Band optimization
-                let global_obstacles: Vec<(f32, f32, f32, f32)> = stable_local_obstacles.iter().map(|(lx, ly, nx, ny)| {
-                     let p_local = Point2::new(*lx, *ly);
-                     let n_local = Vector2::new(*nx, *ny);
-                     
-                     let p_global = robot_tf * p_local;
-                     let n_global = robot_tf.rotation * n_local;
-                     
-                     (p_global.x, p_global.y, n_global.x, n_global.y)
-                }).collect();
+                let global_obstacles: Vec<(f32, f32, f32, f32)> = stable_local_obstacles
+                    .iter()
+                    .map(|(lx, ly, nx, ny)| {
+                        let p_local = Point2::new(*lx, *ly);
+                        let n_local = Vector2::new(*nx, *ny);
+
+                        let p_global = robot_tf * p_local;
+                        let n_global = robot_tf.rotation * n_local;
+
+                        (p_global.x, p_global.y, n_global.x, n_global.y)
+                    })
+                    .collect();
 
                 // Prune passed points from local_path
                 if !self.local_path.is_empty() {
@@ -623,7 +633,7 @@ impl NavigationManager {
                             closest_idx = i;
                         }
                     }
-                    
+
                     // Keep a margin of points behind the robot (e.g., 5 points)
                     let margin = 5;
                     if closest_idx > margin {
@@ -657,10 +667,10 @@ impl NavigationManager {
                         let robot_pos = self.current_robot_pose.translation.vector;
                         let goal_pos = nalgebra::Vector2::new(last_p.x, last_p.y);
                         let dist_to_goal = (robot_pos - goal_pos).norm();
-                        
+
                         if dist_to_goal < self.config.goal_tolerance {
                             info!(
-                                "GOAL REACHED! Total Travel Distance: {:.2}m, Accuracy: {:.3}m", 
+                                "GOAL REACHED! Total Travel Distance: {:.2}m, Accuracy: {:.3}m",
                                 self.total_travel_distance, dist_to_goal
                             );
                             self.is_autonomous = false;
@@ -671,7 +681,7 @@ impl NavigationManager {
 
                     // --- 5. Collision Check (Safety Stop) ---
                     let mut final_command = command;
-                    
+
                     let margin = self.config.lidar_avoid_dist;
                     let df = self.robot_config.dimension_front;
                     let dr = self.robot_config.dimension_rear;
@@ -679,16 +689,19 @@ impl NavigationManager {
 
                     let mut min_dist_x = f32::MAX; // Just for logging
                     let mut detected = false;
-                    
+
                     // Use stable_local_obstacles (Time-filtered)
                     for (x, y, _nx, _ny) in &stable_local_obstacles {
                         // Rectangular check: Robot Footprint + Margin
-                        if *x >= (-dr - margin) && *x <= (df + margin) && y.abs() <= (half_w + margin) {
-                             if x.abs() < min_dist_x {
-                                 min_dist_x = x.abs();
-                             }
-                             detected = true;
-                             break;
+                        if *x >= (-dr - margin)
+                            && *x <= (df + margin)
+                            && y.abs() <= (half_w + margin)
+                        {
+                            if x.abs() < min_dist_x {
+                                min_dist_x = x.abs();
+                            }
+                            detected = true;
+                            break;
                         }
                     }
 
@@ -705,13 +718,16 @@ impl NavigationManager {
 
                     // Update predicted pose for visualization (using PP command)
                     if let Some((v, w)) = final_command {
-                        let dt = 1.0; 
+                        let dt = 1.0;
                         let current_yaw = self.current_robot_pose.rotation.angle();
                         let pred_yaw = current_yaw + w * dt;
                         let avg_yaw = (current_yaw + pred_yaw) / 2.0;
                         let pred_x = self.current_robot_pose.translation.x + v * dt * avg_yaw.cos();
                         let pred_y = self.current_robot_pose.translation.y + v * dt * avg_yaw.sin();
-                        self.predicted_footprint_pose = Some(Isometry2::new(nalgebra::Vector2::new(pred_x, pred_y), pred_yaw));
+                        self.predicted_footprint_pose = Some(Isometry2::new(
+                            nalgebra::Vector2::new(pred_x, pred_y),
+                            pred_yaw,
+                        ));
                     } else {
                         self.predicted_footprint_pose = None;
                     }
@@ -751,30 +767,31 @@ impl NavigationManager {
             ];
 
             // Transform to world and check edges
-            let corners_world: Vec<Point2<f32>> = corners_local
-                .iter()
-                .map(|p| pose * p)
-                .collect();
+            let corners_world: Vec<Point2<f32>> = corners_local.iter().map(|p| pose * p).collect();
 
             // Check edges by sampling
             let num_corners = corners_world.len();
             for i in 0..num_corners {
                 let p1 = corners_world[i];
                 let p2 = corners_world[(i + 1) % num_corners];
-                
+
                 let dist = (p1 - p2).norm();
                 let steps = (dist / map_info.resolution).ceil() as usize;
-                
+
                 for s in 0..=steps {
                     let t = s as f32 / steps as f32;
                     let p = p1 + (p2 - p1) * t;
-                    
-                    let (gx, gy) = world_to_map_coords(p.x, p.y, &crate::config::SlamConfig {
-                        csize: map_info.resolution,
-                        map_width: grid.width,
-                        map_height: grid.height,
-                        ..Default::default()
-                    });
+
+                    let (gx, gy) = world_to_map_coords(
+                        p.x,
+                        p.y,
+                        &crate::config::SlamConfig {
+                            csize: map_info.resolution,
+                            map_width: grid.width,
+                            map_height: grid.height,
+                            ..Default::default()
+                        },
+                    );
 
                     if gx >= 0 && gx < grid.width as isize && gy >= 0 && gy < grid.height as isize {
                         let idx = (gy as usize) * grid.width + (gx as usize);
