@@ -68,6 +68,7 @@ pub struct NavigationManager {
 
     // Autonomous Navigation
     pub is_autonomous: bool,
+    pub autonomy_intent: bool, // Remember if this was started with 'nav start'
     pub predicted_footprint_pose: Option<Isometry2<f32>>,
 
     // Planners
@@ -118,6 +119,7 @@ impl NavigationManager {
             navigation_finished_timer: 0,
             total_travel_distance: 0.0,
             is_autonomous: false,
+            autonomy_intent: false,
             predicted_footprint_pose: None,
             dwa_planner,
             elastic_band,
@@ -135,7 +137,8 @@ impl NavigationManager {
         is_autonomous: bool,
     ) -> Result<String, String> {
         self.reset();
-        self.is_autonomous = is_autonomous; // Stores intent, but state starts at Standby
+        self.is_autonomous = is_autonomous;
+        self.autonomy_intent = is_autonomous; // Store the intent
         self.nav_state = NavState::Standby;
 
         // 初期姿勢のリセット
@@ -492,6 +495,12 @@ impl NavigationManager {
                         self.is_localizing = false;
                         self.de_frame_counter = 0;
                         self.converged_message_timer = 180;
+
+                        // CRITICAL: Clear obstacles and recovery state one more time
+                        // now that we have a stable pose. This prevents "phantom" obstacles
+                        // created during the localization search from blocking the start.
+                        self.persistence_grid.reset();
+                        self.recovery_manager.reset();
                     }
                 }
                 self.de_frame_counter += 1;
@@ -624,13 +633,45 @@ impl NavigationManager {
                 if !self.local_path.is_empty() {
                     let mut closest_idx = 0;
                     let mut min_dist_sq = f32::MAX;
+
+                    let robot_yaw = self.current_robot_pose.rotation.angle();
+                    let forward_x = robot_yaw.cos();
+                    let forward_y = robot_yaw.sin();
+
                     for (i, p) in self.local_path.iter().enumerate() {
                         let dx = p.x - robot_pos_egui.x;
                         let dy = p.y - robot_pos_egui.y;
                         let d2 = dx * dx + dy * dy;
-                        if d2 < min_dist_sq {
-                            min_dist_sq = d2;
-                            closest_idx = i;
+                        let d = d2.sqrt();
+
+                        if d < 1e-6 {
+                            continue;
+                        }
+
+                        // Normalized dot product to check if the point is within 45 degrees in front
+                        // cos(45 deg) approx 0.707
+                        let dot_norm = (dx * forward_x + dy * forward_y) / d;
+
+                        if dot_norm > 0.707 {
+                            // Point is within 45 deg cone in front.
+                            if d2 < min_dist_sq {
+                                min_dist_sq = d2;
+                                closest_idx = i;
+                            }
+                        }
+                    }
+
+                    // If no points are in front, we fallback to the absolute nearest point
+                    // (to prevent sticking if the robot is slightly off the path)
+                    if min_dist_sq == f32::MAX {
+                        for (i, p) in self.local_path.iter().enumerate() {
+                            let dx = p.x - robot_pos_egui.x;
+                            let dy = p.y - robot_pos_egui.y;
+                            let d2 = dx * dx + dy * dy;
+                            if d2 < min_dist_sq {
+                                min_dist_sq = d2;
+                                closest_idx = i;
+                            }
                         }
                     }
 
@@ -687,7 +728,6 @@ impl NavigationManager {
                     let dr = self.robot_config.dimension_rear;
                     let half_w = self.robot_config.width / 2.0;
 
-                    let mut min_dist_x = f32::MAX; // Just for logging
                     let mut detected = false;
 
                     // Use stable_local_obstacles (Time-filtered)
@@ -697,27 +737,23 @@ impl NavigationManager {
                             && *x <= (df + margin)
                             && y.abs() <= (half_w + margin)
                         {
-                            if x.abs() < min_dist_x {
-                                min_dist_x = x.abs();
-                            }
                             detected = true;
+                            info!("COLLISION AVOIDANCE: Obstacle at ({:.2}, {:.2}) local", x, y);
                             break;
                         }
                     }
 
                     if detected {
-                        // Override with safety behavior
-                        let escape_velocity = 0.0; // Just STOP
-                        let escape_omega = 0.0;
-                        info!(
-                            "COLLISION AVOIDANCE triggered: Obstacle within safety margin ({:.3}m). Stopping.",
-                            margin
-                        );
-                        final_command = Some((escape_velocity, escape_omega));
+                        final_command = Some((0.0, 0.0));
                     }
 
-                    // Update predicted pose for visualization (using PP command)
                     if let Some((v, w)) = final_command {
+                        if v.abs() > 0.001 || w.abs() > 0.001 {
+                            // Log movement commands occasionally or if needed
+                            // info!("Nav Command: v={:.2}, w={:.2}", v, w);
+                        }
+
+                        // Update predicted pose for visualization
                         let dt = 1.0;
                         let current_yaw = self.current_robot_pose.rotation.angle();
                         let pred_yaw = current_yaw + w * dt;

@@ -139,21 +139,40 @@ impl NavScreen {
                             );
 
                             // Update Robot Pose
+
                             let new_translation = Translation2::new(start_pos.x, start_pos.y);
+
                             let new_rotation = Rotation2::new(angle);
+
                             navigation_manager.current_robot_pose =
                                 Isometry2::from_parts(new_translation, new_rotation.into());
 
                             // Reset Navigation / Localization
+
                             navigation_manager.nav_state = NavState::Standby;
+
                             navigation_manager.pose_adjustment_start = None;
 
+                            // Reset Local Path to the full global path so it can be pruned correctly from the new position
+
+                            navigation_manager.local_path =
+                                navigation_manager.nav_trajectory_points.clone();
+
                             // Reset DE Solver around new pose
+
                             navigation_manager
                                 .de_solver
                                 .init(navigation_manager.current_robot_pose, None);
+
                             navigation_manager.initial_scan = None; // Force re-capture of initial scan
+
                             navigation_manager.is_localizing = true;
+
+                            // CRITICAL: Reset internal state to avoid old collisions/recovery triggering
+
+                            navigation_manager.persistence_grid.reset();
+
+                            navigation_manager.recovery_manager.reset();
                         }
                     }
                 }
@@ -253,7 +272,6 @@ impl NavScreen {
                 egui::Color32::WHITE,
             );
         }
-
 
         // --- Converged & Finished Messages (Overlay on whole screen) ---
         if navigation_manager.converged_message_timer > 0 {
@@ -384,6 +402,8 @@ impl NavScreen {
                                     .clicked()
                                 {
                                     navigation_manager.nav_state = NavState::Running;
+                                    navigation_manager.is_autonomous =
+                                        navigation_manager.autonomy_intent;
                                 }
                                 ui.add_space(20.0);
                                 if ui
@@ -408,6 +428,7 @@ impl NavScreen {
 
                         if ui.input(|i| i.key_pressed(egui::Key::Space)) {
                             navigation_manager.nav_state = NavState::Running;
+                            navigation_manager.is_autonomous = navigation_manager.autonomy_intent;
                         }
                         if ui.input(|i| i.key_pressed(egui::Key::P)) {
                             navigation_manager.nav_state = NavState::AdjustingPose;
@@ -424,7 +445,9 @@ impl NavScreen {
                         ui.set_min_width(300.0);
                         ui.vertical_centered(|ui| {
                             ui.add_space(5.0);
-                            ui.label(egui::RichText::new("ADJUSTING POSE").color(egui::Color32::YELLOW));
+                            ui.label(
+                                egui::RichText::new("ADJUSTING POSE").color(egui::Color32::YELLOW),
+                            );
                             ui.label("1. Click map to set Position");
                             ui.label("2. Move mouse to set Orientation");
                             ui.label("3. Click again to Confirm");
@@ -445,6 +468,11 @@ impl NavScreen {
                         });
                     });
             }
+        }
+
+        // Ensure constant updates when navigating or adjusting to keep the control loop alive
+        if navigation_manager.nav_state != NavState::Standby {
+            ui.ctx().request_repaint();
         }
     }
 
