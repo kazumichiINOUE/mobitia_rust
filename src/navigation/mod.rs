@@ -29,8 +29,18 @@ pub struct MapInfo {
     pub negate: i32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NavState {
+    Standby,
+    AdjustingPose,
+    Running,
+}
+
 pub struct NavigationManager {
     // 状態データ
+    pub nav_state: NavState,
+    pub pose_adjustment_start: Option<egui::Pos2>, // For UI interaction
+    
     pub nav_map_texture: Option<egui::TextureHandle>,
     pub nav_map_bounds: Option<egui::Rect>,
     pub nav_trajectory_points: Vec<egui::Pos2>, // Global Path (Initial)
@@ -84,6 +94,8 @@ impl NavigationManager {
         let persistence_grid = persistence_grid::LocalPersistenceGrid::new(0.1); // 10cm grid
 
         Self {
+            nav_state: NavState::Standby,
+            pose_adjustment_start: None,
             nav_map_texture: None,
             nav_map_bounds: None,
             nav_trajectory_points: Vec::new(),
@@ -119,7 +131,8 @@ impl NavigationManager {
         is_autonomous: bool,
     ) -> Result<String, String> {
         self.reset();
-        self.is_autonomous = is_autonomous;
+        self.is_autonomous = is_autonomous; // Stores intent, but state starts at Standby
+        self.nav_state = NavState::Standby;
 
         // 初期姿勢のリセット
         let pose_config = self.config.initial_pose;
@@ -343,6 +356,8 @@ impl NavigationManager {
     }
 
     pub fn reset(&mut self) {
+        self.nav_state = NavState::Standby;
+        self.pose_adjustment_start = None;
         self.nav_map_texture = None;
         self.nav_map_bounds = None;
         self.occupancy_grid = None;
@@ -368,6 +383,16 @@ impl NavigationManager {
         current_odom: (f32, f32, f32),
         latest_scan: &[(f32, f32, f32, f32, f32, f32, f32, f32)],
     ) -> Option<(f32, f32)> {
+        // Standby or AdjustingPose means we are PAUSED.
+        // We do not update localization or send motor commands.
+        // We only update last_odom to prevent large jumps when we finally start.
+        if self.nav_state != NavState::Running {
+            self.last_odom = Some(current_odom);
+            // Also update viz_scan for UI
+            self.viz_scan = latest_scan.to_vec();
+            return None;
+        }
+
         if self.converged_message_timer > 0 {
             self.converged_message_timer -= 1;
         }

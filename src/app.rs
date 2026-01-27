@@ -2540,7 +2540,7 @@ negate = 0
                     ui,
                     &mut self.lidar_draw_rect,
                     &self.config.ui,
-                    &self.navigation_manager,
+                    &mut self.navigation_manager,
                     &self.latest_scan_for_draw,
                     &self.motor_odometry,
                     &self.robot_trajectory,

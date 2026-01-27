@@ -1,5 +1,6 @@
-use crate::navigation::NavigationManager;
+use crate::navigation::{NavState, NavigationManager};
 use eframe::egui;
+use nalgebra::{Isometry2, Rotation2, Translation2};
 
 #[derive(Default)]
 pub struct NavScreen {}
@@ -15,7 +16,7 @@ impl NavScreen {
         ui: &mut egui::Ui,
         lidar_draw_rect: &mut Option<egui::Rect>,
         ui_config: &crate::config::UiConfig,
-        navigation_manager: &NavigationManager,
+        navigation_manager: &mut NavigationManager,
         latest_scan_for_draw: &[(f32, f32, f32, f32, f32, f32, f32, f32)],
         motor_odometry: &(f32, f32, f32),
         robot_trajectory: &[(egui::Pos2, f32)],
@@ -23,7 +24,7 @@ impl NavScreen {
         ui.heading("Navigation Mode");
 
         // --- Info Overlay ---
-        let current_robot_pose = &navigation_manager.current_robot_pose;
+        let current_robot_pose = navigation_manager.current_robot_pose;
         egui::Area::new("nav_info_overlay")
             .fixed_pos(ui.min_rect().min)
             .show(ui.ctx(), |ui| {
@@ -63,7 +64,8 @@ impl NavScreen {
                 );
             });
 
-        let (response, painter) = ui.allocate_painter(ui.available_size(), egui::Sense::hover());
+        // Sense click for pose adjustment
+        let (response, painter) = ui.allocate_painter(ui.available_size(), egui::Sense::click_and_drag());
         let rect = response.rect;
         *lidar_draw_rect = Some(rect);
         
@@ -94,6 +96,73 @@ impl NavScreen {
         inverted_map_view_rect.min.y = map_view_rect.max.y;
         inverted_map_view_rect.max.y = map_view_rect.min.y;
         let to_screen_main = egui::emath::RectTransform::from_to(inverted_map_view_rect, rect);
+
+        // --- Mouse Interaction for Pose Adjustment ---
+        if navigation_manager.nav_state == NavState::AdjustingPose {
+            // Cancel on Right Click or Escape
+            if response.clicked_by(egui::PointerButton::Secondary) || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                navigation_manager.nav_state = NavState::Standby;
+                navigation_manager.pose_adjustment_start = None;
+            }
+
+            // Handle Clicks
+            // Use rect.contains() instead of response.hovered() for more robust detection against overlays
+            let pointer_pos = ui.input(|i| i.pointer.interact_pos());
+            if let Some(mouse_pos) = pointer_pos {
+                if rect.contains(mouse_pos) && ui.input(|i| i.pointer.primary_clicked()) {
+                     println!("DEBUG: Map Clicked at {:?}", mouse_pos);
+                     let world_pos = to_screen_main.inverse().transform_pos(mouse_pos);
+                     
+                     if navigation_manager.pose_adjustment_start.is_none() {
+                         // First Click: Set Position
+                         println!("DEBUG: Pose Adjust Start: ({:.3}, {:.3})", world_pos.x, world_pos.y);
+                         navigation_manager.pose_adjustment_start = Some(world_pos);
+                     } else {
+                         // Second Click: Confirm Orientation
+                         if let Some(start_pos) = navigation_manager.pose_adjustment_start {
+                             let dx = world_pos.x - start_pos.x;
+                             let dy = world_pos.y - start_pos.y;
+                             let angle = dy.atan2(dx);
+                             println!("DEBUG: Pose Adjust End: Angle {:.1} deg", angle.to_degrees());
+
+                             // Update Robot Pose
+                             let new_translation = Translation2::new(start_pos.x, start_pos.y);
+                             let new_rotation = Rotation2::new(angle);
+                             navigation_manager.current_robot_pose = Isometry2::from_parts(new_translation, new_rotation.into());
+                             
+                             // Reset Navigation / Localization
+                             navigation_manager.nav_state = NavState::Standby;
+                             navigation_manager.pose_adjustment_start = None;
+                             
+                             // Reset DE Solver around new pose
+                             navigation_manager.de_solver.init(navigation_manager.current_robot_pose, None);
+                             navigation_manager.initial_scan = None; // Force re-capture of initial scan
+                             navigation_manager.is_localizing = true;
+                         }
+                     }
+                }
+            }
+
+            // Visualization for Adjustment (Arrow)
+            if let Some(mouse_pos) = ui.input(|i| i.pointer.hover_pos()) {
+                if rect.contains(mouse_pos) {
+                    if let Some(start_pos) = navigation_manager.pose_adjustment_start {
+                        let start_screen = to_screen_main.transform_pos(start_pos);
+                        painter.arrow(
+                            start_screen, 
+                            mouse_pos - start_screen, 
+                            egui::Stroke::new(2.0, egui::Color32::YELLOW)
+                        );
+                    } else {
+                        // Show cursor indicator
+                        painter.circle_filled(mouse_pos, 3.0, egui::Color32::YELLOW);
+                    }
+                }
+            }
+            
+            // Force repaint to show arrow smoothly
+            ui.ctx().request_repaint();
+        }
 
         // --- 2. Draw Main View ---
         Self::draw_nav_content(
@@ -152,6 +221,112 @@ impl NavScreen {
                 egui::FontId::monospace(14.0),
                 egui::Color32::WHITE,
             );
+        }
+
+        // --- Button Overlay & State Control ---
+        if navigation_manager.nav_state != NavState::Running {
+            let overlay_rect = egui::Rect::from_center_size(
+                rect.center() - egui::vec2(0.0, rect.height() * 0.3), // Positioned slightly up
+                egui::vec2(400.0, 100.0)
+            );
+
+            // Semi-transparent background for overlay
+            painter.rect_filled(overlay_rect, 5.0, egui::Color32::from_rgba_unmultiplied(0, 0, 0, 180));
+
+            // Create a child UI for buttons
+            let mut overlay_ui = ui.child_ui(overlay_rect, egui::Layout::top_down(egui::Align::Center));
+            
+            overlay_ui.vertical_centered(|ui| {
+                ui.add_space(10.0);
+                if navigation_manager.nav_state == NavState::Standby {
+                    ui.label(egui::RichText::new("READY TO START").heading().color(egui::Color32::WHITE));
+                    ui.add_space(10.0);
+                    
+                    ui.horizontal(|ui| {
+                        if ui.add(egui::Button::new(egui::RichText::new(" ▶ Start ").size(20.0)).fill(egui::Color32::DARK_GREEN)).clicked() {
+                            navigation_manager.nav_state = NavState::Running;
+                        }
+                        ui.add_space(20.0);
+                        if ui.add(egui::Button::new(egui::RichText::new(" 📍 Adjust Pose ").size(20.0)).fill(egui::Color32::DARK_BLUE)).clicked() {
+                            navigation_manager.nav_state = NavState::AdjustingPose;
+                        }
+                    });
+                    ui.label(egui::RichText::new("Shortcuts: [Space] Start, [P] Adjust").size(12.0).color(egui::Color32::GRAY));
+
+                    // Shortcuts (Only if not typing in console)
+                    // Note: We check if any widget has focus, but simplified here since we are in Nav Mode
+                    if ui.input(|i| i.key_pressed(egui::Key::Space)) {
+                         navigation_manager.nav_state = NavState::Running;
+                    }
+                    if ui.input(|i| i.key_pressed(egui::Key::P)) {
+                         navigation_manager.nav_state = NavState::AdjustingPose;
+                    }
+
+                } else if navigation_manager.nav_state == NavState::AdjustingPose {
+                    ui.label(egui::RichText::new("ADJUSTING POSE").heading().color(egui::Color32::YELLOW));
+                    ui.label("1. Click map to set Position");
+                    ui.label("2. Move mouse to set Orientation");
+                    ui.label("3. Click again to Confirm");
+                    ui.add_space(5.0);
+                     if ui.add(egui::Button::new(egui::RichText::new(" Cancel ").size(16.0)).fill(egui::Color32::DARK_RED)).clicked() {
+                        navigation_manager.nav_state = NavState::Standby;
+                        navigation_manager.pose_adjustment_start = None;
+                    }
+                }
+            });
+        }
+
+        // --- Button Overlay & State Control ---
+        if navigation_manager.nav_state != NavState::Running {
+            let overlay_rect = egui::Rect::from_center_size(
+                rect.center() - egui::vec2(0.0, rect.height() * 0.3), // Positioned slightly up
+                egui::vec2(400.0, 100.0)
+            );
+
+            // Semi-transparent background for overlay
+            painter.rect_filled(overlay_rect, 5.0, egui::Color32::from_rgba_unmultiplied(0, 0, 0, 180));
+
+            // Create a child UI for buttons
+            let mut overlay_ui = ui.child_ui(overlay_rect, egui::Layout::top_down(egui::Align::Center));
+            
+            overlay_ui.vertical_centered(|ui| {
+                ui.add_space(10.0);
+                if navigation_manager.nav_state == NavState::Standby {
+                    ui.label(egui::RichText::new("READY TO START").heading().color(egui::Color32::WHITE));
+                    ui.add_space(10.0);
+                    
+                    ui.horizontal(|ui| {
+                        if ui.add(egui::Button::new(egui::RichText::new(" ▶ Start ").size(20.0)).fill(egui::Color32::DARK_GREEN)).clicked() {
+                            navigation_manager.nav_state = NavState::Running;
+                        }
+                        ui.add_space(20.0);
+                        if ui.add(egui::Button::new(egui::RichText::new(" 📍 Adjust Pose ").size(20.0)).fill(egui::Color32::DARK_BLUE)).clicked() {
+                            navigation_manager.nav_state = NavState::AdjustingPose;
+                        }
+                    });
+                    ui.label(egui::RichText::new("Shortcuts: [Space] Start, [P] Adjust").size(12.0).color(egui::Color32::GRAY));
+
+                    // Shortcuts (Only if not typing in console)
+                    // Note: We check if any widget has focus, but simplified here since we are in Nav Mode
+                    if ui.input(|i| i.key_pressed(egui::Key::Space)) {
+                         navigation_manager.nav_state = NavState::Running;
+                    }
+                    if ui.input(|i| i.key_pressed(egui::Key::P)) {
+                         navigation_manager.nav_state = NavState::AdjustingPose;
+                    }
+
+                } else if navigation_manager.nav_state == NavState::AdjustingPose {
+                    ui.label(egui::RichText::new("ADJUSTING POSE").heading().color(egui::Color32::YELLOW));
+                    ui.label("1. Click map to set Position");
+                    ui.label("2. Move mouse to set Orientation");
+                    ui.label("3. Click again to Confirm");
+                    ui.add_space(5.0);
+                     if ui.add(egui::Button::new(egui::RichText::new(" Cancel ").size(16.0)).fill(egui::Color32::DARK_RED)).clicked() {
+                        navigation_manager.nav_state = NavState::Standby;
+                        navigation_manager.pose_adjustment_start = None;
+                    }
+                }
+            });
         }
 
         // --- Converged & Finished Messages (Overlay on whole screen) ---
