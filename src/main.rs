@@ -1,4 +1,5 @@
 use anyhow::Result;
+use clap::Parser;
 use eframe::egui;
 use std::fs;
 use std::path::Path;
@@ -9,6 +10,7 @@ mod camera;
 mod cli;
 mod config; // Add config module
 mod demo;
+mod experiment; // Add experiment module
 mod lidar;
 mod motors;
 mod navigation;
@@ -22,7 +24,52 @@ use crate::config::Config;
 use app::MyApp; // 追加
 use tracing_subscriber::prelude::*;
 
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Run in experiment mode (headless)
+    #[arg(long)]
+    experiment: bool,
+
+    /// Experiment mode: "baseline", "proposed", or "ground_truth"
+    #[arg(long, default_value = "baseline")]
+    mode: String,
+
+    /// Path to input directory containing submaps (e.g. slam_results/slam_result_.../)
+    #[arg(long)]
+    input: Option<std::path::PathBuf>,
+
+    /// Path to output directory
+    #[arg(long, default_value = "experiments")]
+    output: std::path::PathBuf,
+}
+
 fn main() -> Result<(), eframe::Error> {
+    let args = Args::parse();
+
+    if args.experiment {
+        if let Some(input_dir) = args.input {
+            let exp_args = experiment::ExperimentArgs {
+                mode: args.mode,
+                input_dir,
+                output_dir: args.output,
+            };
+            match experiment::run_experiment(exp_args) {
+                Ok(_) => {
+                    println!("Experiment finished successfully.");
+                    std::process::exit(0);
+                }
+                Err(e) => {
+                    eprintln!("Experiment failed: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        } else {
+            eprintln!("Error: --input is required for experiment mode.");
+            std::process::exit(1);
+        }
+    }
+
     // --- Tracing Setup ---
     // Create traces directory if it doesn't exist
     if let Err(e) = std::fs::create_dir_all("./traces") {

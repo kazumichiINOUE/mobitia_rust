@@ -235,6 +235,10 @@ impl SlamManager {
         }
     }
 
+    pub fn get_current_pose(&self) -> Isometry2<f32> {
+        self.robot_pose
+    }
+
     /// Processes a new LiDAR scan and updates the map and pose.
     pub fn update(
         &mut self,
