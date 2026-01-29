@@ -2,6 +2,7 @@ pub mod de_tiny;
 pub mod dwa;
 pub mod elastic_band;
 pub mod localization;
+pub mod log_types;
 pub mod persistence_grid;
 pub mod pure_pursuit;
 pub mod recovery;
@@ -15,9 +16,38 @@ use image::imageops;
 use nalgebra::{Isometry2, Point2, Rotation2, Translation2, Vector2};
 use serde::Deserialize;
 use std::fs;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write}; // Added Write
+use std::sync::mpsc; // Added mpsc
+use std::os::unix::net::UnixStream; // Added UnixStream
+use crate::navigation::log_types::{LogMessage, LogPayload}; // Added log types
+use std::time::{SystemTime, UNIX_EPOCH}; // Added time
 use std::path::PathBuf;
 use tracing::{info, instrument};
+
+fn start_logger_thread(receiver: mpsc::Receiver<LogMessage>) {
+    std::thread::spawn(move || {
+        let mut stream_opt: Option<UnixStream> = None;
+        let socket_path = "/tmp/mobitia_logger.sock";
+
+        for msg in receiver {
+            // Try to connect if not connected
+            if stream_opt.is_none() {
+                if let Ok(s) = UnixStream::connect(socket_path) {
+                    // println!("LOGGER: Connected to {}", socket_path);
+                    stream_opt = Some(s);
+                }
+            }
+
+            if let Some(mut stream) = stream_opt.as_mut() {
+                let json = serde_json::to_string(&msg).unwrap_or_default();
+                if let Err(_e) = writeln!(stream, "{}", json) {
+                    // Write failed (broken pipe), reset connection
+                    stream_opt = None;
+                }
+            }
+        }
+    });
+}
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct MapInfo {
@@ -76,6 +106,10 @@ pub struct NavigationManager {
     pub elastic_band: elastic_band::ElasticBand,
     pub recovery_manager: recovery::RecoveryManager,
     pub persistence_grid: persistence_grid::LocalPersistenceGrid,
+    
+    // Logger
+    pub logger_sender: mpsc::Sender<LogMessage>,
+    pub was_autonomous: bool,
 
     pub config: NavConfig,
     pub robot_config: RobotConfig,
@@ -97,6 +131,10 @@ impl NavigationManager {
         let elastic_band = elastic_band::ElasticBand::new(config.elastic_band.clone());
         let recovery_manager = recovery::RecoveryManager::new();
         let persistence_grid = persistence_grid::LocalPersistenceGrid::new(0.1); // 10cm grid
+
+        // Logger setup
+        let (logger_sender, logger_receiver) = mpsc::channel();
+        start_logger_thread(logger_receiver);
 
         Self {
             nav_state: NavState::Standby,
@@ -125,6 +163,8 @@ impl NavigationManager {
             elastic_band,
             recovery_manager,
             persistence_grid,
+            logger_sender,
+            was_autonomous: false,
             config,
             robot_config,
         }
@@ -363,6 +403,11 @@ impl NavigationManager {
     }
 
     pub fn reset(&mut self) {
+        // Stop logging session if active
+        if self.was_autonomous {
+            let _ = self.logger_sender.send(LogMessage::Stop);
+        }
+
         self.nav_state = NavState::Standby;
         self.pose_adjustment_start = None;
         self.nav_map_texture = None;
@@ -379,6 +424,7 @@ impl NavigationManager {
         self.viz_scan.clear();
         self.total_travel_distance = 0.0;
         self.is_autonomous = false;
+        self.was_autonomous = false;
         self.predicted_footprint_pose = None;
         self.recovery_manager.reset();
         self.persistence_grid.reset();
@@ -564,6 +610,31 @@ impl NavigationManager {
                 }
             }
             self.de_frame_counter += 1;
+
+            // --- Logging Logic ---
+            // Edge detection for session start/stop
+            if self.is_autonomous && !self.was_autonomous {
+                // Start Session
+                let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+                let session_name = format!("nav_run_{}", timestamp);
+                let _ = self.logger_sender.send(LogMessage::Start { session_name });
+            } else if !self.is_autonomous && self.was_autonomous {
+                // Stop Session
+                let _ = self.logger_sender.send(LogMessage::Stop);
+            }
+            self.was_autonomous = self.is_autonomous;
+
+            if self.is_autonomous {
+                // Send Data
+                let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
+                let pose = self.current_robot_pose;
+                let payload = LogPayload::RobotPose {
+                    x: pose.translation.x,
+                    y: pose.translation.y,
+                    theta: pose.rotation.angle(),
+                };
+                let _ = self.logger_sender.send(LogMessage::Data { timestamp, payload });
+            }
 
             // --- Path Planning & Navigation (Runs when localized) ---
             if !self.is_localizing {
