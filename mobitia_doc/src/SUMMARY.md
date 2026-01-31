@@ -21,3 +21,4 @@
   - [CLI (`cli.rs`)](10_cli.md)
 - [Development & Debugging](development_debugging.md)
   - [System Tracing (Perfetto)](trace_guide.md)
+  - [Experimental Procedure](experiments.md)
