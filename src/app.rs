@@ -2453,8 +2453,24 @@ negate = 0
                     });
                     ui.separator();
                 }
+
+                ui.vertical_centered(|ui| {
+                    ui.heading("Experiment Controls");
+                    if ui.button(egui::RichText::new("⚓ Record Anchor (A)").size(20.0))
+                        .on_hover_text("Record current pose to anchor_log.csv for physical verification")
+                        .clicked() 
+                    {
+                        self.record_anchor_point();
+                    }
+                });
+
                 ui.separator();
             });
+
+        // キーボードショートカット (Aキー)
+        if !ctx.wants_keyboard_input() && ctx.input(|i| i.key_pressed(egui::Key::A)) {
+            self.record_anchor_point();
+        }
 
         // 2. 右側のパネル（グラフィック表示）
         egui::CentralPanel::default().show(ctx, |ui| match self.app_mode {
@@ -2697,6 +2713,62 @@ impl MyApp {
         self.command_output_sender
             .send("Navigation data reset.".to_string())
             .unwrap_or_default();
+    }
+
+    /// Records the current robot pose as an anchor point for physical verification.
+    pub fn record_anchor_point(&mut self) {
+        let timestamp = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+        
+        let path = std::path::PathBuf::from("anchor_log.csv");
+        let file_exists = path.exists();
+        
+        let mut file = match std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path) 
+        {
+            Ok(f) => f,
+            Err(e) => {
+                self.command_output_sender
+                    .send(format!("ERROR: Failed to open anchor log: {}", e))
+                    .unwrap_or_default();
+                return;
+            }
+        };
+
+        if !file_exists {
+            let _ = writeln!(file, "timestamp,readable_time,x,y,theta,label");
+        }
+
+        let pose = self.current_robot_pose;
+        let label = format!("anchor_{}", timestamp % 10000);
+        let readable_time = Local::now().format("%Y-%m-%d %H:%M:%S%.3f").to_string();
+
+        if let Err(e) = writeln!(
+            file, 
+            "{},{},{:.4},{:.4},{:.4},{}", 
+            timestamp, 
+            readable_time,
+            pose.translation.x, 
+            pose.translation.y, 
+            pose.rotation.angle(),
+            label
+        ) {
+             self.command_output_sender
+                .send(format!("ERROR: Failed to write anchor point: {}", e))
+                .unwrap_or_default();
+        } else {
+             let msg = format!("⚓ Anchor recorded at ({:.2}, {:.2})", pose.translation.x, pose.translation.y);
+             self.command_output_sender.send(msg.clone()).unwrap_or_default();
+             
+             self.command_history.push(ConsoleOutputEntry {
+                 text: msg,
+                 group_id: self.next_group_id,
+             });
+        }
     }
 }
 
