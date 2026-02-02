@@ -239,6 +239,73 @@ impl SlamManager {
         self.robot_pose
     }
 
+    /// Returns a reference to the current occupancy grid.
+    pub fn get_grid(&self) -> &OccupancyGrid {
+        &self.map_gmap
+    }
+
+    /// Returns a reference to the DE solver (which contains the scoring logic).
+    pub fn get_solver(&self) -> &differential_evolution::DifferentialEvolutionSolver {
+        &self.de_solver
+    }
+
+    /// Processes a new LiDAR scan using a provided pose, updating the map and submaps.
+    /// This is useful for brute-force search or when ground truth pose is available.
+    pub fn update_with_pose(
+        &mut self,
+        raw_scan_data: &[(f32, f32, f32, f32, f32, f32, f32, f32)],
+        pose: Isometry2<f32>,
+        timestamp: u128,
+    ) {
+        // Update current pose
+        self.robot_pose = pose;
+        self.is_initial_scan = false;
+
+        // --- Map Decay ---
+        if self.config.map_update_method == MapUpdateMethod::Probabilistic
+            || self.config.map_update_method == MapUpdateMethod::Hybrid
+        {
+            for cell in self.map_gmap.data.iter_mut() {
+                cell.log_odds *= self.config.decay_rate;
+                cell.edge_ness = (cell.edge_ness - 0.5) * self.config.decay_rate + 0.5;
+                cell.normal_x *= self.config.decay_rate;
+                cell.normal_y *= self.config.decay_rate;
+            }
+        }
+
+        // 地図更新用のスキャンデータ (生データ)
+        let mapping_scan_with_features: Vec<(Point2<f32>, f32, f32, f32, f32)> = raw_scan_data
+            .iter()
+            .map(|p| (Point2::new(p.0, p.1), p.4, p.5, p.6, p.7)) // (point, edge_ness, nx, ny, corner_ness)
+            .collect();
+        let mapping_scan: Vec<Point2<f32>> = mapping_scan_with_features
+            .iter()
+            .map(|(p, _, _, _, _)| *p)
+            .collect();
+
+        // 地図更新
+        match self.config.map_update_method {
+            MapUpdateMethod::Probabilistic | MapUpdateMethod::Hybrid => {
+                self.update_grid_probabilistic(&mapping_scan, &mapping_scan_with_features, &pose);
+            }
+            MapUpdateMethod::Binary => {
+                self.update_grid_binary(&mapping_scan, &pose);
+            }
+        }
+        self.is_map_dirty = true;
+
+        // --- Submap generation logic ---
+        self.current_submap_scan_buffer.push(raw_scan_data.to_vec());
+        self.current_submap_robot_poses.push(self.robot_pose);
+        self.current_submap_timestamps_buffer.push(timestamp);
+        self.current_submap_valid_point_counts.push(raw_scan_data.len());
+        self.current_submap_estimation_methods.push("External".to_string());
+
+        if self.current_submap_scan_buffer.len() >= self.config.num_scans_per_submap {
+            self.generate_and_save_submap();
+        }
+    }
+
     /// Processes a new LiDAR scan and updates the map and pose.
     pub fn update(
         &mut self,

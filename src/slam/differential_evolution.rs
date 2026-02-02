@@ -67,7 +67,7 @@ impl DifferentialEvolutionSolver {
     }
 
     /// Calculates the matching score of a scan against the map at a given pose.
-    fn gaussian_match_count(
+    pub fn calculate_score(
         &self,
         gmap: &OccupancyGrid,
         points: &[(Point2<f32>, f32, f32, f32)], // (point, edge_ness, nx, ny)
@@ -260,7 +260,7 @@ impl DifferentialEvolutionSolver {
             let translation = Translation2::new(current_x, current_y);
             let pose = Isometry2::from_parts(translation, rotation.into());
 
-            scores.push(self.gaussian_match_count(gmap, points, raw_corner_points, &pose));
+            scores.push(self.calculate_score(gmap, points, raw_corner_points, &pose));
         }
 
         let mut best_idx = 0;
@@ -317,7 +317,7 @@ impl DifferentialEvolutionSolver {
                 let translation_trial = Translation2::new(trial_pose.x, trial_pose.y);
                 let pose_trial = Isometry2::from_parts(translation_trial, rotation_trial.into());
                 let eval_trial =
-                    self.gaussian_match_count(gmap, points, raw_corner_points, &pose_trial);
+                    self.calculate_score(gmap, points, raw_corner_points, &pose_trial);
 
                 if eval_trial > scores[i] {
                     population[i] = trial_pose;

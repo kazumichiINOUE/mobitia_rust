@@ -88,6 +88,16 @@ pub fn run_experiment(args: ExperimentArgs) -> Result<()> {
             
             println!("Configured for PROPOSED MINIMAL (Extreme reduced computational cost, v2)");
         }
+        "brute_force" => {
+            // Brute-force: グリッドサーチによる全探索設定
+            // パラメータは proposed と同じ重みを使用
+            config.slam.position_score_weight = 0.1;
+            config.slam.feature_score_weight = 0.4;
+            config.slam.normal_alignment_score_weight = 0.5;
+            config.slam.corner_score_weight = 0.3;
+            config.slam.use_odometry_as_initial_guess = false;
+            println!("Configured for BRUTE FORCE (Deterministic grid search)");
+        }
         "ground_truth" => {
              // Ground Truth generation: 高負荷だが高精度な設定 (広範囲探索)
             config.slam.position_score_weight = 0.1;
@@ -191,23 +201,122 @@ pub fn run_experiment(args: ExperimentArgs) -> Result<()> {
             );
 
             // Update SLAM
-            slam_manager.update(
-                &scan_with_features,
-                &interpolated_scan,
-                scan_data.timestamp,
-                None, // No odometry used in this experiment (Odom-less)
-            );
+            if args.mode == "brute_force" {
+                // Brute-force search: 決定論的グリッドサーチ
+                let current_pose = slam_manager.get_current_pose();
+                let mut best_pose = current_pose;
+                let mut max_score = -f64::INFINITY;
 
-            // Record Pose
-            let pose = slam_manager.get_current_pose(); // getterが必要かも？直接アクセスできない場合
-            writeln!(
-                csv_file,
-                "{},{:.6},{:.6},{:.6}",
-                scan_data.timestamp,
-                pose.translation.x,
-                pose.translation.y,
-                pose.rotation.angle()
-            )?;
+                // 初回スキャンは探索せず、原点(0,0,0)に固定して地図構築を開始する
+                if total_scans > 0 {
+                    let center_x = current_pose.translation.x;
+                    let center_y = current_pose.translation.y;
+                    let center_a = current_pose.rotation.angle();
+
+                    // 探索パラメータ (依頼通り)
+                    let range_xy = 1.0; // ±1.0m
+                    let step_xy = 0.02; // 2cm刻み
+                    let range_a = 30.0f32.to_radians(); // ±30度
+                    let step_a = 1.0f32.to_radians(); // 1度刻み
+
+                    // マッチング用のスキャンデータ準備
+                    let matching_scan: Vec<(nalgebra::Point2<f32>, f32, f32, f32)> = interpolated_scan
+                        .iter()
+                        .map(|p| (nalgebra::Point2::new(p.0, p.1), p.4, p.5, p.6))
+                        .collect();
+                    
+                    let raw_corner_points: Vec<(nalgebra::Point2<f32>, f32)> = scan_with_features
+                        .iter()
+                        .filter(|p| p.7 > 0.5)
+                        .map(|p| (nalgebra::Point2::new(p.0, p.1), p.7))
+                        .collect();
+
+                    let solver = slam_manager.get_solver();
+                    let grid = slam_manager.get_grid();
+
+                    // 3重ループ (角度 -> Y -> X)
+                    let steps_a = (range_a * 2.0 / step_a as f32).round() as i32;
+                    let steps_xy = (range_xy * 2.0 / step_xy as f32).round() as i32;
+
+                    for ia in -(steps_a/2)..=(steps_a/2) {
+                        let a = center_a + (ia as f32) * step_a;
+                        let rot = nalgebra::Rotation2::new(a);
+                        
+                        for iy in -(steps_xy/2)..=(steps_xy/2) {
+                            let y = center_y + (iy as f32) * step_xy;
+                            
+                            for ix in -(steps_xy/2)..=(steps_xy/2) {
+                                let x = center_x + (ix as f32) * step_xy;
+                                
+                                let test_pose = nalgebra::Isometry2::from_parts(
+                                    nalgebra::Translation2::new(x, y),
+                                    rot.into()
+                                );
+
+                                let score = solver.calculate_score(grid, &matching_scan, &raw_corner_points, &test_pose);
+                                
+                                if score > max_score {
+                                    max_score = score;
+                                    best_pose = test_pose;
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // 初回スキャンの場合
+                    println!("  [Scan 1] TS: {} | Initializing map at origin.", scan_data.timestamp);
+                    best_pose = nalgebra::Isometry2::identity();
+                    max_score = 0.0; // ダミー値
+                }
+
+                // 全探索で見つかった最適位置をセットし、地図更新を行う
+                slam_manager.update_with_pose(
+                    &scan_with_features,
+                    best_pose,
+                    scan_data.timestamp,
+                );
+
+                // 推定軌跡として記録
+                let pose = best_pose;
+                writeln!(
+                    csv_file,
+                    "{},{:.6},{:.6},{:.6}",
+                    scan_data.timestamp,
+                    pose.translation.x,
+                    pose.translation.y,
+                    pose.rotation.angle()
+                )?;
+
+                // Brute-force用の詳細進捗表示
+                println!(
+                    "  [Scan {}] TS: {} | Best Score: {:.4} | Pose: ({:.3}, {:.2}, {:.1} deg)",
+                    total_scans + 1,
+                    scan_data.timestamp,
+                    max_score,
+                    pose.translation.x,
+                    pose.translation.y,
+                    pose.rotation.angle().to_degrees()
+                );
+            } else {
+                // 通常のSLAM更新 (Proposed, Baselineなど)
+                slam_manager.update(
+                    &scan_with_features,
+                    &interpolated_scan,
+                    scan_data.timestamp,
+                    None, // No odometry used in this experiment (Odom-less)
+                );
+
+                // Record Pose
+                let pose = slam_manager.get_current_pose();
+                writeln!(
+                    csv_file,
+                    "{},{:.6},{:.6},{:.6}",
+                    scan_data.timestamp,
+                    pose.translation.x,
+                    pose.translation.y,
+                    pose.rotation.angle()
+                )?;
+            }
 
             total_scans += 1;
             if total_scans % 100 == 0 {
