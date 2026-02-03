@@ -70,4 +70,29 @@ SLAM実行中または自律走行中に，ロボットが特定の物理地点�
 - **保存形式**: `timestamp, readable_time, x, y, theta, label`
 - **活用方法**: ロボットをタイル目地などの既知の座標に静止させて記録し，後に実測値と比較することで位置推定の絶対精度を検証します．
 
+---
+
+## 4. アンカー比較ツール (Anchor Comparison Tool)
+
+記録された `anchor_log.csv` と，オフライン実験で生成された軌跡データ（Trajectory）を照合し，位置推定の精度を定量評価するためのツールです．
+
+### 概要
+`scripts/compare_anchors.py` は，タイムスタンプに基づいてアンカー記録時点のロボットの推定位置（実験結果）を検索し，記録された物理的なアンカー座標（またはその時点でのリアルタイム推定値）との差異を計算します．
+
+### 主な機能
+- **自動フォーマット認識**: `anchor_log.csv` に含まれる余分な日時カラム（`readable_time`）の有無を自動検出し，適切にパースします．
+- **タイムスタンプマッチング**: 指定された許容誤差（デフォルト15秒）以内で最も近い軌跡ポイントを探索します．
+- **レポート生成**: 平均誤差などの統計情報を含むMarkdownレポートと，詳細データのCSVを出力します．
+
+### 使用方法
+
+```bash
+python scripts/compare_anchors.py --anchors anchor_log.csv --trajectory results/brute_force/brute_force_trajectory.csv --output results --map_dir [SLAM_RESULT_DIR]
+```
+
+- **`--anchors`**: アンカーログファイルのパス．
+- **`--trajectory`**: 比較対象の軌跡CSVファイル（`brute_force` モードの出力などを推奨）．
+- **`--output`**: 結果（`anchor_comparison.md`, `anchor_comparison.csv`, `anchor_map_plot.png`）の保存先．
+- **`--map_dir`**: (任意) `occMap.png` と `map_info.toml` が含まれるディレクトリを指定すると，アンカーをプロットした地図画像を生成します．
+
 <!-- TODO: Add English translation here -->
