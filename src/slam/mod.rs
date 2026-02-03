@@ -198,6 +198,9 @@ pub struct SlamManager {
     output_base_dir: std::path::PathBuf,
     submap_writer: SubmapWriter,
 
+    // 最後に記録（バッファ追加）した時の姿勢
+    last_recorded_pose: Option<Isometry2<f32>>,
+
     // キャッシュされた点群
     cached_map_points: Vec<(Point2<f32>, f64)>,
     is_map_dirty: bool, // 地図が更新されたかを示すフラグ
@@ -226,6 +229,7 @@ impl SlamManager {
             submaps: HashMap::new(),
             output_base_dir,
             submap_writer: SubmapWriter::new(),
+            last_recorded_pose: None,
             cached_map_points: Vec::new(),
             is_map_dirty: true,
             config,
@@ -395,17 +399,34 @@ impl SlamManager {
         }
         self.is_map_dirty = true;
 
-        // --- Submap generation logic ---
-        self.current_submap_scan_buffer.push(raw_scan_data.to_vec());
-        self.current_submap_robot_poses.push(self.robot_pose);
-        self.current_submap_timestamps_buffer.push(timestamp);
-        self.current_submap_valid_point_counts
-            .push(valid_point_count);
-        self.current_submap_estimation_methods
-            .push(estimation_method);
+        // --- Submap recording filter ---
+        let mut should_record = false;
+        if let Some(last_pose) = self.last_recorded_pose {
+            let dist = (self.robot_pose.translation.vector - last_pose.translation.vector).norm();
+            let angle_diff = (self.robot_pose.rotation.angle() - last_pose.rotation.angle()).abs();
+            
+            // 閾値: 5cm または 1度以上動いた場合に記録
+            if dist > 0.05 || angle_diff > 1.0f32.to_radians() {
+                should_record = true;
+            }
+        } else {
+            // 初回スキャンは必ず記録
+            should_record = true;
+        }
 
-        if self.current_submap_scan_buffer.len() >= self.config.num_scans_per_submap {
-            self.generate_and_save_submap();
+        if should_record {
+            // --- Submap generation logic ---
+            self.current_submap_scan_buffer.push(raw_scan_data.to_vec());
+            self.current_submap_robot_poses.push(self.robot_pose);
+            self.current_submap_timestamps_buffer.push(timestamp);
+            self.current_submap_valid_point_counts.push(valid_point_count);
+            self.current_submap_estimation_methods.push(estimation_method);
+
+            self.last_recorded_pose = Some(self.robot_pose);
+
+            if self.current_submap_scan_buffer.len() >= self.config.num_scans_per_submap {
+                self.generate_and_save_submap();
+            }
         }
     }
 
