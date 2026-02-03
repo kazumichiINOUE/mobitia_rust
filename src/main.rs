@@ -42,6 +42,10 @@ struct Args {
     /// Path to output directory
     #[arg(long, default_value = "experiments")]
     output: std::path::PathBuf,
+
+    /// Path to anchor_log.csv for degenerate environment analysis (Optional)
+    #[arg(long)]
+    anchors: Option<std::path::PathBuf>,
 }
 
 fn main() -> Result<(), eframe::Error> {
@@ -53,6 +57,7 @@ fn main() -> Result<(), eframe::Error> {
                 mode: args.mode,
                 input_dir,
                 output_dir: args.output,
+                anchors_path: args.anchors,
             };
             match experiment::run_experiment(exp_args) {
                 Ok(_) => {

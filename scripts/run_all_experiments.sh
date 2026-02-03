@@ -10,7 +10,8 @@ if [ -z "$1" ]; then
 fi
 
 LOG_DIR=$1
-ANCHOR_LOG=${2:-"anchor_log.csv"} # 第2引数がなければデフォルト
+# Default anchor log is expected to be INSIDE the log directory
+ANCHOR_LOG=${2:-"$LOG_DIR/anchor_log.csv"} 
 OUTPUT_ROOT="results"
 mkdir -p $OUTPUT_ROOT
 
@@ -54,7 +55,8 @@ cargo run --release --bin mobitia -- --experiment --mode proposed_minimal --inpu
 # 7. Brute-force (Rigorous Ground Truth)
 echo ""
 echo "[7/7] Running Brute-force Search (Deterministic, VERY SLOW)..."
-cargo run --release --bin mobitia -- --experiment --mode brute_force --input "$LOG_DIR" --output "$OUTPUT_ROOT/brute_force"
+# Pass anchor log to enable landscape generation
+cargo run --release --bin mobitia -- --experiment --mode brute_force --input "$LOG_DIR" --anchors "$ANCHOR_LOG" --output "$OUTPUT_ROOT/brute_force"
 
 # Analysis
 echo ""
@@ -70,9 +72,20 @@ if [ -f "$ANCHOR_LOG" ] && [ -f "$BRUTE_TRAJ" ]; then
     echo "=============================================="
     echo " Comparing Anchors vs Brute-force..."
     echo "=============================================="
-    python3 scripts/compare_anchors.py --anchors "$ANCHOR_LOG" --trajectory "$BRUTE_TRAJ" --output "$OUTPUT_ROOT"
+    # Assuming map_dir matches the input log structure for plotting
+    python3 scripts/compare_anchors.py --anchors "$ANCHOR_LOG" --trajectory "$BRUTE_TRAJ" --output "$OUTPUT_ROOT" --map_dir "$LOG_DIR"
 else
     echo "Skipping anchor comparison (Anchor log or Brute-force result not found)."
+fi
+
+# Landscape Plotting
+LANDSCAPE_FILES=$(find "$OUTPUT_ROOT/brute_force" -name "landscape_*.csv")
+if [ ! -z "$LANDSCAPE_FILES" ]; then
+    echo ""
+    echo "=============================================="
+    echo " Plotting Landscapes..."
+    echo "=============================================="
+    python3 scripts/plot_landscape.py $LANDSCAPE_FILES --output "$OUTPUT_ROOT/landscapes"
 fi
 
 echo ""

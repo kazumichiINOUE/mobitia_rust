@@ -95,4 +95,36 @@ python scripts/compare_anchors.py --anchors anchor_log.csv --trajectory results/
 - **`--output`**: 結果（`anchor_comparison.md`, `anchor_comparison.csv`, `anchor_map_plot.png`）の保存先．
 - **`--map_dir`**: (任意) `occMap.png` と `map_info.toml` が含まれるディレクトリを指定すると，アンカーをプロットした地図画像を生成します．
 
+---
+
+## 5. ランドスケープ（ヒートマップ）可視化ツール (Landscape Visualization Tool)
+
+全探索（Brute-force）によって算出された評価関数の空間分布（コスト関数ランドスケープ）を可視化し，退化環境（Degenerate Environment）の解析を行うためのツールです．
+
+### 概要
+`scripts/plot_landscape.py` は，実験モードの `brute_force` 実行時に生成される `landscape_*.csv` を読み込み，2Dヒートマップおよび3Dサーフェスプロットを生成します．
+
+### 主な機能
+- **地図オーバーレイ**: `--map_dir` を指定することで，背景に構築済みの地図（`occMap.png`）を透過表示します．これにより，廊下などの環境形状と評価関数の「谷」の相関を視覚的に証明できます．
+- **自動座標合わせ**: `map_info.toml` のメタデータを利用し，地図と評価関数の座標系を正確に一致させます．
+- **3Dプロット**: 評価関数のピークの鋭さや局所解の存在を立体的に確認できます．
+
+### 使用方法
+
+#### 1. データの生成
+まず，実験モードで `brute_force` を実行します．`--anchors` を指定すると，アンカー記録時刻に近いスキャンのランドスケープデータが自動的に出力されます．
+
+```bash
+cargo run --release -- --experiment --mode brute_force --input [LOG_DIR] --anchors [ANCHOR_LOG] --output [OUTPUT_DIR]
+```
+
+#### 2. 可視化の実行
+出力された CSV ファイルを指定してプロットを生成します．
+
+```bash
+python scripts/plot_landscape.py [OUTPUT_DIR]/landscape_*.csv --output [PLOT_OUTPUT_DIR] --map_dir [LOG_DIR]
+```
+
+- **`--map_dir`**: `occMap.png` と `map_info.toml` が含まれるディレクトリを指定します．
+
 <!-- TODO: Add English translation here -->

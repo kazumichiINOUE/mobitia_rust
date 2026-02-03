@@ -12,6 +12,25 @@ pub struct ExperimentArgs {
     pub mode: String,
     pub input_dir: PathBuf,
     pub output_dir: PathBuf,
+    pub anchors_path: Option<PathBuf>,
+}
+
+fn load_anchors(path: &Path) -> Result<Vec<u128>> {
+    let content = std::fs::read_to_string(path)?;
+    let mut timestamps = Vec::new();
+
+    for line in content.lines().skip(1) { // Skip header
+        // anchor_log.csv format can vary, but timestamp is usually the first column
+        // e.g., 1770031867023,2026-02-02 20:31:07.026,...
+        let parts: Vec<&str> = line.split(',').collect();
+        if let Some(ts_str) = parts.first() {
+            if let Ok(ts) = ts_str.trim().parse::<u128>() {
+                timestamps.push(ts);
+            }
+        }
+    }
+    timestamps.sort();
+    Ok(timestamps)
 }
 
 pub fn run_experiment(args: ExperimentArgs) -> Result<()> {
@@ -19,6 +38,18 @@ pub fn run_experiment(args: ExperimentArgs) -> Result<()> {
     println!("Mode: {}", args.mode);
     println!("Input Directory: {:?}", args.input_dir);
     println!("Output Directory: {:?}", args.output_dir);
+
+    // Load anchors if provided
+    let mut target_timestamps = Vec::new();
+    if let Some(ref anchors_path) = args.anchors_path {
+        match load_anchors(anchors_path) {
+            Ok(ts_list) => {
+                println!("Loaded {} anchors from {:?}", ts_list.len(), anchors_path);
+                target_timestamps = ts_list;
+            }
+            Err(e) => eprintln!("Warning: Failed to load anchors: {}", e),
+        }
+    }
 
     // 1. Load default config
     // 実験ではデフォルト設定をベースに、モードに応じてパラメータを上書きします
@@ -160,6 +191,9 @@ pub fn run_experiment(args: ExperimentArgs) -> Result<()> {
     // 6. Processing Loop
     let start_time = Instant::now();
     let mut total_scans = 0;
+    
+    // Processed anchors to avoid duplicates
+    let mut processed_anchors = std::collections::HashSet::new();
 
     for submap_dir in submap_dirs {
         let scans_json_path = submap_dir.join("scans.json");
@@ -238,6 +272,24 @@ pub fn run_experiment(args: ExperimentArgs) -> Result<()> {
                     let steps_a = (range_a * 2.0 / step_a as f32).round() as i32;
                     let steps_xy = (range_xy * 2.0 / step_xy as f32).round() as i32;
 
+                    // --- Check if we need to capture landscape ---
+                    let mut capture_landscape = false;
+                    if !target_timestamps.is_empty() {
+                        for &ts in &target_timestamps {
+                            let diff = (ts as i128 - scan_data.timestamp as i128).abs();
+                            if diff < 10000 && !processed_anchors.contains(&ts) { // 10000ms (10s) window to catch all anchors
+                                capture_landscape = true;
+                                processed_anchors.insert(ts);
+                                println!("  [Anchor Hit] TS: {} matches Anchor: {}. Capturing Landscape...", scan_data.timestamp, ts);
+                                break;
+                            }
+                        }
+                    }
+                    
+                    // Temporary storage for landscape data if needed
+                    // (x, y, theta, score)
+                    let mut landscape_data: Vec<(f32, f32, f32, f64)> = Vec::new();
+
                     for ia in -(steps_a/2)..=(steps_a/2) {
                         let a = center_a + (ia as f32) * step_a;
                         let rot = nalgebra::Rotation2::new(a);
@@ -259,9 +311,30 @@ pub fn run_experiment(args: ExperimentArgs) -> Result<()> {
                                     max_score = score;
                                     best_pose = test_pose;
                                 }
+                                
+                                if capture_landscape {
+                                    landscape_data.push((x, y, a, score));
+                                }
                             }
                         }
                     }
+                    
+                    // --- Save Landscape Data ---
+                    if capture_landscape {
+                        let best_a = best_pose.rotation.angle();
+                        let landscape_path = args.output_dir.join(format!("landscape_{}_xy.csv", scan_data.timestamp));
+                        if let Ok(mut f) = File::create(&landscape_path) {
+                            writeln!(f, "x,y,score").unwrap();
+                            // Filter data for the best angle (approx)
+                            for (x, y, a, score) in landscape_data {
+                                if (a - best_a).abs() < (step_a / 2.0) {
+                                    writeln!(f, "{:.6},{:.6},{:.6}", x, y, score).unwrap();
+                                }
+                            }
+                            println!("  Saved landscape to {:?}", landscape_path);
+                        }
+                    }
+
                 } else {
                     // 初回スキャンの場合
                     println!("  [Scan 1] TS: {} | Initializing map at origin.", scan_data.timestamp);
