@@ -2740,7 +2740,7 @@ impl MyApp {
         };
 
         if !file_exists {
-            let _ = writeln!(file, "timestamp,readable_time,x,y,theta,label");
+            let _ = writeln!(file, "timestamp,readable_time,x,y,theta,label,x_true,y_true,theta_true");
         }
 
         let pose = self.current_robot_pose;
@@ -2749,7 +2749,7 @@ impl MyApp {
 
         if let Err(e) = writeln!(
             file, 
-            "{},{},{:.4},{:.4},{:.4},{}", 
+            "{},{},{:.4},{:.4},{:.4},{},0.0,0.0,0.0", 
             timestamp, 
             readable_time,
             pose.translation.x, 

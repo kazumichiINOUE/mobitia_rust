@@ -92,7 +92,7 @@ python scripts/compare_anchors.py --anchors anchor_log.csv --trajectory results/
 
 - **`--anchors`**: アンカーログファイルのパス．
 - **`--trajectory`**: 比較対象の軌跡CSVファイル（`brute_force` モードの出力などを推奨）．
-- **`--output`**: 結果（`anchor_comparison.md`, `anchor_comparison.csv`, `anchor_map_plot.png`）の保存先．
+- **`--output`**: 結果（`anchor_comparison.md`, `anchor_comparison.csv`, `anchor_map_plot.pdf`）の保存先．
 - **`--map_dir`**: (任意) `occMap.png` と `map_info.toml` が含まれるディレクトリを指定すると，アンカーをプロットした地図画像を生成します．
 
 ---

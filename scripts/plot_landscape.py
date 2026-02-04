@@ -93,8 +93,8 @@ def plot_landscape(csv_path, output_dir, map_dir=None):
     
     ax.legend()
 
-    output_path_2d = os.path.join(output_dir, f"{basename}_heatmap.png")
-    plt.savefig(output_path_2d, dpi=150)
+    output_path_2d = os.path.join(output_dir, f"{basename}_heatmap.pdf")
+    plt.savefig(output_path_2d, bbox_inches='tight', pad_inches=0)
     plt.close()
     print(f"Saved 2D heatmap to {output_path_2d}")
 
@@ -111,8 +111,8 @@ def plot_landscape(csv_path, output_dir, map_dir=None):
     ax.set_zlabel('Score')
     ax.set_title(f'Score Landscape (3D) - {basename}')
     
-    output_path_3d = os.path.join(output_dir, f"{basename}_3d.png")
-    plt.savefig(output_path_3d)
+    output_path_3d = os.path.join(output_dir, f"{basename}_3d.pdf")
+    plt.savefig(output_path_3d, bbox_inches='tight', pad_inches=0)
     plt.close()
     print(f"Saved 3D plot to {output_path_3d}")
 
