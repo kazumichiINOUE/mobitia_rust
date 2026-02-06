@@ -46,6 +46,10 @@ struct Args {
     /// Path to anchor_log.csv for degenerate environment analysis (Optional)
     #[arg(long)]
     anchors: Option<std::path::PathBuf>,
+
+    /// Processing step (process every N-th scan)
+    #[arg(long, default_value = "1")]
+    step: usize,
 }
 
 fn main() -> Result<(), eframe::Error> {
@@ -58,6 +62,7 @@ fn main() -> Result<(), eframe::Error> {
                 input_dir,
                 output_dir: args.output,
                 anchors_path: args.anchors,
+                step: args.step,
             };
             match experiment::run_experiment(exp_args) {
                 Ok(_) => {

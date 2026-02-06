@@ -4,6 +4,7 @@ use crate::slam::differential_evolution::DifferentialEvolutionSolver;
 use crate::lidar::features::{compute_features, interpolate_lidar_scan};
 use anyhow::Result;
 use nalgebra::{Matrix3, SymmetricEigen};
+use rayon::prelude::*;
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -15,6 +16,7 @@ pub struct ExperimentArgs {
     pub input_dir: PathBuf,
     pub output_dir: PathBuf,
     pub anchors_path: Option<PathBuf>,
+    pub step: usize, // New: Processing step
 }
 
 fn load_anchors(path: &Path) -> Result<Vec<u128>> {
@@ -220,6 +222,12 @@ pub fn run_experiment(args: ExperimentArgs) -> Result<()> {
         println!("Processing {:?} ({} scans)...", submap_dir.file_name().unwrap(), scan_data_list.len());
 
         for scan_data in scan_data_list {
+            // Processing step logic
+            if total_scans % args.step != 0 {
+                total_scans += 1;
+                continue;
+            }
+
             // Reconstruct scan data for SlamManager
             // ScanPoint (x, y, r, theta) -> Raw Scan Vector
             let mut raw_scan: Vec<(f32, f32, f32, f32, f32, f32, f32, f32)> = Vec::with_capacity(scan_data.scan_points.len());
@@ -298,14 +306,18 @@ pub fn run_experiment(args: ExperimentArgs) -> Result<()> {
                         }
                     }
                     
-                    // Temporary storage for landscape data if needed
-                    // (x, y, theta, score)
-                    let mut landscape_data: Vec<(f32, f32, f32, f64)> = Vec::new();
+                    // Range of indices for angle search
+                    let ia_range: Vec<i32> = (-(steps_a/2)..=(steps_a/2)).collect();
 
-                    for ia in -(steps_a/2)..=(steps_a/2) {
+                    // Parallel Search over angles
+                    let results: Vec<(f64, nalgebra::Isometry2<f32>, Vec<(f32, f32, f32, f64)>)> = ia_range.par_iter().map(|&ia| {
                         let a = center_a + (ia as f32) * step_a;
                         let rot = nalgebra::Rotation2::new(a);
                         
+                        let mut local_max_score = -f64::INFINITY;
+                        let mut local_best_pose = current_pose;
+                        let mut local_landscape_data = Vec::new();
+
                         for iy in -(steps_xy/2)..=(steps_xy/2) {
                             let y = center_y + (iy as f32) * step_xy;
                             
@@ -319,15 +331,28 @@ pub fn run_experiment(args: ExperimentArgs) -> Result<()> {
 
                                 let score = solver.calculate_score(grid, &matching_scan, &raw_corner_points, &test_pose);
                                 
-                                if score > max_score {
-                                    max_score = score;
-                                    best_pose = test_pose;
+                                if score > local_max_score {
+                                    local_max_score = score;
+                                    local_best_pose = test_pose;
                                 }
                                 
                                 if capture_landscape {
-                                    landscape_data.push((x, y, a, score));
+                                    local_landscape_data.push((x, y, a, score));
                                 }
                             }
+                        }
+                        (local_max_score, local_best_pose, local_landscape_data)
+                    }).collect();
+
+                    // Reduce results from all threads
+                    let mut landscape_data = Vec::new();
+                    for (score, pose, l_data) in results {
+                        if score > max_score {
+                            max_score = score;
+                            best_pose = pose;
+                        }
+                        if capture_landscape {
+                            landscape_data.extend(l_data);
                         }
                     }
                     
@@ -343,36 +368,34 @@ pub fn run_experiment(args: ExperimentArgs) -> Result<()> {
                                     writeln!(f, "{:.6},{:.6},{:.6}", x, y, score).unwrap();
                                 }
                             }
-                                                          println!("  Saved landscape to {:?}", landscape_path);
-                                                      }
-                                                  }
-                            
-                                                  // --- Degeneracy Analysis (Hessian Eigenvalues) ---
-                                                  if let Some(ref mut log_file) = degeneracy_log_file {
-                                                      let (min_ev, max_ev, cond_num) = compute_degeneracy_metrics(
-                                                          slam_manager.get_solver(),
-                                                          slam_manager.get_grid(),
-                                                          &matching_scan,
-                                                          &raw_corner_points,
-                                                          &best_pose
-                                                      );
-                                                      
-                                                      writeln!(
-                                                          log_file,
-                                                          "{},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6}",
-                                                          scan_data.timestamp,
-                                                          best_pose.translation.x,
-                                                          best_pose.translation.y,
-                                                          best_pose.rotation.angle(),
-                                                          min_ev,
-                                                          max_ev,
-                                                          cond_num
-                                                      )?;
-                                                  }
-                            
-                                              } else {
-                                                  // 初回スキャンの場合
-                            
+                            println!("  Saved landscape to {:?}", landscape_path);
+                        }
+                    }
+                    
+                    // --- Degeneracy Analysis (Hessian Eigenvalues) ---
+                    if let Some(ref mut log_file) = degeneracy_log_file {
+                        let (min_ev, max_ev, cond_num) = compute_degeneracy_metrics(
+                            slam_manager.get_solver(),
+                            slam_manager.get_grid(),
+                            &matching_scan,
+                            &raw_corner_points,
+                            &best_pose
+                        );
+                        
+                        writeln!(
+                            log_file,
+                            "{},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6}",
+                            scan_data.timestamp,
+                            best_pose.translation.x,
+                            best_pose.translation.y,
+                            best_pose.rotation.angle(),
+                            min_ev,
+                            max_ev,
+                            cond_num
+                        )?;
+                    }
+                } else {
+                    // 初回スキャンの場合
                     println!("  [Scan 1] TS: {} | Initializing map at origin.", scan_data.timestamp);
                     best_pose = nalgebra::Isometry2::identity();
                     max_score = 0.0; // ダミー値
