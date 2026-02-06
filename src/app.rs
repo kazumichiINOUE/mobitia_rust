@@ -187,6 +187,9 @@ pub struct MyApp {
     pub(crate) focus_console_requested: bool,
 
     pub(crate) requested_point_save_path: Option<String>, // TODO: これもLidarごとになる可能性
+    
+    /// Current SLAM output directory (e.g. ./slam_results/slam_result_YYYYMMDD-HHMMSS)
+    pub(crate) slam_output_dir: Option<PathBuf>,
 
     pub(crate) next_group_id: usize,
 
@@ -417,9 +420,11 @@ impl MyApp {
         let slam_results_path =
             slam_results_base_path.join(format!("slam_result_{}", timestamp_str));
 
+        let slam_results_path_for_thread = slam_results_path.clone(); // Clone for thread
+
         let slam_thread_handle = Some(thread::spawn(move || {
             let mut slam_manager = SlamManager::new(
-                slam_results_path,
+                slam_results_path_for_thread,
                 slam_config_for_thread.clone(), // Pass slam config
             );
             let slam_update_interval_duration =
@@ -570,6 +575,7 @@ impl MyApp {
             show_command_window: true,
             focus_console_requested: true,
             requested_point_save_path: None,
+            slam_output_dir: Some(slam_results_path), // Save the SLAM output path
             next_group_id: 0,
             slam_mode: SlamMode::Manual,
             slam_command_sender,
@@ -2722,7 +2728,14 @@ impl MyApp {
             .unwrap()
             .as_millis();
         
-        let path = std::path::PathBuf::from("anchor_log.csv");
+        let path = if let Some(dir) = &self.slam_output_dir {
+            if !dir.exists() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            dir.join("anchor_log.csv")
+        } else {
+            std::path::PathBuf::from("anchor_log.csv")
+        };
         let file_exists = path.exists();
         
         let mut file = match std::fs::OpenOptions::new()

@@ -1,7 +1,9 @@
 use crate::config::Config;
-use crate::slam::{ScanData, SlamManager};
+use crate::slam::{ScanData, SlamManager, OccupancyGrid};
+use crate::slam::differential_evolution::DifferentialEvolutionSolver;
 use crate::lidar::features::{compute_features, interpolate_lidar_scan};
 use anyhow::Result;
+use nalgebra::{Matrix3, SymmetricEigen};
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -188,6 +190,16 @@ pub fn run_experiment(args: ExperimentArgs) -> Result<()> {
     let mut csv_file = File::create(&output_csv_path)?;
     writeln!(csv_file, "timestamp,x,y,theta")?;
 
+    // Degeneracy Log (only for brute_force)
+    let degeneracy_log_path = args.output_dir.join("degeneracy_log.csv");
+    let mut degeneracy_log_file = if args.mode == "brute_force" {
+        let mut f = File::create(&degeneracy_log_path)?;
+        writeln!(f, "timestamp,x,y,theta,min_eigenvalue,max_eigenvalue,condition_number")?;
+        Some(f)
+    } else {
+        None
+    };
+
     // 6. Processing Loop
     let start_time = Instant::now();
     let mut total_scans = 0;
@@ -331,12 +343,36 @@ pub fn run_experiment(args: ExperimentArgs) -> Result<()> {
                                     writeln!(f, "{:.6},{:.6},{:.6}", x, y, score).unwrap();
                                 }
                             }
-                            println!("  Saved landscape to {:?}", landscape_path);
-                        }
-                    }
-
-                } else {
-                    // 初回スキャンの場合
+                                                          println!("  Saved landscape to {:?}", landscape_path);
+                                                      }
+                                                  }
+                            
+                                                  // --- Degeneracy Analysis (Hessian Eigenvalues) ---
+                                                  if let Some(ref mut log_file) = degeneracy_log_file {
+                                                      let (min_ev, max_ev, cond_num) = compute_degeneracy_metrics(
+                                                          slam_manager.get_solver(),
+                                                          slam_manager.get_grid(),
+                                                          &matching_scan,
+                                                          &raw_corner_points,
+                                                          &best_pose
+                                                      );
+                                                      
+                                                      writeln!(
+                                                          log_file,
+                                                          "{},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6}",
+                                                          scan_data.timestamp,
+                                                          best_pose.translation.x,
+                                                          best_pose.translation.y,
+                                                          best_pose.rotation.angle(),
+                                                          min_ev,
+                                                          max_ev,
+                                                          cond_num
+                                                      )?;
+                                                  }
+                            
+                                              } else {
+                                                  // 初回スキャンの場合
+                            
                     println!("  [Scan 1] TS: {} | Initializing map at origin.", scan_data.timestamp);
                     best_pose = nalgebra::Isometry2::identity();
                     max_score = 0.0; // ダミー値
@@ -407,4 +443,85 @@ pub fn run_experiment(args: ExperimentArgs) -> Result<()> {
     println!("Trajectory saved to: {:?}", output_csv_path);
 
     Ok(())
+}
+
+fn compute_degeneracy_metrics(
+    solver: &DifferentialEvolutionSolver,
+    grid: &OccupancyGrid,
+    scan: &Vec<(nalgebra::Point2<f32>, f32, f32, f32)>,
+    corner_points: &Vec<(nalgebra::Point2<f32>, f32)>,
+    center_pose: &nalgebra::Isometry2<f32>,
+) -> (f64, f64, f64) {
+    // Parameters for numerical differentiation
+    let delta_xy = 0.01; // 1cm
+    let delta_th = 0.5f32.to_radians(); // 0.5 degrees
+
+    let center_x = center_pose.translation.x;
+    let center_y = center_pose.translation.y;
+    let center_th = center_pose.rotation.angle();
+
+    let mut hessian = Matrix3::zeros();
+
+    // Helper to evaluate score at (dx, dy, dth) relative to center
+    let eval = |dx: f32, dy: f32, dth: f32| -> f64 {
+        let test_pose = nalgebra::Isometry2::from_parts(
+            nalgebra::Translation2::new(center_x + dx, center_y + dy),
+            nalgebra::Rotation2::new(center_th + dth).into()
+        );
+        solver.calculate_score(grid, scan, corner_points, &test_pose)
+    };
+
+    let f_center = eval(0.0, 0.0, 0.0);
+
+    // Diagonal elements (2nd derivative)
+    // H_ii = (f(x+h) - 2f(x) + f(x-h)) / h^2
+    let deltas = [delta_xy, delta_xy, delta_th];
+    
+    for i in 0..3 {
+        let mut d = [0.0, 0.0, 0.0];
+        d[i] = deltas[i];
+        
+        let f_plus = eval(d[0], d[1], d[2]);
+        let f_minus = eval(-d[0], -d[1], -d[2]);
+        
+        hessian[(i, i)] = (f_plus - 2.0 * f_center + f_minus) / (deltas[i] as f64).powi(2);
+    }
+
+    // Off-diagonal elements (Mixed partial derivative)
+    // H_ij = (f(++ ) - f(+-) - f(-+) + f(--)) / 4h_i h_j
+    for i in 0..3 {
+        for j in (i + 1)..3 {
+            let mut d_i = [0.0, 0.0, 0.0];
+            d_i[i] = deltas[i];
+            
+            let mut d_j = [0.0, 0.0, 0.0];
+            d_j[j] = deltas[j];
+
+            let f_pp = eval(d_i[0] + d_j[0], d_i[1] + d_j[1], d_i[2] + d_j[2]);
+            let f_pm = eval(d_i[0] - d_j[0], d_i[1] - d_j[1], d_i[2] - d_j[2]);
+            let f_mp = eval(-d_i[0] + d_j[0], -d_i[1] + d_j[1], -d_i[2] + d_j[2]);
+            let f_mm = eval(-d_i[0] - d_j[0], -d_i[1] - d_j[1], -d_i[2] - d_j[2]);
+
+            let val = (f_pp - f_pm - f_mp + f_mm) / (4.0 * deltas[i] as f64 * deltas[j] as f64);
+            hessian[(i, j)] = val;
+            hessian[(j, i)] = val;
+        }
+    }
+
+    // Eigenvalue decomposition
+    // Since Hessian is symmetric, use SymmetricEigen
+    let eigen = SymmetricEigen::new(hessian);
+    let eigenvalues = eigen.eigenvalues;
+
+    // Filter out very small values to avoid numerical instability
+    let mut evs: Vec<f64> = eigenvalues.iter().map(|&v| v.abs()).collect();
+    evs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+    let min_ev = evs[0];
+    let max_ev = evs[2];
+    
+    // Condition number
+    let cond_num = if min_ev > 1e-9 { max_ev / min_ev } else { 1e9 }; // Cap at 1e9
+
+    (min_ev, max_ev, cond_num)
 }

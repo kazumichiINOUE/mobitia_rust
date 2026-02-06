@@ -63,7 +63,7 @@ echo ""
 echo "=============================================="
 echo " Analyzing Results..."
 echo "=============================================="
-python3 scripts/analyze_results.py --dir "$OUTPUT_ROOT"
+python3 scripts/analyze_results.py --dir "$OUTPUT_ROOT" --map_dir "$LOG_DIR"
 
 # Anchor Comparison
 BRUTE_TRAJ="$OUTPUT_ROOT/brute_force/brute_force_trajectory.csv"
@@ -78,14 +78,24 @@ else
     echo "Skipping anchor comparison (Anchor log or Brute-force result not found)."
 fi
 
-# Landscape Plotting
+# Degeneracy Plotting (Run FIRST to generate verification_points.csv)
+DEGENERACY_LOG="$OUTPUT_ROOT/brute_force/degeneracy_log.csv"
+if [ -f "$DEGENERACY_LOG" ]; then
+    echo ""
+    echo "=============================================="
+    echo " Analyzing Degeneracy..."
+    echo "=============================================="
+    python3 scripts/plot_degeneracy.py "$DEGENERACY_LOG" --output "$OUTPUT_ROOT/brute_force" --map_dir "$LOG_DIR"
+fi
+
+# Landscape Plotting (Run SECOND, using verification points)
 LANDSCAPE_FILES=$(find "$OUTPUT_ROOT/brute_force" -name "landscape_*.csv")
 if [ ! -z "$LANDSCAPE_FILES" ]; then
     echo ""
     echo "=============================================="
     echo " Plotting Landscapes..."
     echo "=============================================="
-    python3 scripts/plot_landscape.py $LANDSCAPE_FILES --output "$OUTPUT_ROOT/landscapes"
+    python3 scripts/plot_landscape.py $LANDSCAPE_FILES --output "$OUTPUT_ROOT/landscapes" --map_dir "$LOG_DIR" --verification_points "$OUTPUT_ROOT/brute_force/verification_points.csv"
 fi
 
 echo ""
