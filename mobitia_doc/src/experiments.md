@@ -65,10 +65,12 @@ SLAM実行中または自律走行中に，ロボットが特定の物理地点�
 - **Shortcut**: キーボードの **`A`** キーを押下．
 
 ### 記録内容
-プロジェクトのルートディレクトリに **`anchor_log.csv`** が作成（または追記）されます．
+- **SLAM Continuous実行中**: 各セッションの出力ディレクトリ（`slam_results/slam_result_.../`）内に **`anchor_log.csv`** が作成されます．
+- **それ以外（Manual等）**: プロジェクトのルートディレクトリに作成・追記されます．
 
-- **保存形式**: `timestamp, readable_time, x, y, theta, label`
-- **活用方法**: ロボットをタイル目地などの既知の座標に静止させて記録し，後に実測値と比較することで位置推定の絶対精度を検証します．
+**保存形式**: `timestamp, readable_time, x, y, theta, label, x_true, y_true, theta_true_deg`
+
+- **活用方法**: ロボットをタイル目地などの既知の座標に静止させて記録し，後に実測値を記入することで，物理真値に基づいた正確な軌跡アライメント（第8章参照）に利用します．
 
 ---
 
@@ -177,5 +179,38 @@ python3 scripts/analyze_multi_run_degeneracy.py experiment_degeneracy_stats --ou
 ### 成果物
 - **`multi_run_degeneracy_map.pdf`**: 統計的退化マップ上に，抽出された検証ポイント（D1-D5, S1-S5）とその有効領域（楕円）がプロットされた地図．
 - **`final_verification_points.csv`**: 物理計測のターゲットとなる座標と，領域の形状パラメータ（長軸，短軸，角度）のリスト．
+
+---
+
+## 8. 物理真値に基づく統合アライメント解析 (Integrated Alignment Analysis)
+
+「最初と最後」の2点の物理真値（Ground Truth）のみを拘束条件として使用し，恣意的なパラメータ調整を排した状態で全体の軌跡と地図を幾何学的に補正・集計する一貫フローです．
+
+### 概要
+`scripts/run_anchor_aligned_analysis.sh` を実行することで，以下の4段階の処理が自動的に行われます．
+
+1.  **Stage 1: 基礎解析 (Base SLAM Analysis)**:
+    - 各生のログに対して `brute_force`（全探索）を実行し，基準となる退化指数（固有値等）を算出します．既存の解析結果がある場合はスキップされます．
+2.  **Stage 2: 幾何学的アライメント (Geometric Alignment)**:
+    - 各ディレクトリの `anchor_log.csv` に入力された `x_true, y_true, theta_true_deg` を参照し，軌跡全体および退化ログの座標を剛体変換（回転・並進）します．Pythonで計算するため瞬時に完了します．
+3.  **Stage 3: 補正地図の再構築 (Map Reconstruction)**:
+    - 補正された座標を「正解」として，`brute_force_mapping_only` モードで占有格子地図（`occMap.png`）を描き直します．全探索を行わないため非常に高速です．
+4.  **Stage 4: 統計的統合 (Statistical Consolidation)**:
+    - 全てが補正された状態で `analyze_multi_run_degeneracy.py` を実行し，最終的な統計マップと検証ポイントを抽出します．
+
+### 使用方法
+
+1.  対象とする複数の `slam_result_...` ディレクトリを一つのフォルダ（例: `experiment_anchor_test`）に集めます．
+2.  各ディレクトリ内の `anchor_log.csv` を開き，実測した物理座標を `x_true, y_true, theta_true_deg` に記入します．
+3.  スクリプトを実行します．
+
+```bash
+./scripts/run_anchor_aligned_analysis.sh
+```
+
+### メリット
+- **客観性の担保**: 物理真値という確定した事実のみに基づいてアライメントが行われます．
+- **計算効率**: 重い全探索（Brute-force）は各ログにつき一度しか実行されません．
+- **地図の正当性**: 生成されるPDFの背景地図そのものが物理的な方位・位置に合わせて回転・補正されます．
 
 <!-- TODO: Add English translation here -->

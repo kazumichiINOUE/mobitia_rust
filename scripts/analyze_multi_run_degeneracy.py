@@ -83,13 +83,9 @@ def load_run_data(run_dir):
         if os.path.exists(path):
             print(f"  Loaded: {path}")
             return pd.read_csv(path), path
-    print(f"  Degeneracy log not found in {run_dir}. Attempting to run analysis...")
-    if run_brute_force_analysis(run_dir):
-        expected_output = os.path.join(run_dir, "results", "brute_force", "degeneracy_log.csv")
-        if os.path.exists(expected_output):
-             print(f"  Loaded generated log: {expected_output}")
-             return pd.read_csv(expected_output), expected_output
-    print(f"  Warning: Failed to load or generate degeneracy_log.csv for {run_dir}")
+    
+    print(f"  Error: Degeneracy log not found in {run_dir}.")
+    print(f"  Please run analysis first or ensure data is correctly aligned.")
     return None, None
 
 def main():
@@ -242,10 +238,12 @@ def main():
                 if is_far: selected.append(row)
             return pd.DataFrame(selected)
 
-        top_d = select_spatially_distinct_points(df_cells[df_cells['avg_ev'] < stable_threshold], n=5, min_dist=2.0, maximize=False)
-        top_s = select_spatially_distinct_points(df_cells[df_cells['avg_ev'] > degenerate_threshold], n=5, min_dist=2.0, maximize=True, forbidden_points=top_d)
-        top_d = top_d.sort_values('x').reset_index(drop=True)
-        top_s = top_s.sort_values('x').reset_index(drop=True)
+        top_d = select_spatially_distinct_points(df_cells[df_cells['avg_ev'] < stable_threshold], n=5, min_dist=0.5, maximize=False)
+        top_s = select_spatially_distinct_points(df_cells[df_cells['avg_ev'] > degenerate_threshold], n=5, min_dist=0.5, maximize=True, forbidden_points=top_d)
+        if not top_d.empty:
+            top_d = top_d.sort_values('x').reset_index(drop=True)
+        if not top_s.empty:
+            top_s = top_s.sort_values('x').reset_index(drop=True)
 
         def calculate_validity_ellipse(cx, cy, grid, x_edges, y_edges, is_stable, max_dist=1.0):
             xi_s = np.digitize(cx, x_edges) - 1

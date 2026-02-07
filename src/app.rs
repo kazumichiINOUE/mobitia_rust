@@ -2728,11 +2728,15 @@ impl MyApp {
             .unwrap()
             .as_millis();
         
-        let path = if let Some(dir) = &self.slam_output_dir {
-            if !dir.exists() {
-                let _ = std::fs::create_dir_all(dir);
+        let path = if self.slam_mode == SlamMode::Continuous {
+            if let Some(dir) = &self.slam_output_dir {
+                if !dir.exists() {
+                    let _ = std::fs::create_dir_all(dir);
+                }
+                dir.join("anchor_log.csv")
+            } else {
+                std::path::PathBuf::from("anchor_log.csv")
             }
-            dir.join("anchor_log.csv")
         } else {
             std::path::PathBuf::from("anchor_log.csv")
         };
@@ -2753,7 +2757,7 @@ impl MyApp {
         };
 
         if !file_exists {
-            let _ = writeln!(file, "timestamp,readable_time,x,y,theta,label,x_true,y_true,theta_true");
+            let _ = writeln!(file, "timestamp,readable_time,x,y,theta,label,x_true,y_true,theta_true_deg");
         }
 
         let pose = self.current_robot_pose;
@@ -2762,7 +2766,7 @@ impl MyApp {
 
         if let Err(e) = writeln!(
             file, 
-            "{},{},{:.4},{:.4},{:.4},{},0.0,0.0,0.0", 
+            "{},{},{:.4},{:.4},{:.4},{},-999.0,-999.0,-999.0", 
             timestamp, 
             readable_time,
             pose.translation.x, 
