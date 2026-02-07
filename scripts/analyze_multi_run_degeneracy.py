@@ -238,8 +238,8 @@ def main():
                 if is_far: selected.append(row)
             return pd.DataFrame(selected)
 
-        top_d = select_spatially_distinct_points(df_cells[df_cells['avg_ev'] < stable_threshold], n=5, min_dist=0.5, maximize=False)
-        top_s = select_spatially_distinct_points(df_cells[df_cells['avg_ev'] > degenerate_threshold], n=5, min_dist=0.5, maximize=True, forbidden_points=top_d)
+        top_d = select_spatially_distinct_points(df_cells[df_cells['avg_ev'] < stable_threshold], n=5, min_dist=2.0, maximize=False)
+        top_s = select_spatially_distinct_points(df_cells[df_cells['avg_ev'] > degenerate_threshold], n=5, min_dist=2.0, maximize=True, forbidden_points=top_d)
         if not top_d.empty:
             top_d = top_d.sort_values('x').reset_index(drop=True)
         if not top_s.empty:

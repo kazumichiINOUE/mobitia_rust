@@ -4,7 +4,7 @@
 # Optimized workflow for anchor-based alignment and statistical analysis.
 # Ensures brute_force search is only run once per raw log.
 
-ROOT_DIR="experiment_anchor_test"
+ROOT_DIR="experiment_anchor_260207"
 ANALYSIS_DIR="$ROOT_DIR/analysis"
 ALIGNED_DIR="$ROOT_DIR/aligned"
 FINAL_DIR="$ROOT_DIR/final_results"
