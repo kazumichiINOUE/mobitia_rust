@@ -127,4 +127,55 @@ python scripts/plot_landscape.py [OUTPUT_DIR]/landscape_*.csv --output [PLOT_OUT
 
 - **`--map_dir`**: `occMap.png` と `map_info.toml` が含まれるディレクトリを指定します．
 
+---
+
+## 6. Brute-force解析の高速化 (Optimization)
+
+Brute-forceモードは計算負荷が非常に高いですが，`rayon` ライブラリによる並列化と間引きオプションの実装により，実用的な速度での解析が可能になりました．
+
+### 並列化 (Parallelization)
+空間探索のメインループ（角度探索）を並列化することで，CPUの全コアを活用します．
+- **効果**: Apple M3 Max (14/16コア) などのメニーコア環境では，シングルスレッド比で **10倍以上** の高速化（CPU使用率1400%超）が期待できます．
+- **自動適用**: `Cargo.toml` に `rayon` が含まれていれば，自動的に全コアを使用して計算を行います．
+
+### ステップ実行 (Temporal Subsampling)
+予備実験や統計解析のために，スキャンデータを間引いて処理することが可能です．
+
+```bash
+cargo run --release -- --experiment --mode brute_force ... --step 5
+```
+
+- **`--step N`**: $N$ 回に1回のみ解析を実行します（デフォルトは1=全フレーム解析）．
+- **用途**: 長時間のログから「退化エリアの傾向」だけを素早く把握したい場合に，`--step 10` などで実行時間を1/10に短縮できます．
+
+---
+
+## 7. 統計的退化解析 (Statistical Degeneracy Analysis)
+
+環境の幾何学的退化（Degeneracy）はノイズや経路の微細な変化に敏感であるため，単一の走行データではなく，複数回の走行データを統合して統計的に評価エリアを特定する手法を導入しました．
+
+### 概要
+`scripts/analyze_multi_run_degeneracy.py` は，複数の `slam_result` ディレクトリを一括処理し，以下のプロセスを実行します．
+
+1.  **Brute-force解析**: 未解析のログに対して自動的に全探索解析を実行します．
+2.  **軌跡アライメント (Trajectory Alignment)**: 基準となる軌跡（データ点数最大）に対し，他の軌跡を **ICP (Iterative Closest Point)** アルゴリズムを用いて精密に位置合わせします．これにより，異なる走行間の座標ズレを補正します．
+3.  **統計マップ生成**: 空間グリッド（デフォルト5cm）ごとに最小固有値の平均を計算し，ヒートマップとして可視化します．
+4.  **領域抽出と楕円フィッティング**:
+    - 退化（Degenerate）および安定（Stable）の条件を満たす連結領域を **BFS (幅優先探索)** で抽出します．
+    - データのスパース性を補うため，モルフォロジー演算（Dilation）による穴埋め処理を適用します．
+    - 抽出された点群の共分散行列から **楕円 (Ellipse)** を算出し，領域の広がりと方向を可視化します．
+
+### 使用方法
+
+1.  ルートディレクトリに解析用フォルダ（例：`experiment_degeneracy_stats`）を作成し，対象となる複数の `slam_result_XXX` フォルダを格納します．
+2.  スクリプトを実行します．`--grid_size` は解像度に合わせて調整します（推奨: 0.05）．
+
+```bash
+python3 scripts/analyze_multi_run_degeneracy.py experiment_degeneracy_stats --output multi_run_results --grid_size 0.05
+```
+
+### 成果物
+- **`multi_run_degeneracy_map.pdf`**: 統計的退化マップ上に，抽出された検証ポイント（D1-D5, S1-S5）とその有効領域（楕円）がプロットされた地図．
+- **`final_verification_points.csv`**: 物理計測のターゲットとなる座標と，領域の形状パラメータ（長軸，短軸，角度）のリスト．
+
 <!-- TODO: Add English translation here -->
