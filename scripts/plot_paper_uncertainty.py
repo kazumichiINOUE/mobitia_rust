@@ -99,11 +99,21 @@ def main():
     ax.xaxis.set_major_locator(ticker.MultipleLocator(1.0))
     ax.yaxis.set_major_locator(ticker.MultipleLocator(1.0))
     
-    # MATCH THE RANGE EXACTLY (margin=2.0 based on ALL points)
+    # MATCH THE RANGE EXACTLY (Including map extent for future-proofing)
     if all_x and all_y:
         margin = 2.0
-        ax.set_xlim(np.min(all_x) - margin, np.max(all_x) + margin)
-        ax.set_ylim(np.min(all_y) - margin, np.max(all_y) + margin)
+        x_min, x_max = np.min(all_x) - margin, np.max(all_x) + margin
+        y_min, y_max = np.min(all_y) - margin, np.max(all_y) + margin
+        
+        # If map extent is larger, include it to avoid clipping
+        if img is not None:
+            x_min = min(x_min, extent[0])
+            x_max = max(x_max, extent[1])
+            y_min = min(y_min, extent[2])
+            y_max = max(y_max, extent[3])
+            
+        ax.set_xlim(x_min, x_max)
+        ax.set_ylim(y_min, y_max)
 
     plt.tight_layout()
     plt.savefig(args.output, dpi=300)
