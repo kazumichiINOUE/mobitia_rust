@@ -117,7 +117,7 @@ pub fn run_experiment(args: ExperimentArgs) -> Result<()> {
     let degeneracy_log_path = args.output_dir.join("degeneracy_log.csv");
     let mut degeneracy_log_file = if args.mode == "brute_force" {
         let mut f = File::create(&degeneracy_log_path)?;
-        writeln!(f, "timestamp,x,y,theta,min_eigenvalue,max_eigenvalue,condition_number")?;
+        writeln!(f, "timestamp,x,y,theta,min_eigenvalue,max_eigenvalue,condition_number,min_ev_angle")?;
         Some(f)
     } else { None };
 
@@ -228,8 +228,8 @@ pub fn run_experiment(args: ExperimentArgs) -> Result<()> {
                     }
                     
                     if let Some(ref mut log_file) = degeneracy_log_file {
-                        let (min_ev, max_ev, cond_num) = compute_degeneracy_metrics(slam_manager.get_solver(), slam_manager.get_grid(), &matching_scan, &raw_corner_points, &best_pose);
-                        writeln!(log_file, "{},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6}", scan_data.timestamp, best_pose.translation.x, best_pose.translation.y, best_pose.rotation.angle(), min_ev, max_ev, cond_num)?;
+                        let (min_ev, max_ev, cond_num, min_ev_angle) = compute_degeneracy_metrics(slam_manager.get_solver(), slam_manager.get_grid(), &matching_scan, &raw_corner_points, &best_pose);
+                        writeln!(log_file, "{},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6}", scan_data.timestamp, best_pose.translation.x, best_pose.translation.y, best_pose.rotation.angle(), min_ev, max_ev, cond_num, min_ev_angle)?;
                     }
                 } else {
                     best_pose = nalgebra::Isometry2::identity();
@@ -338,10 +338,10 @@ free_thresh = 0.196
     Ok(())
 }
 
-fn compute_degeneracy_metrics(solver: &DifferentialEvolutionSolver, grid: &OccupancyGrid, scan: &Vec<(nalgebra::Point2<f32>, f32, f32, f32)>, corner_points: &Vec<(nalgebra::Point2<f32>, f32)>, center_pose: &nalgebra::Isometry2<f32>) -> (f64, f64, f64) {
+fn compute_degeneracy_metrics(solver: &DifferentialEvolutionSolver, grid: &OccupancyGrid, scan: &Vec<(nalgebra::Point2<f32>, f32, f32, f32)>, corner_points: &Vec<(nalgebra::Point2<f32>, f32)>, center_pose: &nalgebra::Isometry2<f32>) -> (f64, f64, f64, f64) {
     let (delta_xy, delta_th) = (0.005, 0.25f32.to_radians());
     let (cx, cy, cth) = (center_pose.translation.x, center_pose.translation.y, center_pose.rotation.angle());
-    let mut hessian = Matrix3::zeros();
+    let mut hessian = nalgebra::Matrix3::zeros();
     let eval = |dx: f32, dy: f32, dth: f32| -> f64 {
         let p = nalgebra::Isometry2::from_parts(nalgebra::Translation2::new(cx + dx, cy + dy), nalgebra::Rotation2::new(cth + dth).into());
         solver.calculate_score(grid, scan, corner_points, &p)
@@ -360,9 +360,21 @@ fn compute_degeneracy_metrics(solver: &DifferentialEvolutionSolver, grid: &Occup
             hessian[(i, j)] = val; hessian[(j, i)] = val;
         }
     }
-    let eigen = SymmetricEigen::new(hessian);
-    let mut evs: Vec<f64> = eigen.eigenvalues.iter().map(|&v| v.abs()).collect();
-    evs.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    let (min_ev, max_ev) = (evs[0], evs[2]);
-    (min_ev, max_ev, if min_ev > 1e-9 { max_ev / min_ev } else { 1e9 })
+    
+    // Use the translation part (2x2) for spatial degeneracy visualization
+    let hessian_2d = hessian.fixed_view::<2, 2>(0, 0).into_owned();
+    let eigen = nalgebra::SymmetricEigen::new(hessian_2d);
+    let mut evs_with_vecs: Vec<(f64, nalgebra::Vector2<f64>)> = eigen.eigenvalues.iter()
+        .enumerate()
+        .map(|(i, &v)| (v.abs(), eigen.eigenvectors.column(i).into_owned()))
+        .collect();
+    
+    evs_with_vecs.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+    
+    let (min_ev, min_vec) = &evs_with_vecs[0];
+    let (max_ev, _) = &evs_with_vecs[1];
+    
+    let angle = min_vec.y.atan2(min_vec.x);
+    
+    (*min_ev, *max_ev, if *min_ev > 1e-9 { *max_ev / *min_ev } else { 1e9 }, angle)
 }

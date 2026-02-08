@@ -125,17 +125,24 @@ def main():
     aligned_runs = []
     aligned_runs.append({
         'name': ref_run['name'], 'x': ref_points[:, 0], 'y': ref_points[:, 1],
-        'min_ev': ref_df['min_eigenvalue'].values, 'timestamp': ref_df['timestamp'].values
+        'min_ev': ref_df['min_eigenvalue'].values, 
+        'max_ev': ref_df['max_eigenvalue'].values if 'max_eigenvalue' in ref_df.columns else ref_df['min_eigenvalue'].values * 10.0,
+        'ev_angle': ref_df['min_ev_angle'].values if 'min_ev_angle' in ref_df.columns else np.zeros(len(ref_df)),
+        'timestamp': ref_df['timestamp'].values
     })
     
     for i in range(1, len(runs_data)):
         target_run = runs_data[i]
-        tgt_points = target_run['df'][['x', 'y']].values
+        tgt_df = target_run['df']
+        tgt_points = tgt_df[['x', 'y']].values
         _, t_vec, aligned_tgt_points = icp_alignment(tgt_points, ref_points)
         print(f"Aligned {target_run['name']} to Reference using ICP. (Offset: {t_vec})")
         aligned_runs.append({
             'name': target_run['name'], 'x': aligned_tgt_points[:, 0], 'y': aligned_tgt_points[:, 1],
-            'min_ev': target_run['df']['min_eigenvalue'].values, 'timestamp': target_run['df']['timestamp'].values
+            'min_ev': tgt_df['min_eigenvalue'].values,
+            'max_ev': tgt_df['max_eigenvalue'].values if 'max_eigenvalue' in tgt_df.columns else tgt_df['min_eigenvalue'].values * 10.0,
+            'ev_angle': tgt_df['min_ev_angle'].values if 'min_ev_angle' in tgt_df.columns else np.zeros(len(tgt_df)),
+            'timestamp': tgt_df['timestamp'].values
         })
 
     print("\nGenerating Statistical Map...")
@@ -278,29 +285,43 @@ def main():
                 return max(0.1, 4*np.sqrt(max(0, vals[0]))), max(0.1, 4*np.sqrt(max(0, vals[1]))), theta
             except: return 0.1, 0.1, 0.0
 
+        def calculate_uncertainty_ellipse(row, scale_factor=500.0):
+            if 'min_ev_angle' in row and not np.isnan(row['min_ev_angle']):
+                angle_deg = np.degrees(row['min_ev_angle'])
+                # major axis is the direction of sliding (min eigenvalue)
+                major = scale_factor / np.sqrt(max(1.0, row['avg_ev']))
+                # minor axis is the constrained direction (max eigenvalue)
+                minor = scale_factor / np.sqrt(max(1.0, row['max_ev'])) if 'max_ev' in row else major * 0.2
+                return major, minor, angle_deg
+            return 0.1, 0.1, 0.0
+
         final_csv = os.path.join(args.output, "final_verification_points.csv")
         with open(final_csv, "w") as f:
-            f.write("id,x,y,avg_min_eigenvalue,type,major_axis,minor_axis,angle_deg\n")
+            f.write("id,x,y,avg_min_eigenvalue,type,major_axis,minor_axis,angle_deg,uncert_major,uncert_minor,uncert_angle\n")
             if not top_d.empty:
                 ax.scatter([], [], c='red', marker='x', s=200, linewidths=3, label='Degenerate (D)')
-                print("Degenerate Ellipses:")
+                print("Degenerate Regions (BFS):")
                 for i, row in top_d.iterrows():
                     w, h, ang = calculate_validity_ellipse(row['x'], row['y'], avg_ev_grid, x_edges, y_edges, False)
-                    print(f"  D{i+1}: {w:.2f}m x {h:.2f}m @ {ang:.1f}deg")
-                    f.write(f"D{i+1},{row['x']:.4f},{row['y']:.4f},{row['avg_ev']:.4f},degenerate,{w:.4f},{h:.4f},{ang:.2f}\n")
-                    ax.add_patch(Ellipse((row['x'], row['y']), w, h, angle=ang, color='red', alpha=0.3, zorder=9))
+                    uw, uh, uang = calculate_uncertainty_ellipse(row)
+                    print(f"  D{i+1}: {w:.2f}m x {h:.2f}m @ {ang:.1f}deg | Uncertainty: {uw:.2f}m @ {uang:.1f}deg")
+                    f.write(f"D{i+1},{row['x']:.4f},{row['y']:.4f},{row['avg_ev']:.4f},degenerate,{w:.4f},{h:.4f},{ang:.2f},{uw:.4f},{uh:.4f},{uang:.2f}\n")
+                    ax.add_patch(Ellipse((row['x'], row['y']), w, h, angle=ang, color='red', alpha=0.2, zorder=9, linestyle='--'))
+                    ax.add_patch(Ellipse((row['x'], row['y']), uw, uh, angle=uang, edgecolor='darkred', facecolor='none', linewidth=2, zorder=12))
                     ax.scatter(row['x'], row['y'], c='red', marker='x', s=100, linewidths=2, zorder=10)
-                    ax.text(row['x'], row['y']+0.5, f"D{i+1}", color='red', fontsize=12, fontweight='bold', zorder=11)
+                    ax.text(row['x']+0.3, row['y']+0.3, f"D{i+1}", color='red', fontsize=12, fontweight='bold', zorder=11)
             if not top_s.empty:
                 ax.scatter([], [], c='blue', marker='o', s=150, linewidths=2, facecolors='none', label='Stable (S)')
-                print("Stable Ellipses:")
+                print("Stable Regions (BFS):")
                 for i, row in top_s.iterrows():
                     w, h, ang = calculate_validity_ellipse(row['x'], row['y'], avg_ev_grid, x_edges, y_edges, True)
+                    uw, uh, uang = calculate_uncertainty_ellipse(row)
                     print(f"  S{i+1}: {w:.2f}m x {h:.2f}m @ {ang:.1f}deg")
-                    f.write(f"S{i+1},{row['x']:.4f},{row['y']:.4f},{row['avg_ev']:.4f},stable,{w:.4f},{h:.4f},{ang:.2f}\n")
-                    ax.add_patch(Ellipse((row['x'], row['y']), w, h, angle=ang, color='blue', alpha=0.2, zorder=9))
+                    f.write(f"S{i+1},{row['x']:.4f},{row['y']:.4f},{row['avg_ev']:.4f},stable,{w:.4f},{h:.4f},{ang:.2f},{uw:.4f},{uh:.4f},{uang:.2f}\n")
+                    ax.add_patch(Ellipse((row['x'], row['y']), w, h, angle=ang, color='blue', alpha=0.15, zorder=9, linestyle='--'))
+                    ax.add_patch(Ellipse((row['x'], row['y']), uw, uh, angle=uang, edgecolor='darkblue', facecolor='none', linewidth=1.5, zorder=12))
                     ax.scatter(row['x'], row['y'], c='blue', marker='o', s=100, linewidths=2, facecolors='none', zorder=10)
-                    ax.text(row['x'], row['y']+0.5, f"S{i+1}", color='blue', fontsize=12, fontweight='bold', zorder=11)
+                    ax.text(row['x']+0.3, row['y']+0.3, f"S{i+1}", color='blue', fontsize=12, fontweight='bold', zorder=11)
 
         ax.legend(loc='upper right')
     
